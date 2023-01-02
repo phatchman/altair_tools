@@ -8,6 +8,7 @@
 #include <endian.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #define SECT_LEN		137
 #define SECT_USED		128	/* only 128 bytes of the 137 sector bytes contains data */
@@ -91,17 +92,21 @@ int compare_sort_ptr(const void* a, const void* b);
 int copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
 uint8_t calc_checksum(u_char *buffer);
 void print_usage(char* argv0); 
+void copy_filename(raw_dir_entry *entry, const char *filename);
 
 /* 
  * Print formatted error string and exit.
  */
-void error_exit(char *str, ...)
+void error_exit(int eno, char *str, ...)
 {
 	va_list argp;
   	va_start(argp, str);
 
 	vfprintf(stderr, str, argp);
-	fprintf(stderr,": %s\n", strerror(errno));
+	if (eno > 0)
+		fprintf(stderr,": %s\n", strerror(eno));
+	else
+		fprintf(stderr, "\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -216,7 +221,7 @@ int main(int argc, char**argv)
 	/* Open the Altair disk image*/
 	if ((fd_img = open(disk_filename, open_mode)) < 0)
 	{
-		error_exit("Error opening file %s", disk_filename);
+		error_exit(errno, "Error opening file %s", disk_filename);
 	}
 
 	load_directory_table(fd_img);
@@ -240,52 +245,22 @@ int main(int argc, char**argv)
 		int fd_file = open(filename, O_CREAT | O_WRONLY, 0666);
 		if (fd_file < 0)
 		{
-			error_exit("Error opening file %s", filename);
+			error_exit(errno, "Error opening file %s", filename);
 		}
-		copy_from_cpm(fd_img, fd_file, filename);
+		copy_from_cpm(fd_img, fd_file, basename(filename));
+		exit(EXIT_SUCCESS);
+	}
+	if (do_put)
+	{
+		int fd_file = open(filename, O_RDONLY);
+		if (fd_file < 0)
+		{
+			error_exit(errno, "Error opening file %s", filename);
+		}
+		copy_to_cpm(fd_img, fd_file, basename(filename));
 		exit(EXIT_SUCCESS);
 	}
 
-
-	exit(EXIT_SUCCESS);
-
-
-#if 0
-	if (argc == 2)
-	{
-		fn = argv[1];
-	}
-
-	/* TODO: Make this READ ONLY for READ OPERATIONS */
-	if ((fd = open(fn, O_RDWR)) < 0)
-	{
-		error_exit("Error opening disk image");
-	}
-
-	memset(&dir_table, 0, sizeof(dir_table));
-	memset(&alloc_table, 0, sizeof(alloc_table));
-	/* First 2 allocations are reserved [0 and 1]*/
-	alloc_table[0] = alloc_table[1] = 1;
-
-	load_directory_table(fd);
-	raw_directory_list();
-/*
-	int fd2 = open("BIG.TXT", O_CREAT | O_WRONLY, 0666);
-	if (fd2 < 0)
-	{
-		error_exit ("Error Creating output file");
-	}
-
-	copy_from_cpm(fd, fd2, "BIG.TXT");
-*/
-	int fd2 = open ("write.txt", O_RDONLY);
-	if (fd2 < 0)
-	{
-		error_exit ("Error opening input file");
-	}
-	copy_to_cpm(fd, fd2, "WRITEY.TXT");
-/**/
-#endif
 	return 0;
 }
 
@@ -441,54 +416,66 @@ int copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 {
 	uint8_t sector_buffer[SECT_USED];
 
-	int nbytes;
-
 	if (find_dir_by_filename(cpm_filename) != NULL)
 	{
-		errno = EEXIST;
-		error_exit("Error creating file");
+		error_exit(EEXIST, "Error creating file %s", cpm_filename);
 	}
-	/* Set any blank space to ctrl-Z (EOF)*/
-	memset (&sector_buffer, 0x1a, SECT_USED); /* TODO: This should be set on each write!! */
-
-	/* TODO: Handle multiple directory entries */
-	cpm_dir_entry *dir_entry = find_free_dir_entry();
-	if (dir_entry == NULL)
-	{
-		error_exit("No free directory entries");
-	}
-	int alloc = find_free_alloc();
-	if (alloc < 0)
-	{
-		error_exit("No free allocations");
-	}
-
-	/* Init the directory entry */
-	memset(&dir_entry->raw_entry, 0, sizeof(raw_dir_entry));
-	dir_entry->raw_entry.user = 0;
-	strncpy(dir_entry->raw_entry.filename,"WRITEY  ", FILENAME_LEN);
-	strncpy(dir_entry->raw_entry.type,"TXT", TYPE_LEN);
-	dir_entry->raw_entry.extent_l = 0;
-	dir_entry->raw_entry.extent_h = 0;
-	dir_entry->raw_entry.num_records = 1;
-	dir_entry->raw_entry.allocation[0] = alloc;
-	/* TODO: Fix this. The way index is set is weird.*/
-	raw_to_cpm(dir_entry);
-	/* TODO: When should the dir entry actually be saved? */
-	write_dir_entry(cpm_fd, dir_entry);
-
+	
 	int rec_nr = 0;
+	int nr_extents = 0;
+	int allocation = 0;
+	int nr_allocs = 0;
+	cpm_dir_entry *dir_entry = NULL;
+	int nbytes;
 
-	/* TODO: Handle multiple sectors, recs and allocs*/
-	while(1)
+	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled */
+	memset (&sector_buffer, 0x1a, SECT_USED); 
+	while((nbytes = read(host_fd, &sector_buffer, SECT_USED)) > 0)
 	{
-		if ((nbytes = read(host_fd, &sector_buffer, SECT_USED)) <= 0)
+		/* Is this a new Extent (i.e directory entry) ? */
+		if ((rec_nr % RECORD_MAX) == 0)
 		{
-			break;
+			/* if there is an existing directory entry, write it to disk */
+			if (dir_entry != NULL)
+			{
+				raw_to_cpm(dir_entry);
+				write_dir_entry(cpm_fd, dir_entry);
+			}
+			/* Get new directory entry */
+			dir_entry = find_free_dir_entry();
+			if (dir_entry == NULL)
+			{
+				error_exit(0, "No free directory entries");
+			}
+			/* Initialise it */
+			memset(&dir_entry->raw_entry, 0, sizeof(raw_dir_entry));
+			dir_entry->raw_entry.user = 0;
+			copy_filename(&dir_entry->raw_entry, cpm_filename);
+			dir_entry->raw_entry.extent_l = nr_extents;
+			dir_entry->raw_entry.extent_h = 0;
+			dir_entry->raw_entry.num_records = 0;
+			nr_extents++;
+			nr_allocs = 0;
 		}
-		write_block(cpm_fd, alloc, rec_nr, &sector_buffer);
+		// Is this a new allocation?
+		if ((rec_nr % RECS_PER_ALLOC) == 0)
+		{
+			allocation = find_free_alloc();
+			if (allocation < 0)
+			{
+				error_exit(0, "No free allocations");
+			}
+			dir_entry->raw_entry.allocation[nr_allocs] = allocation;
+			nr_allocs++;
+		}
+		dir_entry->raw_entry.num_records = (rec_nr % 128) + 1;
+		write_block(cpm_fd, allocation, rec_nr, &sector_buffer);
+		memset (&sector_buffer, 0x1a, SECT_USED);
 		rec_nr++;
 	}
+	/* File is done. Write out the last directory entry */
+	raw_to_cpm(dir_entry);
+	write_dir_entry(cpm_fd, dir_entry);
 }	
 
 cpm_dir_entry* find_dir_by_filename(const char *full_filename)
@@ -523,6 +510,7 @@ int find_free_alloc(void)
 	{
 		if(alloc_table[i] == 0)
 		{
+			alloc_table[i] = 1;
 			return i;
 		}
 	}
@@ -566,11 +554,11 @@ int read_block(int fd, int alloc_num, int rec_num, void* buffer)
 
 	if (lseek(fd, offset, SEEK_SET) < 0)
 	{
-		error_exit("Error seeking");
+		error_exit(errno, "Error seeking");
 	}
 	if (read(fd, buffer, SECT_USED) < 0)
 	{
-		error_exit("Error on read");
+		error_exit(errno, "Error on read");
 	}
 
 	return 0;
@@ -601,12 +589,12 @@ int write_block(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		if (lseek(fd, sector_offset, SEEK_SET) < 0)
 		{
-			error_exit("Error seeking");
+			error_exit(errno, "Error seeking");
 		}
 		
 		if (read(fd, checksum_buf, 7) < 0)
 		{
-			error_exit("Error on read checksum bytes");
+			error_exit(errno, "Error on read checksum bytes");
 		}
 		csum += checksum_buf[2];
 		csum += checksum_buf[3];
@@ -617,22 +605,22 @@ int write_block(int fd, int alloc_num, int rec_num, void* buffer)
 	/* write the data */
 	if (lseek(fd, data_offset, SEEK_SET) < 0)
 	{
-		error_exit("Error seeking");
+		error_exit(errno, "Error seeking");
 	}
 	if (write(fd, buffer, SECT_USED) < 0)
 	{
-		error_exit("Error on write");
+		error_exit(errno, "Error on write");
 	}
 
 	/* and the checksum */
 
 	if (lseek(fd, csum_offset, SEEK_SET) < 0)
 	{
-		error_exit("Error seeking");
+		error_exit(errno, "Error seeking");
 	}
 	if (write(fd, &csum, 1) < 0)
 	{
-		error_exit("Error on write");
+		error_exit(errno, "Error on write");
 	}
 
 	return 0;
@@ -761,7 +749,6 @@ void raw_to_cpm(cpm_dir_entry* entry)
 {
 	char *space_pos;
 
-//	entry->index = index;
 	raw_dir_entry *raw = &entry->raw_entry;
 	entry->next_entry = 0;
 	entry->user = raw->user;
@@ -808,4 +795,39 @@ uint8_t calc_checksum(u_char *buffer)
 		csum += buffer[i];
 	}
 	return csum;
+}
+
+/*
+ * Copy a "file.ext" format filename to a directory entry
+ * converting to upper case.
+ */
+void copy_filename(raw_dir_entry *entry, const char *filename)
+{
+	for (int i = 0 ; i < FILENAME_LEN ; i++)
+	{
+		if ((*filename == '\0') || (*filename == '.'))
+		{
+			entry->filename[i] = ' ';
+		}
+		else
+		{
+			entry->filename[i] = toupper(*filename++);
+		}
+	}
+	/* Skip the '.' if present */
+	if (*filename == '.')
+	{
+		filename++;
+	}
+	for (int i = 0 ; i < TYPE_LEN ; i++)
+	{
+		if (*filename == '\0')
+		{
+			entry->type[i] = ' ';
+		}
+		else
+		{
+			entry->type[i] = toupper(*filename++);
+		}
+	}
 }
