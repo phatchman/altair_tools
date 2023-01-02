@@ -108,8 +108,9 @@ int main(int argc, char**argv)
 	/* command line options */
 	int opt;
 	int do_dir, do_raw, do_get, do_put, do_help = 0;
-	char *disk_filename = NULL; /* Altair disk image filename */
-	char *filename = NULL;		/* host / cpm filename to get / put */
+	char *disk_filename = NULL; 	/* Altair disk image filename */
+	char *from_filename = NULL;		/* host / cpm filename to get / put */
+	char *to_filename = NULL;		/* host / cpm filename to get / put */
 
 	/* parse options */
 	while ((opt = getopt(argc, argv, "drhgpv")) != -1)
@@ -181,7 +182,15 @@ int main(int argc, char**argv)
 		} 
 		else 
 		{
-			filename = argv[optind++];
+			from_filename = argv[optind++];
+			if (optind < argc)
+			{
+				to_filename = argv[optind++];
+			}
+			else
+			{
+				to_filename = from_filename;
+			}
 		}
 	}
 	if (optind != argc) 
@@ -223,24 +232,24 @@ int main(int argc, char**argv)
 	/* Copy file from disk image to host */
 	if (do_get)
 	{
-		int fd_file = open(filename, O_CREAT | O_WRONLY, 0666);
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
 		if (fd_file < 0)
 		{
-			error_exit(errno, "Error opening file %s", filename);
+			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_from_cpm(fd_img, fd_file, basename(filename));
+		copy_from_cpm(fd_img, fd_file, basename(from_filename));
 		exit(EXIT_SUCCESS);
 	}
 
 	/* Copy file from host to disk image */
 	if (do_put)
 	{
-		int fd_file = open(filename, O_RDONLY);
+		int fd_file = open(from_filename, O_RDONLY);
 		if (fd_file < 0)
 		{
-			error_exit(errno, "Error opening file %s", filename);
+			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_to_cpm(fd_img, fd_file, basename(filename));
+		copy_to_cpm(fd_img, fd_file, basename(to_filename));
 		exit(EXIT_SUCCESS);
 	}
 
@@ -254,7 +263,7 @@ void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
 	printf("%s: -[d|r|h]v <disk_image>\n", progname);
-	printf("%s: -[g|p]v   <disk_image> <filename>\n", progname);
+	printf("%s: -[g|p]v   <disk_image> <src_filename> [dst_filename]\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
 	printf("\t-h\tHelp\n");
