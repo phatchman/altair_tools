@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <string.h>
 #include <stdint.h>
 #include <endian.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #define SECT_LEN	137
 #define SECT_USED	128	/* only 128 bytes of the 137 sector bytes contains data */
@@ -96,18 +98,158 @@ int write_block(int fd, int alloc_num, int rec_num, void* buffer);
 int compare_sort_ptr(const void* a, const void* b);
 int copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
 uint8_t calc_checksum(u_char *buffer);
+void print_usage(char* argv0); 
 
-void error_exit(char *str)
+/* 
+ * Print formatted error string and exit.
+ */
+void error_exit(char *str, ...)
 {
-	perror(str);
-	exit(1);
+	va_list argp;
+  	va_start(argp, str);
+
+	vfprintf(stderr, str, argp);
+	fprintf(stderr,": %s\n", strerror(errno));
+	exit(EXIT_FAILURE);
+}
+
+void print_usage(char* argv0)
+{
+	char *progname = basename(argv0);
+	printf("%s: -[d|r|h] <disk_image>\n", progname);
+	printf("%s: -[g|p]   <disk_image> <filename>\n", progname);
+	printf("\t-d\tDirectory listing\n");
+	printf("\t-r\tRaw directory listing\n");
+	printf("\t-h\tHelp\n");
+	printf("\t-g\tGet - Copy file from Altair disk image to host\n");
+	printf("\t-p\tPut - Copy file from host to Altair disk image\n");
 }
 
 int main(int argc, char**argv)
 {
-	int fd;
-	char *fn = "cpm.dsk";
+	int opt;
+	int open_mode;
+	/* command line options */
+	int do_dir, do_raw, do_get, do_put, do_help = 0;
+	char *disk_filename = NULL;
+	char *filename = NULL;
 
+	while ((opt = getopt(argc, argv, "drhgp")) != -1)
+	{
+		switch (opt)
+		{
+			case 'h':
+				do_help = 1;
+				break;
+			case 'd':
+				do_dir = 1;
+				open_mode = O_RDONLY;
+				break;
+			case 'r':
+				do_raw = 1;
+				open_mode = O_RDONLY;
+				break;
+			case 'g':
+				do_get = 1;
+				open_mode = O_RDONLY;
+				break;
+			case 'p':
+				do_put = 1;
+				open_mode = O_RDWR;
+				break;
+			case '?':
+				exit(EXIT_FAILURE);
+		}
+	}
+	/* make sure only one option selected */
+	int nr_opts = do_dir + do_raw + do_help + do_put + do_get;
+	if (nr_opts == 0) 
+	{
+		fprintf(stderr, "%s: No option supplied.\n", basename(argv[0]));
+		exit(EXIT_FAILURE);
+	}
+	if (nr_opts > 1)
+	{
+		fprintf(stderr, "%s: Too many options supplied.\n", basename(argv[0]));
+		exit(EXIT_FAILURE);
+	}
+	if (do_help)
+	{
+			print_usage(argv[0]);
+			exit(EXIT_SUCCESS);
+	}
+	/* get the disk image filename */
+	if (optind == argc)
+	{
+		fprintf(stderr, "%s: <disk_image> not supplied.\n", basename(argv[0]));
+		exit(EXIT_FAILURE);
+	}
+	else
+	{
+		disk_filename = argv[optind++];
+	}
+
+	/* Get and Put need an additional filename */
+	if (do_get || do_put) 
+	{
+		if (optind == argc) 
+		{
+			fprintf(stderr, "%s: <filename> not supplied\n", basename(argv[0]));
+			exit(EXIT_FAILURE);
+		} 
+		else 
+		{
+			filename = argv[optind++];
+		}
+	}
+	if (optind != argc) 
+	{
+		fprintf(stderr, "%s: Too many arguments supplied.\n", basename(argv[0]));
+		exit(EXIT_FAILURE);
+	}
+
+	if (do_get) printf("Get: %s %s\n", disk_filename, filename);
+	if (do_put) printf("Put: %s %s\n", disk_filename, filename);
+	if (do_raw) printf("Raw: %s\n", disk_filename);
+	if (do_dir) printf("Dir: %s\n", disk_filename);
+
+	/*
+	 * Start of processing
+	 */
+	int fd_img = -1;		/* fd of disk image */
+	
+	/* Initialise tables */
+	alloc_table[0] = alloc_table[1] = 1;
+
+	/* Open the Altair disk image*/
+	if ((fd_img = open(disk_filename, open_mode)) < 0)
+	{
+		error_exit("Error opening file %s", disk_filename);
+	}
+
+	load_directory_table(fd_img);
+
+	if (do_raw)
+	{
+		raw_directory_list();
+		exit(EXIT_SUCCESS);
+	}
+	if (do_get)
+	{
+		int fd_file = open(filename, O_WRONLY, 0666);
+		if (fd_file < 0)
+		{
+			error_exit("Error opening file %s", filename);
+		}
+		copy_from_cpm(fd_img, fd_file, filename);
+		exit(EXIT_SUCCESS);
+	}
+
+
+	exit(EXIT_SUCCESS);
+
+
+#if 0
 	if (argc == 2)
 	{
 		fn = argv[1];
@@ -142,17 +284,19 @@ int main(int argc, char**argv)
 	}
 	copy_to_cpm(fd, fd2, "WRITEY.TXT");
 /**/
+#endif
 	return 0;
 }
 
 void raw_directory_list()
 {
+	printf("INDEX:U:FILENAME:TYP:EXT:RECNO:[ALLOCATIONS]\n");
 	for (int i = 0 ; i < NUM_DIRS ; i++)
 	{
 		cpm_dir_entry *entry = &dir_table[i];
 		if (entry->valid)
 		{
-			printf("<%03d>:%u:%s:%s:(%u):(%u)[", 
+			printf("<%03d>:%u:%s:%s:(%u):(%03u):[", 
 				entry->index,
 				entry->user, entry->filename, entry->type,
 				entry->extent_nr, entry->num_records);
