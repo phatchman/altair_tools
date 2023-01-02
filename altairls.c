@@ -68,18 +68,7 @@ cpm_dir_entry*	sorted_dir_table[NUM_DIRS];		/* Pointers to entries, sorted by na
 uint8_t			alloc_table[TOTAL_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
 /* Skew table for tracks 0-5 */
-int skew_table_0[] = {
-	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
-	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
-};
-
-/* skew table for tracks 6+ */
-/*int skew_table_6[] = {
-	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
-	18,26,02,10,20,28,4,12,22,30,6,14,24,32,8,16
-};*/
-
-int skew_table_6[] = {
+int skew_table[] = {
 	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
 	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
 };
@@ -660,12 +649,12 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 	/* Need to "skew" the logical sector into a physical sector */
 	if (*track < 6)		
 	{
-		*sector = skew_table_0[logical_sector];
+		*sector = skew_table[logical_sector];
 	}
 	else
 	{
 		/* This calculation is due to historical weirdness. It just is how it works.*/
-		*sector = (((skew_table_6[logical_sector] - 1) * 17) % 32) + 1;
+		*sector = (((skew_table[logical_sector] - 1) * 17) % 32) + 1;
 	}
 }
 
