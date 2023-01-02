@@ -9,30 +9,30 @@
 #include <errno.h>
 #include <stdarg.h>
 
-#define SECT_LEN	137
-#define SECT_USED	128	/* only 128 bytes of the 137 sector bytes contains data */
-#define NUM_SECTORS	32
-#define TRACK_LEN 	(SECT_LEN * NUM_SECTORS)
-#define NUM_TRACKS	77
-#define RES_TRACKS	2
+#define SECT_LEN		137
+#define SECT_USED		128	/* only 128 bytes of the 137 sector bytes contains data */
+#define NUM_SECTORS		32
+#define TRACK_LEN 		(SECT_LEN * NUM_SECTORS)
+#define NUM_TRACKS		77
+#define RES_TRACKS		2
 #define SECT_OFFSET_0	3 /* Sectors are offset by 3 bytes on TRACKS 0-5  */
 #define SECT_OFFSET_6	7 /* Sectors are offset by 7 bytes on TRACKS 6-76 */
-#define DIR_OFFSET 	(2 * TRACK_LEN + SECT_OFFSET_0)	/* Directory is on TRACK 2 */
+#define DIR_OFFSET 		(2 * TRACK_LEN + SECT_OFFSET_0)	/* Directory is on TRACK 2 */
 #define DIR_ENTRY_LEN	32
-#define NUM_DIRS	64
+#define NUM_DIRS		64
 #define DIRS_PER_SECTOR (SECT_USED / DIR_ENTRY_LEN)
 #define RECS_PER_ALLOC	16
 #define TOTAL_ALLOCS	(NUM_TRACKS - RES_TRACKS) * 2	/* This * 2 should be calculated */
-#define CSUM_OFF_T0	132
-#define CSUM_OFF_T6	4
+#define CSUM_OFF_T0		132
+#define CSUM_OFF_T6		4
 
 
-#define FILENAME_LEN 8
-#define TYPE_LEN	 3
-#define MAX_USER	15
-#define DELETED		0xE5
-#define NR_ALLOCS	16	/* TODO: This needs to be renamed. Too easily confused with TOTAL_ALLOCS */
-#define RECORD_MAX	128
+#define FILENAME_LEN 	8
+#define TYPE_LEN	 	3
+#define MAX_USER		15
+#define DELETED			0xE5
+#define NR_ALLOCS		16	/* TODO: This needs to be renamed. Too easily confused with TOTAL_ALLOCS */
+#define RECORD_MAX		128
 
 
 typedef struct raw_dir_entry
@@ -56,8 +56,10 @@ typedef struct cpm_dir_entry
 	int				user;
 	char			filename[FILENAME_LEN+1];
 	char			type[TYPE_LEN+1];
+	char			attribs[3];
 	char			full_filename[FILENAME_LEN+TYPE_LEN+2];
 	int				num_records;
+	int				num_allocs;
 	struct cpm_dir_entry*	next_entry;
 }	cpm_dir_entry;
 
@@ -86,6 +88,7 @@ int skew_table_6[] = {
 void raw_to_cpm( cpm_dir_entry* entry);
 int load_directory_table(int fd); 
 void raw_directory_list();
+void directory_list();
 int compare_sort(const void* a, const void* b);
 int copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
 void convert_track_sector(int allocation, int record, int* track, int* sector);
@@ -229,14 +232,23 @@ int main(int argc, char**argv)
 
 	load_directory_table(fd_img);
 
+	/* Raw Directory Listing */
 	if (do_raw)
 	{
 		raw_directory_list();
 		exit(EXIT_SUCCESS);
 	}
+	/* Formatted directory listing */
+	if (do_dir)
+	{
+		directory_list();
+		exit(EXIT_SUCCESS);
+	}
+
+	/* Copy file from disk image to host */
 	if (do_get)
 	{
-		int fd_file = open(filename, O_WRONLY, 0666);
+		int fd_file = open(filename, O_CREAT | O_WRONLY, 0666);
 		if (fd_file < 0)
 		{
 			error_exit("Error opening file %s", filename);
@@ -288,17 +300,80 @@ int main(int argc, char**argv)
 	return 0;
 }
 
+void directory_list(void)
+{
+	int file_count = 0;
+	int kb_used = 0;
+	int kb_free = 0;
+	int entry_count = 0;
+	printf("Name     Ext  Length Used U At\n");
+
+	cpm_dir_entry *entry = NULL;
+	int this_records = 0;
+	int this_allocs = 0;
+	int this_kb = 0;
+
+	for (int i = 0 ; i < NUM_DIRS ; i++)
+	{
+		/* Valid entries are sorted before invalid ones */
+		entry = sorted_dir_table[i];
+		entry_count++;
+		if (!entry->valid)
+		{
+			break;
+		}
+		/* If this is the first record for this file, then reset the totals */
+		if(entry->extent_nr == 0)
+		{
+			file_count++;
+			this_records = 0;
+			this_allocs = 0;
+			this_kb = 0;
+		}
+	
+		this_records += entry->num_records;
+		this_allocs += entry->num_allocs;
+
+		/* If there are no more entries, print out the entry */
+		if(entry->next_entry == NULL)
+		{
+			this_kb += (this_allocs * RECS_PER_ALLOC * SECT_USED) / 1024;
+			kb_used += this_kb;
+
+			printf("%s %s %6dB %3dK %d %s\n", 
+				entry->filename, 
+				entry->type,
+				this_records * SECT_LEN,
+				this_kb,
+				entry->user,
+				entry->attribs);
+		}
+	}
+	for (int i = 0 ; i < TOTAL_ALLOCS ; i++)
+	{
+		if(alloc_table[i] == 0)
+		{
+			kb_free+= RECS_PER_ALLOC * SECT_USED / 1024;
+		}
+	}
+	printf("%d file(s), occupying %dK of %dK total capacity\n",
+			file_count, kb_used, kb_used + kb_free);
+	printf("%d directory entries and %dK bytes remain\n",
+			NUM_DIRS - entry_count, kb_free);
+}
+
 void raw_directory_list()
 {
-	printf("INDEX:U:FILENAME:TYP:EXT:RECNO:[ALLOCATIONS]\n");
+	printf("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n");
 	for (int i = 0 ; i < NUM_DIRS ; i++)
 	{
 		cpm_dir_entry *entry = &dir_table[i];
 		if (entry->valid)
 		{
-			printf("<%03d>:%u:%s:%s:(%u):(%03u):[", 
+			printf("%03d:%u:%s:%s:%s:%03u:%03u:[", 
 				entry->index,
 				entry->user, entry->filename, entry->type,
+				entry->attribs,
 				entry->extent_nr, entry->num_records);
 			for (int i = 0 ; i < NR_ALLOCS ; i++)
 			{
@@ -315,11 +390,16 @@ void raw_directory_list()
 		}
 	}
 	printf ("FREE ALLOCATIONS:\n");
+	int nr_output = 0;
 	for (int i = 0 ; i < TOTAL_ALLOCS ; i++)
 	{
 		if (alloc_table[i] == 0)
 		{
-			printf("%d, ", i);
+			printf("%03d ", i);
+			if ((++nr_output % 16) == 0)
+			{
+				printf("\n");
+			}	
 		}
 	}
 	printf("\n");
@@ -426,7 +506,7 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename)
 {
 	for (int i = 0 ; i < NUM_DIRS ; i++)
 	{
-		if (strcmp(dir_table[i].full_filename, full_filename) == 0)
+		if (strcasecmp(dir_table[i].full_filename, full_filename) == 0)
 		{
 			return &dir_table[i];
 		}
@@ -699,8 +779,17 @@ void raw_to_cpm(cpm_dir_entry* entry)
 	entry->extent_nr = raw->extent_h * 32 + raw->extent_l;
 	strncpy(entry->filename, raw->filename, FILENAME_LEN);
 	entry->filename[FILENAME_LEN] = '\0';
-	strncpy(entry->type, raw->type, TYPE_LEN);
+	for (int i = 0 ; i < TYPE_LEN ; i++)
+	{
+		/* remove the top bit as it encodes file attributes*/
+		entry->type[i] = raw->type[i] & 0x7f;	
+	}
 	entry->type[TYPE_LEN] = '\0';
+	/* If high bit is set on 1st TYPE char, then read-only, otherwise read-write */
+	entry->attribs[0] = (raw->type[0] & 0x80) ? 'R' : 'W';
+	/* If high bit is set on 2nd TYPE char, then this is a "system/hidden" file */
+	entry->attribs[1] = (raw->type[1] & 0x80) ? 'S' : ' ';
+	entry->attribs[2] = '\0';
 	strcpy(entry->full_filename, entry->filename);
 	space_pos = strchr(entry->full_filename, ' ');
 	if (space_pos != NULL)
@@ -711,6 +800,14 @@ void raw_to_cpm(cpm_dir_entry* entry)
 	strcat(entry->full_filename, entry->type);
 
 	entry->num_records = raw->num_records;
+	int num_allocs = 0;
+	for (int i = 0 ; i < NR_ALLOCS ; i++)
+	{
+		if (raw->allocation[i] == 0)
+		break;
+		num_allocs++;
+	}
+	entry->num_allocs = num_allocs;
 	entry->valid = 1;
 }
 
