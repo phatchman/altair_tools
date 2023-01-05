@@ -1,0 +1,9 @@
+*.dsk
+*.DSK
+*.com
+*.COM
+*.txt
+*.TXT
+CMakeFiles/*
+cmake_install.cmake
+Makefile
