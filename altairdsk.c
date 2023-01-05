@@ -72,6 +72,7 @@
 
 #define FILENAME_LEN 	8	
 #define TYPE_LEN	 	3
+#define FULL_FILENAME_LEN (FILENAME_LEN+TYPE_LEN+2)
 #define MAX_USER		15
 #define DELETED_FLAG	0xe5
 #define ALLOCS_PER_ENT	16	
@@ -141,6 +142,7 @@ void write_raw_sector(int fd, int track, int sector, void* buffer);
 void convert_track_sector(int allocation, int record, int* track, int* sector);
 uint8_t calc_checksum(uint8_t *buffer);
 
+void validate_cpm_filename(const char *filename, char *validated_filename);
 int compare_sort(const void* a, const void* b);
 int compare_sort_ptr(const void* a, const void* b);
 
@@ -623,10 +625,16 @@ void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_m
 void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 {
 	uint8_t sector_buffer[SECT_USED];
+	char valid_filename[FULL_FILENAME_LEN];
 
-	if (find_dir_by_filename(cpm_filename) != NULL)
+	validate_cpm_filename(cpm_filename, valid_filename);
+	if (strcasecmp(cpm_filename, valid_filename))
 	{
-		error_exit(EEXIST, "Error creating file %s", cpm_filename);
+		fprintf(stderr, "Converting filename %s to %s\n", cpm_filename, valid_filename);
+	}
+	if (find_dir_by_filename(valid_filename) != NULL)
+	{
+		error_exit(EEXIST, "Error creating file %s", valid_filename);
 	}
 	
 	int rec_nr = 0;
@@ -658,7 +666,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 			/* Initialise it */
 			memset(&dir_entry->raw_entry, 0, sizeof(raw_dir_entry));
 			dir_entry->raw_entry.user = 0;
-			copy_filename(&dir_entry->raw_entry, cpm_filename);
+			copy_filename(&dir_entry->raw_entry, valid_filename);
 			dir_entry->raw_entry.extent_l = nr_extents;
 			dir_entry->raw_entry.extent_h = 0;
 			dir_entry->raw_entry.num_records = 0;
@@ -677,7 +685,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 					raw_to_cpmdir(dir_entry);
 					write_dir_entry(cpm_fd, dir_entry);
 				}
-				error_exit(0, "Error writing %s: No free allocations", cpm_filename);
+				error_exit(0, "Error writing %s: No free allocations", valid_filename);
 			}
 			dir_entry->raw_entry.allocation[nr_allocs] = allocation;
 			nr_allocs++;
@@ -884,13 +892,19 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
 	entry->attribs[2] = '\0';
 	strcpy(entry->full_filename, entry->filename);
 	space_pos = strchr(entry->full_filename, ' ');
+	/* strip out spaces from filename */
 	if (space_pos != NULL)
 	{
 		*space_pos = '\0';
 	}
 	strcat(entry->full_filename,".");
 	strcat(entry->full_filename, entry->type);
-
+	space_pos = strchr(entry->full_filename, ' ');
+	/* strip out spaces from type */
+	if (space_pos != NULL)
+	{
+		*space_pos = '\0';
+	}
 	entry->num_records = raw->num_records;
 	int num_allocs = 0;
 	for (int i = 0 ; i < ALLOCS_PER_ENT ; i++)
@@ -1112,6 +1126,79 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 		/* This calculation is due to historical weirdness. It just is how it works.*/
 		*sector = (((skew_table[logical_sector] - 1) * 17) % 32) + 1;
 	}
+}
+
+/*
+ * Check that the passed in filename can be represented as "8.3"
+ * CPM Manual says that filenames cannot include:
+ * < > . , ; : = ? * [ ] % | ( ) / \
+ * while all alphanumerics and remaining special characters are allowed.
+ * We'll also enforce that it is at least a "printable" character
+ */
+void validate_cpm_filename(const char *filename, char *validated_filename)
+{
+	const char *in_char = filename;
+	char *out_char = validated_filename;
+	int found_dot = 0;
+	int char_count = 0;
+	int ext_count = 0;
+	while (*in_char != '\0')
+	{
+		if (isprint(*in_char) &&
+			*in_char != '<' && *in_char != '>' &&
+			*in_char != ',' && *in_char != ';' &&
+			*in_char != ':' && *in_char != '?' &&
+			*in_char != '*' && *in_char != '[' &&
+			*in_char != '[' && *in_char != ']' &&
+			*in_char != '%' && *in_char != '|' &&
+			*in_char != '(' && *in_char != ')' &&
+			*in_char != '/' && *in_char != '\\')
+		{
+			if (*in_char == '.')
+			{
+				if (found_dot)
+				{
+					/* Only process first '.' in filename */
+					in_char++;
+					continue;
+				}
+				found_dot = 1;
+			}
+			/* It's a valid filename character */
+			/* copy the character */
+			*out_char++ = toupper(*in_char++);
+			char_count++;
+			/* If we have a file filename (excluding ext), but not found a dot */
+			/* then add a dot and ignore everything up until the next dot */
+			if (char_count == FILENAME_LEN && !found_dot)
+			{
+				/* make sure filename contains a separator */
+				*out_char++ = '.';
+				char_count++;
+				found_dot = 1;
+				/* skip multiple consecutive dots in filename e.g. m80......com */
+				while (*in_char == '.' && *in_char != '\0') 
+					in_char++;
+				/* now go looking for the separator */
+				while (*in_char != '.' && *in_char != '\0')
+					in_char++;
+				/* Skip over the dot, it has already been added */
+				if (*in_char != '\0')
+					in_char++;
+			}
+			if (char_count == FULL_FILENAME_LEN - 1)
+			{
+				/* otherwise end of filename. done */
+				break;
+			}
+			if (found_dot && ext_count++ == TYPE_LEN)
+			{
+				/* max extension length reached */
+				break;
+			}
+		}		
+	}
+	*out_char = '\0';
 }
 
 
