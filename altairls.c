@@ -5,7 +5,6 @@
 #include <libgen.h>
 #include <string.h>
 #include <stdint.h>
-#include <endian.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <ctype.h>
@@ -16,21 +15,29 @@
 #define TRACK_LEN 		(SECT_LEN * NUM_SECTORS)
 #define NUM_TRACKS		77	/* Total tracks on disk */
 #define RES_TRACKS		2	/* Unused tracks - reserved for OS */
-#define SECT_OFFSET_0	3 	/* Sectors are offset by 3 bytes on TRACKS 0-5  */
-#define SECT_OFFSET_6	7 	/* Sectors are offset by 7 bytes on TRACKS 6-76 */
 #define DIR_OFFSET 		(2 * TRACK_LEN + SECT_OFFSET_0)	/* Directory is on TRACK 2 */
 #define DIR_ENTRY_LEN	32	/* Length of a single directory entry (extent)*/
 #define NUM_DIRS		64	/* Total number of directory entries */
 #define DIRS_PER_SECTOR (SECT_USED / DIR_ENTRY_LEN)
 #define RECS_PER_ALLOC	16	/* Number of records per allocation */
 #define TOTAL_ALLOCS	(NUM_TRACKS - RES_TRACKS) * 2	/* This * 2 should be calculated */
+#define TRACK_OFF_T0	0
+#define DATA_OFF_T0		3	/* Sector data is offset by 3 bytes on TRACKS 0-5  */
+#define STOP_OFF_T0		131
 #define CSUM_OFF_T0		132	/* Checksum offset for Track 0-5 */
+#define	ZERO_OFF_T0		133
+
+#define TRACK_OFF_T6	0
+#define SECT_OFF_T6		1	
 #define CSUM_OFF_T6		4	/* Checksum offset for Track 6+ */
+#define DATA_OFF_T6		7   /* Sectors data is offset by 7 bytes on TRACKS 6-76 */
+#define STOP_OFF_T6		135
+#define	ZERO_OFF_T6		136
 
 #define FILENAME_LEN 	8	
 #define TYPE_LEN	 	3
 #define MAX_USER		15
-#define DELETED			0xE5
+#define DELETED_FLAG	0xe5
 #define ALLOCS_PER_ENT	16	
 #define RECORD_MAX		128	/* Max records per directory entry (extent) */
 
@@ -88,12 +95,15 @@ cpm_dir_entry* find_free_dir_entry(void);
 void raw_to_cpmdir(cpm_dir_entry* entry);
 int find_free_alloc(void);
 void copy_filename(raw_dir_entry *entry, const char *filename);
+void erase_file(int fd, const char* cpm_filename);
+void format_disk(int fd);
 
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
 void write_sector(int fd, int alloc_num, int rec_num, void* buffer);
+void write_raw_sector(int fd, int track, int sector, void* buffer);
 void convert_track_sector(int allocation, int record, int* track, int* sector);
-uint8_t calc_checksum(u_char *buffer);
+uint8_t calc_checksum(uint8_t *buffer);
 
 int compare_sort(const void* a, const void* b);
 int compare_sort_ptr(const void* a, const void* b);
@@ -104,16 +114,19 @@ int VERBOSE = 0;	/* Print out Sector read/write information */
 int main(int argc, char**argv)
 {
 	int open_mode;	/* read or write depending on selected options */
+	mode_t open_umask = 0666;
 	
 	/* command line options */
 	int opt;
-	int do_dir, do_raw, do_get, do_put, do_help = 0;
+	int do_dir = 0, do_raw = 0, do_get = 0;
+	int do_put = 0 , do_help = 0, do_format = 0;
+	int do_erase = 0;
 	char *disk_filename = NULL; 	/* Altair disk image filename */
 	char *from_filename = NULL;		/* host / cpm filename to get / put */
 	char *to_filename = NULL;		/* host / cpm filename to get / put */
 
 	/* parse options */
-	while ((opt = getopt(argc, argv, "drhgpv")) != -1)
+	while ((opt = getopt(argc, argv, "drhgpvfe")) != -1)
 	{
 		switch (opt)
 		{
@@ -139,12 +152,22 @@ int main(int argc, char**argv)
 			case 'v':
 				VERBOSE = 1;
 				break;
+			case 'e':
+				do_erase = 1;
+				open_mode = O_RDWR;
+				break;
+			case 'f':
+				do_format = 1;
+				open_mode = O_WRONLY | O_CREAT;
+				break;
 			case '?':
 				exit(EXIT_FAILURE);
 		}
 	}
 	/* make sure only one option selected */
-	int nr_opts = do_dir + do_raw + do_help + do_put + do_get;
+	int nr_opts = do_dir + do_raw + do_help + 
+				  do_put + do_get + do_format +
+				  do_erase;
 	if (nr_opts > 1)
 	{
 		fprintf(stderr, "%s: Too many options supplied.\n", basename(argv[0]));
@@ -172,8 +195,9 @@ int main(int argc, char**argv)
 		disk_filename = argv[optind++];
 	}
 
-	/* Get and Put need an additional filename */
-	if (do_get || do_put) 
+	/* Get and Put need a from_filename and an optional to_filename*/
+	/* Erase just needs a from_filename */
+	if (do_get || do_put || do_erase) 
 	{
 		if (optind == argc) 
 		{
@@ -183,7 +207,7 @@ int main(int argc, char**argv)
 		else 
 		{
 			from_filename = argv[optind++];
-			if (optind < argc)
+			if (!do_erase && optind < argc)
 			{
 				to_filename = argv[optind++];
 			}
@@ -208,13 +232,16 @@ int main(int argc, char**argv)
 	alloc_table[0] = alloc_table[1] = 1;
 
 	/* Open the Altair disk image*/
-	if ((fd_img = open(disk_filename, open_mode)) < 0)
+	if ((fd_img = open(disk_filename, open_mode, open_umask)) < 0)
 	{
 		error_exit(errno, "Error opening file %s", disk_filename);
 	}
 
 	/* Read all directory entries */
-	load_directory_table(fd_img);
+	if (!do_format)
+	{
+		load_directory_table(fd_img);
+	}
 
 	/* Raw Directory Listing */
 	if (do_raw)
@@ -252,6 +279,16 @@ int main(int argc, char**argv)
 		copy_to_cpm(fd_img, fd_file, basename(to_filename));
 		exit(EXIT_SUCCESS);
 	}
+	if (do_erase)
+	{
+		erase_file(fd_img, from_filename);
+	}
+
+	if (do_format)
+	{
+		format_disk(fd_img);
+		exit(EXIT_SUCCESS);
+	}
 
 	return 0;
 }
@@ -262,8 +299,9 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|h]v <disk_image>\n", progname);
-	printf("%s: -[g|p]v   <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -[d|r]v	<disk_image>\n", progname);
+	printf("%s: -[g|p]v <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
 	printf("\t-h\tHelp\n");
@@ -309,11 +347,11 @@ void directory_list(void)
 	{
 		/* Valid entries are sorted before invalid ones */
 		entry = sorted_dir_table[i];
-		entry_count++;
 		if (!entry->valid)
 		{
 			break;
 		}
+		entry_count++;
 		/* If this is the first record for this file, then reset the totals */
 		if(entry->extent_nr == 0)
 		{
@@ -427,7 +465,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	 * Convert ALLOCATION / RECORD into a disk BLOCK that is converted to an
 	 * offset within the DISK image file.
 	 */
-	u_char block_data[SECT_USED];
+	uint8_t block_data[SECT_USED];
 
 	while (dir_entry != NULL)
 	{
@@ -523,7 +561,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
  */
 void load_directory_table(int fd)
 {
-	u_char sector_data[SECT_USED];
+	uint8_t sector_data[SECT_USED];
 
 	for (int i = 0 ; i < NUM_DIRS / DIRS_PER_SECTOR; i++)
 	{
@@ -533,6 +571,7 @@ void load_directory_table(int fd)
 		int	record = (i % RECS_PER_ALLOC);
 
 		read_sector(fd, allocation, record, &sector_data);
+		/* TODO: Why is this 4???? Make a constant instead */
 		for (int j = 0 ; j < 4 ; j++)
 		{
 			/* Calculate which directory entry number this is */
@@ -547,9 +586,9 @@ void load_directory_table(int fd)
 				raw_to_cpmdir(entry);
 
 				/* Mark off the used allocations */
-				for (int j = 0 ; j < ALLOCS_PER_ENT ; j++)
+				for (int k = 0 ; k < ALLOCS_PER_ENT ; k++)
 				{
-					uint8_t alloc = entry->raw_entry.allocation[j];
+					uint8_t alloc = entry->raw_entry.allocation[k];
 					
 					/* Allocation of 0, means no more allocations used by this entry */
 					if (alloc == 0)
@@ -586,6 +625,71 @@ void load_directory_table(int fd)
 	}
 }
 
+/*
+ * Erase a file
+ */
+void erase_file(int fd, const char* cpm_filename)
+{
+	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename);
+	if (entry == NULL)
+	{
+		error_exit(ENOENT, "Error erasing %s", cpm_filename);
+	}
+	/* Set user on all directory entries for this file to "DELETED" */
+	do
+	{
+		entry->raw_entry.user = DELETED_FLAG;
+		write_dir_entry(fd,entry);
+	} while ((entry = entry->next_entry) != NULL);
+	
+}
+
+
+/*
+ * Create a newly formatted disk / format an existing disk.
+ */
+void format_disk(int fd)
+{
+	uint8_t sect_data[SECT_LEN];
+
+	memset(sect_data, 0xe5, SECT_LEN);
+	sect_data[1] = 0x00;
+	sect_data[2] = 0x01;
+	sect_data[STOP_OFF_T0] = 0xff;
+	memset(sect_data+ZERO_OFF_T0, 0, SECT_LEN - ZERO_OFF_T0);
+
+	for (int track = 0 ; track < NUM_TRACKS ; track++)
+	{
+		if (track == 6)
+		{
+			memset(sect_data, 0xe5, SECT_LEN);
+			sect_data[2] = 0x01;
+			sect_data[STOP_OFF_T6] = 0xff;
+			sect_data[ZERO_OFF_T6] = 0x00;
+			memset(sect_data+ZERO_OFF_T6, 0, SECT_LEN - ZERO_OFF_T6);
+		}
+		for (int sector = 0 ; sector < NUM_SECTORS ; sector++)
+		{
+			if (track < 6)
+			{
+				sect_data[TRACK_OFF_T0] = track | 0x80;
+				sect_data[CSUM_OFF_T0] = calc_checksum(sect_data+DATA_OFF_T0);
+			}
+			else
+			{
+				sect_data[TRACK_OFF_T6] = track | 0x80;
+				sect_data[SECT_OFF_T6] = (sector * 17) % 32;
+				uint8_t checksum = calc_checksum(sect_data+DATA_OFF_T6);
+				checksum += sect_data[2];
+				checksum += sect_data[3];
+				checksum += sect_data[5];
+				checksum += sect_data[6];
+				sect_data[CSUM_OFF_T6] = checksum;
+			}
+			write_raw_sector(fd, track, sector + 1, &sect_data);
+		}
+	}
+}
 
 /*
  * Find the directory entry related to a filename.
@@ -718,7 +822,7 @@ void copy_filename(raw_dir_entry *entry, const char *filename)
  */
 void write_dir_entry(int fd, cpm_dir_entry* entry)
 {
-	u_char sector_data[SECT_USED];
+	uint8_t sector_data[SECT_USED];
 
 	int allocation = 0;			/* Directories are on allocation 0 */
 	int record = entry->index / DIRS_PER_SECTOR;
@@ -747,7 +851,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 
 	convert_track_sector(alloc_num, rec_num, &track, &sector);
 	offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
-	offset += (track < 6) ? SECT_OFFSET_0 : SECT_OFFSET_6;
+	offset += (track < 6) ? DATA_OFF_T0 : DATA_OFF_T6;
 	if (VERBOSE)
 		printf("Reading from TRACK[%d], SECTOR[%d], OFFSET[%d]\n", track, sector, offset);
 
@@ -776,7 +880,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	int sector_offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
 
 	/* Get the offset to start of data, relative to the start of sector */
-	int data_offset = sector_offset + ((track < 6) ? SECT_OFFSET_0 : SECT_OFFSET_6);
+	int data_offset = sector_offset + ((track < 6) ? DATA_OFF_T0 : DATA_OFF_T6);
 
 	/* calculate the checksum and offset */	
 	uint16_t csum = calc_checksum(buffer);
@@ -824,6 +928,31 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 		error_exit(errno, "write_sector: Error on write");
 	}
 }
+
+
+/*
+ * Write an newly formatted sector
+ * Must contain all sector data, including checksum, stop bytes etc.
+ */
+void write_raw_sector(int fd, int track, int sector, void* buffer)
+{
+	/* offset to start of sector */
+	int sector_offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
+
+	if (VERBOSE)
+		printf("Writing to TRACK[%d], SECTOR[%d], OFFSET[%d] (RAW)\n", track, sector, sector_offset);
+
+	/* write the data */
+	if (lseek(fd, sector_offset, SEEK_SET) < 0)
+	{
+		error_exit(errno, "write_raw_sector: Error seeking");
+	}
+	if (write(fd, buffer, SECT_LEN) < 0)
+	{
+		error_exit(errno, "write_raw_sector: Error on write");
+	}
+}
+
 
 /* 
  * Convert allocation and record from an extent into track and sector 
@@ -880,7 +1009,7 @@ int compare_sort_ptr(const void* a, const void* b)
  * Note this is not the full checksum as 4 non-data bytes
  * need to be included in the checksum.
  */
-uint8_t calc_checksum(u_char *buffer)
+uint8_t calc_checksum(uint8_t *buffer)
 {
 	uint8_t csum = 0;
 	for (int i = 0 ; i < SECT_USED ; i++)
@@ -889,4 +1018,3 @@ uint8_t calc_checksum(u_char *buffer)
 	}
 	return csum;
 }
-
