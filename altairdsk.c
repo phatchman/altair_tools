@@ -1,4 +1,3 @@
-
 /*
  *****************************************************************************
  * ALTAIR Disk Tools 
@@ -29,6 +28,10 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ */
+/* TODO: 	- FIX Issue when source filename too long 
+ *			- FIX Issue when extension not supplied, creating duplicate filenames
+ *			- Add wildcards for multi-get
  */
 
 #include <stdio.h>
@@ -119,7 +122,7 @@ void error_exit(int eno, char *str, ...);
 
 void directory_list();
 void raw_directory_list();
-void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
+void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_mode);
 void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
 
 void load_directory_table(int fd); 
@@ -153,13 +156,14 @@ int main(int argc, char**argv)
 	int opt;
 	int do_dir = 0, do_raw = 0, do_get = 0;
 	int do_put = 0 , do_help = 0, do_format = 0;
-	int do_erase = 0;
+	int do_erase = 0, do_multiput = 0, do_multiget = 0;
+	int text_mode = -1;				/* auto-detect text/binary */
 	char *disk_filename = NULL; 	/* Altair disk image filename */
 	char *from_filename = NULL;		/* host / cpm filename to get / put */
 	char *to_filename = NULL;		/* host / cpm filename to get / put */
 
 	/* parse options */
-	while ((opt = getopt(argc, argv, "drhgpvFe")) != -1)
+	while ((opt = getopt(argc, argv, "drhgGpPvFetb")) != -1)
 	{
 		switch (opt)
 		{
@@ -178,8 +182,16 @@ int main(int argc, char**argv)
 				do_get = 1;
 				open_mode = O_RDONLY;
 				break;
+			case 'G':
+				do_multiget = 1;
+				open_mode = O_RDONLY;
+				break;
 			case 'p':
 				do_put = 1;
+				open_mode = O_RDWR;
+				break;
+			case 'P':
+				do_multiput = 1;
 				open_mode = O_RDWR;
 				break;
 			case 'v':
@@ -193,6 +205,12 @@ int main(int argc, char**argv)
 				do_format = 1;
 				open_mode = O_WRONLY | O_CREAT;
 				break;
+			case 't':
+				text_mode = 1;
+				break;
+			case 'b':
+				text_mode = 0;
+				break;
 			case '?':
 				exit(EXIT_FAILURE);
 		}
@@ -200,7 +218,7 @@ int main(int argc, char**argv)
 	/* make sure only one option selected */
 	int nr_opts = do_dir + do_raw + do_help + 
 				  do_put + do_get + do_format +
-				  do_erase;
+				  do_erase + do_multiget + do_multiput;
 	if (nr_opts > 1)
 	{
 		fprintf(stderr, "%s: Too many options supplied.\n", basename(argv[0]));
@@ -250,7 +268,17 @@ int main(int argc, char**argv)
 			}
 		}
 	}
-	if (optind != argc) 
+	/* For multiget and multi-put, just make sure at least 1 filename supplied */
+	/* Filenames will be processed later */
+	if (do_multiget || do_multiput)
+	{
+		if (optind == argc) 
+		{
+			fprintf(stderr, "%s: <filename ...> not supplied\n", basename(argv[0]));
+			exit(EXIT_FAILURE);
+		} 
+	} 
+	else if (optind != argc) 
 	{
 		fprintf(stderr, "%s: Too many arguments supplied.\n", basename(argv[0]));
 		exit(EXIT_FAILURE);
@@ -292,12 +320,42 @@ int main(int argc, char**argv)
 	/* Copy file from disk image to host */
 	if (do_get)
 	{
+		if (unlink(to_filename) < 0)
+		{
+			if (errno != ENOENT)
+			{
+				error_exit(errno, "Error removing old file %s", to_filename);
+			}
+		}
 		int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_from_cpm(fd_img, fd_file, basename(from_filename));
+		copy_from_cpm(fd_img, fd_file, basename(from_filename), text_mode);
+		exit(EXIT_SUCCESS);
+	}
+
+	/* Copy multiple files from disk image to host */
+	if (do_multiget)
+	{
+		while (optind != argc)
+		{
+			from_filename = to_filename = argv[optind++];
+			if (unlink(to_filename) < 0)
+			{
+				if (errno != ENOENT)
+				{
+					error_exit(errno, "Error removing old file %s", to_filename);
+				}
+			}
+			int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
+			if (fd_file < 0)
+			{
+				error_exit(errno, "Error opening file %s", from_filename);
+			}
+			copy_from_cpm(fd_img, fd_file, basename(from_filename), text_mode);
+		}
 		exit(EXIT_SUCCESS);
 	}
 
@@ -312,6 +370,23 @@ int main(int argc, char**argv)
 		copy_to_cpm(fd_img, fd_file, basename(to_filename));
 		exit(EXIT_SUCCESS);
 	}
+
+	/* Copy multiple files from host to disk image */
+	if (do_multiput)
+	{
+		while (optind != argc)
+		{
+			from_filename = to_filename = argv[optind++];
+			int fd_file = open(from_filename, O_RDONLY);
+			if (fd_file < 0)
+			{
+				error_exit(errno, "Error opening file %s", from_filename);
+			}
+			copy_to_cpm(fd_img, fd_file, basename(to_filename));
+		}
+		exit(EXIT_SUCCESS);
+	}
+
 	if (do_erase)
 	{
 		erase_file(fd_img, from_filename);
@@ -474,7 +549,7 @@ void raw_directory_list()
 /*
  * Copy a file from CPM disk to host
  */
-void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
+void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_mode)
 {
 	/* get the first directory entry*/
 	cpm_dir_entry* dir_entry = find_dir_by_filename(cpm_filename);
@@ -499,15 +574,44 @@ void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	 * offset within the DISK image file.
 	 */
 	uint8_t block_data[SECT_USED];
-
+	int data_len = SECT_USED;
 	while (dir_entry != NULL)
 	{
-		for (int i = 0 ; i < dir_entry->num_records ; i++)
+		for (int recnr = 0 ; recnr < dir_entry->num_records ; recnr++)
 		{
-			int alloc = dir_entry->raw_entry.allocation[i / RECS_PER_ALLOC];
+			int alloc = dir_entry->raw_entry.allocation[recnr / RECS_PER_ALLOC];
 		
-			read_sector(cpm_fd, alloc, i, block_data);
-			write(host_fd, block_data, SECT_USED);
+			read_sector(cpm_fd, alloc, recnr, block_data);
+			/* If in auto-detect mode or in text_mode and this is the last sector, 
+			 * start looking for ^Zs and stop writing on the first ^Z*/
+			if ((text_mode == -1) ||
+				((text_mode == 1) && (recnr == dir_entry->num_records - 1)))
+			{
+				for (int i = 0 ; i < SECT_USED ; i++)
+				{
+					/* If auto-detecting text mode, check if char is "text" */
+					if (text_mode == -1)
+					{
+						if(!isprint(block_data[i]) && 
+								block_data[i] != 0x1a &&
+								block_data[i] != '\r' &&
+								block_data[i] != '\n')
+						{
+							/* not "text", so set to binary mode */
+							text_mode = 0;
+							break;
+						}
+					}
+					/* If in text mode and on last block, then check for ^Z for EOF */
+					if (text_mode && (recnr == dir_entry->num_records - 1) &&
+							block_data[i] == 0x1a)
+					{
+						data_len = i;
+						break;
+					}
+				}
+			}
+			write(host_fd, block_data, data_len);
 		}
 		dir_entry = dir_entry->next_entry;
 	}
