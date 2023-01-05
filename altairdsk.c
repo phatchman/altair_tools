@@ -740,7 +740,6 @@ void load_directory_table(int fd)
 		int	record = (sect_nr % RECS_PER_ALLOC);
 
 		read_sector(fd, allocation, record, &sector_data);
-		/* TODO: Why is this 4???? Make a constant instead */
 		for (int dir_nr = 0 ; dir_nr < DIRS_PER_SECTOR ; dir_nr++)
 		{
 			/* Calculate which directory entry number this is */
