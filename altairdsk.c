@@ -123,11 +123,12 @@ void error_exit(int eno, char *str, ...);
 
 void directory_list();
 void raw_directory_list();
-void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_mode);
+void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int dir_index, int text_mode);
 void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
 
 void load_directory_table(int fd); 
-cpm_dir_entry* find_dir_by_filename (const char *full_filename);
+cpm_dir_entry* find_dir_by_filename(const char *full_filename, int start_index, int wildcards);
+int filename_equals(const char* fn1, const char* fn2, int wildcards);
 cpm_dir_entry* find_free_dir_entry(void);
 void raw_to_cpmdir(cpm_dir_entry* entry);
 int find_free_alloc(void);
@@ -143,11 +144,11 @@ void convert_track_sector(int allocation, int record, int* track, int* sector);
 uint8_t calc_checksum(uint8_t *buffer);
 
 void validate_cpm_filename(const char *filename, char *validated_filename);
-int compare_sort(const void* a, const void* b);
-int compare_sort_ptr(const void* a, const void* b);
+char *expand_wildcards(char *filename, int *idx);
+int compare_sort(const void *a, const void *b);
+int compare_sort_ptr(const void *a, const void *b);
 
 int VERBOSE = 0;	/* Print out Sector read/write information */
-
 
 int main(int argc, char**argv)
 {
@@ -334,7 +335,7 @@ int main(int argc, char**argv)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_from_cpm(fd_img, fd_file, basename(from_filename), text_mode);
+		copy_from_cpm(fd_img, fd_file, basename(from_filename), -1, text_mode);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -343,20 +344,38 @@ int main(int argc, char**argv)
 	{
 		while (optind != argc)
 		{
-			from_filename = to_filename = argv[optind++];
-			if (unlink(to_filename) < 0)
+			char* filename = argv[optind++];
+			int idx = 0;
+			int file_found = 0;
+			while (1)
 			{
-				if (errno != ENOENT)
+				/* The filename may contain wildcards. If so, expand those and loop for each expanded filename */
+				from_filename = expand_wildcards(filename, &idx);
+				if (from_filename == NULL)
 				{
-					error_exit(errno, "Error removing old file %s", to_filename);
+					if (!file_found)
+					{
+						error_exit(ENOENT, "Error copying %s", filename);
+					}
+					/* No more wildcard filenames, process next command line filename */
+					break;
 				}
+				file_found = 1;
+				to_filename = from_filename;
+				if (unlink(to_filename) < 0)
+				{
+					if (errno != ENOENT)
+					{
+						error_exit(errno, "Error removing old file %s", to_filename);
+					}
+				}
+				int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
+				if (fd_file < 0)
+				{
+					error_exit(errno, "Error opening file %s", from_filename);
+				}
+				copy_from_cpm(fd_img, fd_file, basename(from_filename), idx, text_mode);
 			}
-			int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
-			if (fd_file < 0)
-			{
-				error_exit(errno, "Error opening file %s", from_filename);
-			}
-			copy_from_cpm(fd_img, fd_file, basename(from_filename), text_mode);
 		}
 		exit(EXIT_SUCCESS);
 	}
@@ -550,16 +569,28 @@ void raw_directory_list()
 
 /*
  * Copy a file from CPM disk to host
+ * Returns the index of the directory enty that was copied from
+ * If dir_index >=0 then the filename is taken from the directory index.
+ * Otherwise it is looked up from the filename.
  */
-void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_mode)
+void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int dir_index, int text_mode)
 {
 	/* get the first directory entry*/
-	cpm_dir_entry* dir_entry = find_dir_by_filename(cpm_filename);
+
+	cpm_dir_entry* dir_entry = NULL;
+	if (dir_index < 0)
+	{
+		dir_entry = find_dir_by_filename(cpm_filename, 0, 1);
+	}
+	else
+	{
+		dir_entry = &dir_table[dir_index];
+	}
+	 
 	if (dir_entry == NULL)
 	{
 		error_exit(ENOENT, "Error copying %s", cpm_filename);
 	}
-
 	/* 
 	 * The directory entry is called an EXTENT.
 	 * Each EXTENT contains one or more ALLOCATIONs (up to 8 for a floppy disk)
@@ -592,6 +623,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, const char* cpm_filename, int text_m
 				for (int i = 0 ; i < SECT_USED ; i++)
 				{
 					/* If auto-detecting text mode, check if char is "text" */
+					/* "text" means printable, CR, LF and ^Z */
 					if (text_mode == -1)
 					{
 						if(!isprint(block_data[i]) && 
@@ -632,7 +664,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	{
 		fprintf(stderr, "Converting filename %s to %s\n", cpm_filename, valid_filename);
 	}
-	if (find_dir_by_filename(valid_filename) != NULL)
+	if (find_dir_by_filename(valid_filename, 0, 0) != NULL)
 	{
 		error_exit(EEXIST, "Error creating file %s", valid_filename);
 	}
@@ -775,7 +807,7 @@ void load_directory_table(int fd)
  */
 void erase_file(int fd, const char* cpm_filename)
 {
-	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename);
+	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename, 0, 0);
 	if (entry == NULL)
 	{
 		error_exit(ENOENT, "Error erasing %s", cpm_filename);
@@ -839,16 +871,81 @@ void format_disk(int fd)
 /*
  * Find the directory entry related to a filename.
  */
-cpm_dir_entry* find_dir_by_filename(const char *full_filename)
+cpm_dir_entry* find_dir_by_filename(const char *full_filename, int start_index, int wildcards)
 {
-	for (int i = 0 ; i < NUM_DIRS ; i++)
+	for (int i = start_index ; i < NUM_DIRS ; i++)
 	{
-		if (strcasecmp(dir_table[i].full_filename, full_filename) == 0)
+		if (dir_table[i].extent_nr == 0)
 		{
-			return &dir_table[i];
+			if (filename_equals(full_filename, dir_table[i].full_filename, wildcards) == 0)
+			{
+				return &dir_table[i];
+			}
 		}
 	}
 	return NULL;
+}
+
+/* 
+ * Check if 2 filenames match, using wildcard matching.
+ * Only s1 can contain wildcard characters. * and ? are supported.
+ * Note that A*E* is interpreted as A*
+ */
+int filename_equals(const char *s1, const char *s2, int wildcards)
+{
+	int found_dot = 0;
+	while(*s1 != '\0' && *s2 != '\0')
+	{
+		/* Wildcard matches everything here onwards, so return equal */
+		/* If already found the '.'. Otherwise keep searching from '.' onwards */
+		if (wildcards && *s1 == '*')
+		{
+			if (found_dot)
+			{
+				return 0;
+			}
+			else
+			{
+				s1 = index(s1, '.');
+				/* if wildcard has no extension e.g. T* then equal */
+				if (s1 == NULL)
+					return 0;
+				/* The cpm filename will always end in a '.' even if no extension
+				 * so this should never be null.
+				 * TODO: Should probably change this as files without extensions become 
+				 * FILE. when wildcards are used.
+				 */
+				s2 = index(s2, '.');
+			}
+		}
+		/* ? matches 1 character, next char*/
+		else if (wildcards && *s1 == '?')
+		{
+			s1++;
+			s2++;
+			continue;
+		}
+		else
+		{
+			if (*s2 == '.')
+				found_dot = 1;
+			int result = toupper(*s1) - toupper(*s2);
+			/* If chars are not equal, return not equal */
+			if (result)
+				return result;
+		}
+		s1++;
+		s2++;
+	}
+	/* If equal, both will be at end of string */
+	if (*s1 == *s2 && *s1 == '\0')
+		return 0;
+	/* Special case for cpm filenames ending in '.' 
+	 * Treat ABC. and ABC as equal */
+	if (*s1 == '\0' && *(s1 - 1) == '.' && *s2 == '\0')
+		return 0;
+	if (*s1 == '\0' && *(s2 - 1) == '.' && *s1 == '\0')
+		return 0;
 }
 
 /*
@@ -1166,7 +1263,7 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 			}
 			/* It's a valid filename character */
 			/* copy the character */
-			*out_char++ = toupper(*in_char++);
+			*out_char++ = toupper(*in_char);
 			char_count++;
 			/* If we have a file filename (excluding ext), but not found a dot */
 			/* then add a dot and ignore everything up until the next dot */
@@ -1182,9 +1279,6 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 				/* now go looking for the separator */
 				while (*in_char != '.' && *in_char != '\0')
 					in_char++;
-				/* Skip over the dot, it has already been added */
-				if (*in_char != '\0')
-					in_char++;
 			}
 			if (char_count == FULL_FILENAME_LEN - 1)
 			{
@@ -1196,9 +1290,34 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 				/* max extension length reached */
 				break;
 			}
-		}		
+		}
+		in_char++;		
 	}
 	*out_char = '\0';
+}
+
+/*
+ * Expand a wildcard filename into a list of filenames
+ * starting at idx.
+ * Returns expanded filename and sets idx to the next
+ * directory index entry
+ */
+char* expand_wildcards(char* filename, int *idx)
+{
+	if (index(filename, '*') == NULL &&
+		index(filename, '?') == NULL)
+	{
+		/* no wildcards */
+		return filename;
+	}
+	cpm_dir_entry *entry = find_dir_by_filename(filename, *idx, 1);
+	if (entry == NULL)
+	{
+		*idx = -1;
+		return NULL;
+	}
+	*idx = entry->index + 1;
+	return entry->full_filename;
 }
 
 
