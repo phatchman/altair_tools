@@ -47,6 +47,35 @@ This is only needed when copying a file from the altair disk.<br>
 ### Get a directory listing
 `./altairdsk cpm.dsk -d`<br>
 `./altairdsk cpm.dsk`
+```
+Name     Ext  Length Used U At
+ASM      COM   8768B   8K 0 W
+DDT      COM   5206B   6K 0 W
+DO       COM   2329B   4K 0 W
+DUMP     COM    411B   2K 0 W
+ED       COM   6576B   6K 0 W
+FORMAT   COM   1918B   2K 0 W
+L80      COM  11508B  12K 0 W
+LADDER   COM  43155B  40K 0 W
+LOAD     COM   2192B   2K 0 W
+LS       COM   3288B   4K 0 W
+M80      COM  21509B  20K 0 W
+MAC      COM  12604B  12K 0 W
+NSWP     COM  12056B  12K 0 W
+PIP      COM   7946B   8K 0 W
+R        COM   4384B   4K 0 W
+STAT     COM   5754B   6K 0 W
+TEST     COM    137B   2K 0 W
+W        COM   4247B   4K 0 W
+WM       COM  11371B  12K 0 W
+XDIR     COM  11782B  12K 0 W
+20 file(s), occupying 178K of 296K total capacity
+41 directory entries and 118K bytes remain
+```
+Length is length of the file to neaest 128k sector<br>
+Used is the amount of space actually used on the disk (in 2K blocks)<br>
+U is the user number<br>
+At is the file attributes. R - Read only, W - Read/write. S - System
 
 ### Format a disk
 `./altairdsk new.dsk -F`
@@ -70,3 +99,43 @@ To get all files from the disk<br>
 ### Erase a file
 `./altairdsk -E cpm.dsk asm.com`
 
+### Raw directory listing
+Dumps the CP/M extent information<br>
+`./altairdsk -r cpm.dsk`
+```
+IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]
+000:0:ASM     :COM:W :000:064:[2,3,4,5,0,0,0,0,0,0,0,0,0,0,0,0]
+001:0:DDT     :COM:W :000:038:[6,7,8,0,0,0,0,0,0,0,0,0,0,0,0,0]
+002:0:DO      :COM:W :000:017:[9,10,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+003:0:DUMP    :COM:W :000:003:[11,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+004:0:ED      :COM:W :000:048:[12,13,14,0,0,0,0,0,0,0,0,0,0,0,0,0]
+005:0:FORMAT  :COM:W :000:014:[15,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+006:0:L80     :COM:W :000:084:[16,17,18,19,20,21,0,0,0,0,0,0,0,0,0,0]
+007:0:LADDER  :COM:W :000:128:[22,23,24,25,26,27,28,29,0,0,0,0,0,0,0,0]
+008:0:LADDER  :COM:W :001:128:[30,31,32,33,34,35,36,37,0,0,0,0,0,0,0,0]
+009:0:LADDER  :COM:W :002:059:[38,39,40,41,0,0,0,0,0,0,0,0,0,0,0,0]
+010:0:LOAD    :COM:W :000:016:[42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+011:0:LS      :COM:W :000:024:[43,44,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+012:0:M80     :COM:W :000:128:[45,46,47,48,49,50,51,52,0,0,0,0,0,0,0,0]
+013:0:M80     :COM:W :001:029:[53,54,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+014:0:MAC     :COM:W :000:092:[55,56,57,58,59,60,0,0,0,0,0,0,0,0,0,0]
+015:0:NSWP    :COM:W :000:088:[61,62,63,64,65,66,0,0,0,0,0,0,0,0,0,0]
+016:0:PIP     :COM:W :000:058:[67,68,69,70,0,0,0,0,0,0,0,0,0,0,0,0]
+017:0:R       :COM:W :000:032:[71,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+018:0:STAT    :COM:W :000:042:[73,74,75,0,0,0,0,0,0,0,0,0,0,0,0,0]
+019:0:TEST    :COM:W :000:001:[76,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+020:0:W       :COM:W :000:031:[77,78,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+021:0:WM      :COM:W :000:083:[79,80,81,82,83,84,0,0,0,0,0,0,0,0,0,0]
+022:0:XDIR    :COM:W :000:086:[85,86,87,88,89,90,0,0,0,0,0,0,0,0,0,0]
+FREE ALLOCATIONS:
+091 092 093 094 095 096 097 098 099 100 101 102 103 104 105 106
+107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122
+123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138
+139 140 141 142 143 144 145 146 147 148 149
+```
+IDX is the order of the extent on disk<br>
+U is the user number<br>
+AT are the attributes (R - Read only, W - Read/Write, S - System)<br>
+EXT is the extent number for the file<br>
+REC is the number of records controlled by this extent<br>
+ALLOCATIONS is the list of allocations controlled by this extent
