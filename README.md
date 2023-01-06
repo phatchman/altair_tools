@@ -35,9 +35,10 @@ altairdsk: -h
 ```
         
 ## Some things to note:
-altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
+* On windows the option processing is different. The command needs to come before the disk image e.g. altairdsk -g cpm.dsk asm.com
+* altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
-If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename.
+* If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename.
 
 ## Examples
 
