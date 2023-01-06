@@ -15,6 +15,16 @@ altairdks allows you to:
 
 PLEASE make sure you make a backup of any disk images before writing to them with this utility.
 
+## Build Instructions
+
+For windows you can get the pre-combiled binary from the windows directory<br>
+For linux and other unix-ish platforms:
+```
+% cmake .
+% make
+```
+There is no install target provided. So copy the executable to your desired install location if you need.
+
 ## Command Line
 ```
 altairdsk: -[d|r|F]v       <disk_image> 
