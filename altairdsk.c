@@ -440,9 +440,9 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: <disk_image> -[d|r|F]v\n", progname);
-	printf("%s: <disk_image> -[g|p|e][t|b]v <src_filename> [dst_filename]\n", progname);
-	printf("%s: <disk_image> -[G|P][t|b]v   <filename ...> \n", progname);
+	printf("%s: -[d|r|F]v      <disk_image>\n", progname);
+	printf("%s: -[g|p|e][t|b]v <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -[G|P][t|b]v   <disk_image> <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
