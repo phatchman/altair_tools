@@ -56,10 +56,10 @@ This is only needed when copying a file from the altair disk.<br>
 ./altairdsk -p cpm.dsk LADDER.COM
 
 ### Copy multiple files from the disk (get multiple)
-This command allows wildcards of * or ?. <br>
-./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'<br>
+This command allows wildcards of * or ?. Note on Windows you shouldn't use the quotes around the wildcarded filenames. They are only needed on linux/unix.
+./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'
 
-To get all files from the disk<br>
+To get all files from the disk
 ./altairdsk -G cpm.dsk '*'
 
 ### Copy multiple files to the disk image (get multiple)
