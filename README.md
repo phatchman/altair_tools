@@ -43,28 +43,28 @@ This is only needed when copying a file from the altair disk.<br>
 ## Examples
 
 ### Get a directory listing
-./altairdsk cpm.dsk -d
-./altairdsk cpm.dsk
+`./altairdsk cpm.dsk -d`<br>
+`./altairdsk cpm.dsk`
 
 ### Format a disk
-./altairdsk new.dsk -F
+`./altairdsk new.dsk -F`
 
 ### Copy a file from the disk (get)
-./altairdsk cpm.dsk -g LADDER.COM
+`./altairdsk cpm.dsk -g LADDER.COM`
 
 ### Copy a file to the disk (put)
-./altairdsk -p cpm.dsk LADDER.COM
+`./altairdsk -p cpm.dsk LADDER.COM`
 
 ### Copy multiple files from the disk (get multiple)
-This command allows wildcards of * or ?. Note on Windows you shouldn't use the quotes around the wildcarded filenames. They are only needed on linux/unix.
-./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'
+This command allows wildcards of * or ?. Note on Windows you shouldn't use the quotes around the wildcarded filenames. They are only needed on linux/unix.<br>
+`./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'`
 
-To get all files from the disk
-./altairdsk -G cpm.dsk '*'
+To get all files from the disk<br>
+`./altairdsk -G cpm.dsk '*'`
 
 ### Copy multiple files to the disk image (get multiple)
-./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com
+`./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com`
 
 ### Erase a file
-./altairdsk -E cpm.dsk asm.com
+`./altairdsk -E cpm.dsk asm.com`
 
