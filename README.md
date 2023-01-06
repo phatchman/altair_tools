@@ -41,7 +41,7 @@ altairdsk: -h
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
 * If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
-* Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension get all files. On CP/M you would use '*.*'. You can still use '*.TXT' and 'ABC.*' and that will work as expected.
+* Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension, and get all files. On CP/M you would use '*.*'. You can still use '*.TXT' and 'ABC.*' and that will work as expected.
 
 ## Examples
 
