@@ -440,9 +440,9 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|F]v	<disk_image>\n", progname);
-	printf("%s: -[g|p|e][t|b]v <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P][t|b]v <disk_image> <filename ...> \n", progname);
+	printf("%s: <disk_image> -[d|r|F]v\n", progname);
+	printf("%s: <disk_image> -[g|p|e][t|b]v <src_filename> [dst_filename]\n", progname);
+	printf("%s: <disk_image> -[G|P][t|b]v   <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
@@ -885,10 +885,13 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
  * Check if 2 filenames match, using wildcard matching.
  * Only s1 can contain wildcard characters. * and ? are supported.
  * Note that A*E* is interpreted as A*
+ * This doesn't work identically to CPM, but I prefer this as 
+ * copying '*' will copy everything, rather than needing '*.*'
  */
 int filename_equals(const char *s1, const char *s2, int wildcards)
 {
 	int found_dot = 0;	/* have we found the dot separator between filename and type*/
+	char eos = '\0';	/* end of string char */
 	while(*s1 != '\0' && *s2 != '\0')
 	{
 		/* If it's a '*' wildcard it matches everything here onwards, so return equal
@@ -905,12 +908,9 @@ int filename_equals(const char *s1, const char *s2, int wildcards)
 				/* if wildcard has no extension e.g. T* then equal */
 				if (s1 == NULL)
 					return 0;
-				/* The cpm filename will always end in a '.' even if no extension
-				 * so this should never be null.
-				 * TODO: Should probably change this as files without extensions become 
-				 * FILE. when wildcards are used.
-				 */
 				s2 = index(s2, '.');
+				if (s2 == NULL)
+					s2 = &eos;
 			}
 		}
 		/* ? matches 1 character, next char*/
@@ -941,7 +941,7 @@ int filename_equals(const char *s1, const char *s2, int wildcards)
 		return 0;
 	if (*s2 == '\0' && *s1 == '.' && *(s1 + 1) == '\0')
 		return 0;
-	return *s1 - *s2;
+	return 1;	/* not equal */
 }
 
 /*
@@ -961,7 +961,7 @@ cpm_dir_entry* find_free_dir_entry(void)
 /*
  * Convert each cpm directory entry (extent) into an structure that is
  * easier to work with.
-*/
+ */
 void raw_to_cpmdir(cpm_dir_entry* entry)
 {
 	char *space_pos;
@@ -990,13 +990,17 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
 	{
 		*space_pos = '\0';
 	}
-	strcat(entry->full_filename,".");
-	strcat(entry->full_filename, entry->type);
-	space_pos = strchr(entry->full_filename, ' ');
-	/* strip out spaces from type */
-	if (space_pos != NULL)
+	/* Only add a '.' if there really is an extension */
+	if (entry->type[0] != ' ')
 	{
-		*space_pos = '\0';
+		strcat(entry->full_filename,".");
+		strcat(entry->full_filename, entry->type);
+		space_pos = strchr(entry->full_filename, ' ');
+		/* strip out spaces from type */
+		if (space_pos != NULL)
+		{
+			*space_pos = '\0';
+		}
 	}
 	entry->num_records = raw->num_records;
 	int num_allocs = 0;
