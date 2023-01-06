@@ -15,9 +15,9 @@ altairdks allows you to:
   
 ## Command Line
 ```
-altairdsk: <disk_image> -[d|r|F]v
-altairdsk: <disk_image> -[g|p|e][t|b]v  <src_filename> [dst_filename]
-altairdsk: <disk_image> -[G|P][t|b]v    <filename ...>
+altairdsk: -[d|r|F]v       <disk_image> 
+altairdsk: -[g|p|e][t|b]v  <disk_image> <src_filename> [dst_filename]
+altairdsk: -[G|P][t|b]v    <disk_image> <filename ...>
 altairdsk: -h
         -d      Directory listing (default)
         -r      Raw directory listing    
@@ -35,36 +35,36 @@ altairdsk: -h
 ```
         
 ## Some things to note:
-* On windows the option processing is different. The command needs to come before the disk image e.g. altairdsk -g cpm.dsk asm.com
+* On linux you have the option of putting the disk image before the option. For example: altairdsk cpm.dsk -g ASM.COM. I find this more convenient.
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
-* If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename.
+* If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
 
 ## Examples
 
 ### Get a directory listing
-./altairdsk -d cpm.dsk<br>
+./altairdsk cpm.dsk -d
 ./altairdsk cpm.dsk
 
 ### Format a disk
-./altairdsk -F new.dsk
+./altairdsk new.dsk -F
 
 ### Copy a file from the disk (get)
 ./altairdsk cpm.dsk -g LADDER.COM
 
 ### Copy a file to the disk (put)
-./altairdsk cpm.dsk -p LADDER.COM
+./altairdsk -p cpm.dsk LADDER.COM
 
 ### Copy multiple files from the disk (get multiple)
 This command allows wildcards of * or ?. <br>
-./altairdsk cpm.dsk -G load.com dump.com 'asm.*' 'p?p.com'<br>
+./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'<br>
 
 To get all files from the disk<br>
-./altairdsk cpm.dsk -G '*'
+./altairdsk -G cpm.dsk '*'
 
 ### Copy multiple files to the disk image (get multiple)
-./altairdsk cpm.dsk -P load.com dump.com asm.com pip.com
+./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com
 
 ### Erase a file
-./altairdsk cpm.dsk -E asm.com
+./altairdsk -E cpm.dsk asm.com
 
