@@ -12,7 +12,9 @@ altairdks allows you to:
   2. Copy files to and from the disk
   3. Erase files
   4. Format and existing disk or create a newly formatted disk.
-  
+
+PLEASE make sure you make a backup of any disk images before writing to them with this utility.
+
 ## Command Line
 ```
 altairdsk: -[d|r|F]v       <disk_image> 
