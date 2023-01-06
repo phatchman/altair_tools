@@ -29,8 +29,6 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/* TODO: 	Stop auto-appending '.' to filenames that don't have an extension.
- */
 
 #include <stdio.h>
 #include <stdlib.h>
