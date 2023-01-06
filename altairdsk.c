@@ -904,11 +904,11 @@ int filename_equals(const char *s1, const char *s2, int wildcards)
 			}
 			else
 			{
-				s1 = index(s1, '.');
+				s1 = strchr(s1, '.');
 				/* if wildcard has no extension e.g. T* then equal */
 				if (s1 == NULL)
 					return 0;
-				s2 = index(s2, '.');
+				s2 = strchr(s2, '.');
 				if (s2 == NULL)
 					s2 = &eos;
 			}
