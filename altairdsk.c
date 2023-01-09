@@ -183,7 +183,7 @@ void validate_cpm_filename(const char *filename, char *validated_filename);
 int compare_sort(const void *a, const void *b);
 int compare_sort_ptr(const void *a, const void *b);
 int get_raw_allocation(raw_dir_entry* raw, int entry_nr);
-void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc, int *extent_nr);
+void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc);
 
 
 int VERBOSE = 0;	/* Print out Sector read/write information */
@@ -650,9 +650,6 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 		for (int recnr = 0 ; recnr < dir_entry->num_records * mult ; recnr ++)
 		{
 			int alloc = dir_entry->allocation[recnr / RECS_PER_ALLOC];
-			if (alloc == 71) 
-				printf ("nr_records = %d, mult = %d numa = %d\n", 
-					dir_entry->num_records, mult, dir_entry->num_allocs);
 			
 			if (alloc == 0)
 				break;
@@ -722,7 +719,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	int w = 0; /* DEBUG */
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
 	memset (&sector_data, 0x1a, SECT_DATA_LEN); 
-	int mult = (TOTAL_ALLOCS <= 256) ? 1 : 2;
+	
 	while((nbytes = read(host_fd, &sector_data, SECT_DATA_LEN)) > 0)
 	{
 		/* Is this a new Extent (i.e directory entry) ? */
@@ -742,12 +739,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 			}
 			/* Initialise the directory entry */
 			memset(&dir_entry->raw_entry, 0, sizeof(raw_dir_entry));
-//			dir_entry->raw_entry.user = 0;
 			copy_filename(&dir_entry->raw_entry, valid_filename);
-/* TODO: REMOVE if works setting this later */
-//			dir_entry->raw_entry.extent_l = nr_extents % 32;
-//			dir_entry->raw_entry.extent_h = nr_extents / 32;
-//			dir_entry->raw_entry.num_records = 0;		/* TODO: I think this needs to use the extent mask (EX & exm) * 128 + RC */
 			nr_allocs = 0;
 		}
 		/* Is this a new allocation? */
@@ -766,8 +758,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 				}
 				error_exit(0, "Error writing %s: No free allocations", valid_filename);
 			}
-			/* Note this can increment extent_nr and change raw_entry.extent_nr[h/l]. */
-			set_raw_allocation(&dir_entry->raw_entry, nr_allocs, allocation, &nr_extents);
+			set_raw_allocation(&dir_entry->raw_entry, nr_allocs, allocation);
 			nr_allocs++;
 		}
 		dir_entry->raw_entry.num_records = (rec_nr % RECORD_MAX) + 1;
@@ -1460,7 +1451,7 @@ int get_raw_allocation(raw_dir_entry *raw, int entry_nr)
  * If more than 8 allocation entries are used in the array, then also increment the 
  * extent number and number of extents.
  */
-void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc, int *extent_nr)
+void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc)
 {
 	if (TOTAL_ALLOCS <= 256)
 	{
@@ -1470,18 +1461,5 @@ void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc, int *exte
 	{
 		entry->allocation[entry_nr * 2] = alloc & 0xff;
 		entry->allocation[entry_nr * 2 + 1] = (alloc >> 8) & 0xff;
-		/* TODO: REMOVE IF WORKS */
-#if REMOVE
-		if(entry_nr == 4)
-		{
-			/* If there are more than 4 allocations, then for some reason a single extent 
-			 * counts as 2 extents. So if a file has 5 allocs in it's first extent, the
-			 * extent number will be 1 instead of 0. Weird. */
-			int this_extent_nr = entry->extent_h * 32 + entry->extent_l + 1;
-			entry->extent_h = this_extent_nr / 32;
-			entry->extent_l = this_extent_nr % 32; 
-		}
-		(*extent_nr)++;
-#endif
 	}
 }
