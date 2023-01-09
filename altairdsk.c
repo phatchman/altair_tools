@@ -875,9 +875,11 @@ void erase_file(int fd, const char* cpm_filename)
  */
 void format_disk(int fd)
 {
+
 	uint8_t sector_data[SECT_LEN];
 
 	memset(sector_data, 0xe5, SECT_LEN);
+	#if 0
 	sector_data[1] = 0x00;
 	sector_data[2] = 0x01;
 	sector_data[STOP_OFF_T0] = 0xff;
@@ -911,6 +913,15 @@ void format_disk(int fd)
 				checksum += sector_data[6];
 				sector_data[CSUM_OFF_T6] = checksum;
 			}
+			write_raw_sector(fd, track, sector + 1, &sector_data);
+		}
+	}
+	#endif
+	/* TODO: This could literally just be a write() ?*/
+	for (int track = 0 ; track < NUM_TRACKS ; track++)
+	{
+		for (int sector = 0 ; sector < SECT_PER_TRACK ; sector++)
+		{
 			write_raw_sector(fd, track, sector + 1, &sector_data);
 		}
 	}
