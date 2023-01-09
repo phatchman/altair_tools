@@ -523,7 +523,7 @@ void directory_list(void)
 	int kb_used = 0;
 	int kb_free = 0;
 	int entry_count = 0;
-	printf("Name     Ext  Length Used U At\n");
+	printf("Name     Ext   Length Used U At\n");
 
 	cpm_dir_entry *entry = NULL;
 	int this_records = 0;
@@ -645,9 +645,9 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 //	int step = (dir_entry->num_allocs > 4) ? 1 : 2;
 	int step = 1;
 //	int mult = 2; 
-	int mult = (dir_entry->num_allocs > 4) ? 2 : 1;
+	int num_records = (dir_entry->num_allocs > 4) ? 128 + dir_entry->num_records : dir_entry->num_records;
 #endif
-		for (int recnr = 0 ; recnr < dir_entry->num_records * mult ; recnr ++)
+		for (int recnr = 0 ; recnr < num_records ; recnr ++)
 		{
 			int alloc = dir_entry->allocation[recnr / RECS_PER_ALLOC];
 			
@@ -659,8 +659,9 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 
 			/* If in auto-detect mode or if in text_mode and this is the last sector */
 			/* TODO: Make this nicer! */
+			/* TODO: need to better detect the ending record */
 			if ((text_mode == -1) ||
-				((text_mode == 1) && (recnr == dir_entry->num_records - 1)))
+				((text_mode == 1) && (recnr == num_records - 1)))
 			{
 				for (int i = 0 ; i < SECT_DATA_LEN ; i++)
 				{
@@ -677,7 +678,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 					}
 					/* If in text mode and on last block, then check for ^Z for EOF 
 					 * Set data_len to make sure that data stop writing prior to first ^Z */
-					if (text_mode && (recnr == dir_entry->num_records - 1) &&
+					if (text_mode && (recnr == num_records - 1) &&
 							sector_data[i] == 0x1a)
 					{
 						data_len = i;
@@ -716,7 +717,6 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	int nbytes;
 	cpm_dir_entry *dir_entry = NULL;
 
-	int w = 0; /* DEBUG */
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
 	memset (&sector_data, 0x1a, SECT_DATA_LEN); 
 	
