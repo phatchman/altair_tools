@@ -67,7 +67,7 @@
 #else
 #define NUM_DIRS		256	/* Total number of directory entries */
 #endif
-#define DIRS_PER_SECTOR (SECT_DATA_LEN / DIR_ENTRY_LEN)
+#define DIRS_PER_SECTOR (SECT_DATA_LEN / DIR_ENTRY_LEN) /* TODO: Correct answer, wrong calculation */
 #define DIRS_PER_ALLOC	128	/* TODO: Calculate */
 #if 0
 #define RECS_PER_ALLOC	16	/* Number of records per allocation */
