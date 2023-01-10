@@ -29,8 +29,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
-/* TODO: Better handle when file is > 255 records */
+/* TODO: Validate if no filename, only an extension */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +75,8 @@ struct disk_offsets {
 	int start_track;		/* starting track which this offset applies */
 	int end_track;			/* ending track */
 	int off_data;			/* offset of the data portion */
+	int off_track_nr;		/* offset of track number */
+	int off_sect_nr;		/* offset of sector number */
 	int	off_stop;			/* offset of stop byte */
 	int off_zero;			/* offset of zero byte */
 	int off_csum;			/* offset of checksum */
@@ -84,7 +85,7 @@ struct disk_offsets {
 
 /* Disk format Parameters */
 struct disk_format {
-	const char* type[32];
+	const char* type;		/* String type name */
 	int sector_len;			/* length of sector in bytes (must be 128) */
 	int sector_data_len;	/* length of data part of sector in bytes. Note only supports 128 */
 	int num_tracks;			/* Total tracks */
@@ -92,10 +93,13 @@ struct disk_format {
 	int sectors_per_track;	/* Number of sectors per track */
 	int block_size;			/* Size of Block / Allocation */
 	int num_directories;	/* maximum number of directories / extents supported */
-	int skew_table_size;	/* number of entries in skew table */
-	int *skew_table;		/* Pointer to the sector skew table */
-	struct disk_offsets offsets[2];		/* Raw sector offsets for MITS 8" controller */
 	int image_size;			/* size of disk image (for auto-detection) */
+	int skew_table_size;	/* number of entries in skew table */
+	int alloc_modulus;		/* modulus applied when converting allocation to logical sector */
+	int *skew_table;		/* Pointer to the sector skew table */
+	int (*skew_function)(int,int);		/* logical to physical sector skew conversion */
+	void (*format_function)(int);		/* pointer to formatting function */
+	struct disk_offsets offsets[2];		/* Raw sector offsets for MITS 8" controller */
 };
 
 /* On-disk representation of a directory entry */
@@ -133,14 +137,31 @@ cpm_dir_entry	dir_table[MAX_DIRS];			/* Directory entires in order read from "di
 cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries, sorted by name+type and extent nr*/
 uint8_t			alloc_table[MAX_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
+
+struct disk_format *disk_type;					/* Pointer to the disk image type */
+
+
 /* Skew table. Converts logical sectors to on-disk sectors */
 int mits_skew_table[] = {
 	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
 	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
 };
 
+void format_disk(int fd);
+void mits8in_format_disk(int fd);
+
+
+int mits8in_skew_function(int track, int logical_sector)
+{
+	if (track < 6)
+	{
+		return mits_skew_table[logical_sector];
+	}
+	return (((mits_skew_table[logical_sector] - 1) * 17) % 32) + 1;
+}
+
 struct disk_format MITS8IN_FORMAT = {
-	.type = "MITS 8\"",
+	.type = "FDD_8IN",
 	.sector_len = 137,
 	.sector_data_len = 128,
 	.num_tracks = 77,
@@ -148,11 +169,15 @@ struct disk_format MITS8IN_FORMAT = {
 	.sectors_per_track = 32,
 	.block_size = 2048,
 	.num_directories = 64,
+	.image_size = 337568,	/* Note some images are 337664 */
 	.skew_table_size = sizeof(mits_skew_table),
+	.alloc_modulus = 2,
 	.skew_table = mits_skew_table,
+	.skew_function = &mits8in_skew_function,
+	.format_function = &mits8in_format_disk,
 	.offsets = {
-		0, 5, 3, 131, 133, 132, 1,
-		0, 1, 7, 135, 136, 4, 2
+		0,  5, 3, 0, 0, 131, 133, 132, 0,
+		6, 77, 7, 0, 1, 135, 136, 4, 1
 	}
 };
 
@@ -169,8 +194,13 @@ int	hd5mb_skew_table[] = {
 	60,61,74,75,88,89,54,55,68,69,82,83
 };
 
+int standard_skew_function(int track, int logical_sector)
+{
+	return disk_type->skew_table[logical_sector] + 1;
+}
+
 struct disk_format MITS5MBHDD_FORMAT = {
-	.type = "MITS 5MB HDD",
+	.type = "HDD_5MB",
 	.sector_len = 128,
 	.sector_data_len = 128,
 	.num_tracks = 406,
@@ -178,26 +208,47 @@ struct disk_format MITS5MBHDD_FORMAT = {
 	.sectors_per_track = 96,
 	.block_size = 4096,
 	.num_directories = 256,
+	.image_size = 4988928,
 	.skew_table_size = sizeof(hd5mb_skew_table),
+	.alloc_modulus = 0,
 	.skew_table = hd5mb_skew_table,
+	.skew_function = &standard_skew_function,
+	.format_function = &format_disk,
 	.offsets = {
-		-1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1
+		0, 406, 0,  -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1,
 	}
 };
 
-int	skew_table[] = {
-	0,1,14,15,28,29,42,43,8,9,22,23,
-	36,37,2,3,16,17,30,31,44,45,10,11,
-	24,25,38,39,4,5,18,19,32,33,46,47,
-	12,13,26,27,40,41,6,7,20,21,34,35,
-	48,49,62,63,76,77,90,91,56,57,70,71,
-	84,85,50,51,64,65,78,79,92,93,58,59,
-	72,73,86,87,52,53,66,67,80,81,94,95,
-	60,61,74,75,88,89,54,55,68,69,82,83
+int tarbell_skew_table[] = {
+	 0,  6, 12, 18, 24,  4,
+	10, 16, 22,  2,  8, 14,
+	20,  1,  7, 13, 19, 25,
+	 5, 11, 17, 23,  3,  9,
+	15, 21
 };
 
-struct disk_format *disk_type;
+struct disk_format TARBELLFDD_FORMAT = {
+	.type = "FDD_TAR",
+	.sector_len = 128,
+	.sector_data_len = 128,
+	.num_tracks = 74,
+	.reserved_tracks = 2,
+	.sectors_per_track = 26,
+	.block_size = 1024,
+	.num_directories = 64,
+	.image_size = 256256,
+	.skew_table_size = sizeof(hd5mb_skew_table),
+	.alloc_modulus = 0,
+	.skew_table = tarbell_skew_table,
+	.skew_function = &standard_skew_function,
+	.format_function = &format_disk,
+	.offsets = {
+		0, 74,  0,  -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1,
+	}
+};
+
 
 void print_usage(char* argv0); 
 void error_exit(int eno, char *str, ...);
@@ -215,7 +266,6 @@ void raw_to_cpmdir(cpm_dir_entry* entry);
 int find_free_alloc(void);
 void copy_filename(raw_dir_entry *entry, const char *filename);
 void erase_file(int fd, const char* cpm_filename);
-void format_disk(int fd);
 
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
@@ -273,9 +323,9 @@ int disk_skew_table_size()
 	return disk_type->skew_table_size;
 }
 
-int disk_skew_sector(int sector_num)
+int disk_skew_sector(int track_nr, int logical_sector)
 {
-	return disk_type->skew_table[sector_num];
+	return disk_type->skew_function(track_nr, logical_sector);
 }
 
 int disk_track_len()
@@ -303,7 +353,7 @@ int disk_recs_per_alloc()
 
 int disk_recs_per_extent()
 {
-	/* 8 = NR of allocations per extent */
+	/* 8 = nr of allocations per extent */
 	return disk_recs_per_alloc() * 8;
 }
 
@@ -317,6 +367,110 @@ int disk_dirs_per_alloc()
 	return disk_type->block_size / DIR_ENTRY_LEN;
 }
 
+int disk_alloc_modulus()
+{
+	return disk_type->alloc_modulus;
+}
+
+struct disk_offsets *disk_get_offsets(int track_nr)
+{
+	if ((track_nr >= disk_type->offsets[0].start_track) && 
+		(track_nr <= disk_type->offsets[0].end_track))
+	{
+		return &disk_type->offsets[0];
+	}
+	return &disk_type->offsets[1];
+}
+
+int disk_off_track_nr(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_track_nr;
+}
+
+int disk_off_sect_nr(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_sect_nr;
+}
+
+int disk_off_data(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_data;
+}
+
+int disk_off_stop(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_stop;
+}
+
+int disk_off_zero(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_zero;
+}
+
+int disk_off_csum(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_csum;
+}
+
+int disk_csum_method(int track_nr)
+{
+	return disk_get_offsets(track_nr)->csum_method;
+}
+
+int disk_detect_format(int fd)
+{
+	off_t length = lseek(fd, 0, SEEK_END);
+	if (length < 0)
+	{
+		return -1;
+	}
+
+	if (length == MITS8IN_FORMAT.image_size)
+	{
+		disk_type = &MITS8IN_FORMAT;
+	}
+	else if (length == MITS5MBHDD_FORMAT.image_size)
+	{
+		disk_type = &MITS5MBHDD_FORMAT;
+	}
+	else if (length == TARBELLFDD_FORMAT.image_size)
+	{
+		disk_type = &TARBELLFDD_FORMAT;
+	}
+	else
+	{
+		error_exit(0, "Unknown disk image format. Use -h to see supported formats and -T to force a format.");
+	}
+//	if (VERBOSE)
+		printf("Detected Format: %s\n", disk_type->type);
+	return 0;
+}
+
+void disk_set_format(const char* format)
+{
+	if (!strcasecmp(format, MITS8IN_FORMAT.type))
+	{
+		disk_type = &MITS8IN_FORMAT;
+	}
+	else if (!strcasecmp(format, MITS5MBHDD_FORMAT.type))
+	{
+		disk_type = &MITS5MBHDD_FORMAT;
+	}
+	else if (!strcasecmp(format, TARBELLFDD_FORMAT.type))
+	{
+		disk_type = &TARBELLFDD_FORMAT;
+	}
+	else
+	{
+		error_exit(0,"Invalid disk image format: %s", format);
+	}
+}
+
+void disk_format_disk(int fd)
+{
+	disk_type->format_function(fd);
+}
+
 int main(int argc, char**argv)
 {
 	int open_mode;	/* read or write depending on selected options */
@@ -327,16 +481,18 @@ int main(int argc, char**argv)
 	int do_dir = 0, do_raw = 0, do_get = 0;
 	int do_put = 0 , do_help = 0, do_format = 0;
 	int do_erase = 0, do_multiput = 0, do_multiget = 0;
+	int has_type = 0;				/* has the user specified a type? */
 	int text_mode = -1;				/* default to auto-detect text/binary */
 	char *disk_filename = NULL; 	/* Altair disk image filename */
 	char from_filename[PATH_MAX];	/* filename to get / put */
 	char to_filename[PATH_MAX];		/* filename to get / put */
+	char *image_type;				/* manually specify type of disk image */
 
 
 	disk_type = &MITS5MBHDD_FORMAT;
 
 	/* parse options */
-	while ((opt = getopt(argc, argv, "drhgGpPvFetb")) != -1)
+	while ((opt = getopt(argc, argv, "drhgGpPvFetbT:")) != -1)
 	{
 		switch (opt)
 		{
@@ -383,6 +539,10 @@ int main(int argc, char**argv)
 				break;
 			case 'b':
 				text_mode = 0;
+				break;
+			case 'T':
+				has_type = 1;
+				image_type = optarg;
 				break;
 			case '?':
 				exit(EXIT_FAILURE);
@@ -469,6 +629,24 @@ int main(int argc, char**argv)
 	if ((fd_img = open(disk_filename, open_mode, open_umask)) < 0)
 	{
 		error_exit(errno, "Error opening file %s", disk_filename);
+	}
+
+	/* Try and work out what format this image is */
+	if (has_type)
+	{
+		disk_set_format(image_type);
+	}
+	else if (do_format)
+	{
+		/* Default to 8" floppy format */
+		disk_type = &MITS8IN_FORMAT;
+	}
+	else
+	{
+		if (disk_detect_format(fd_img) < 0)
+		{
+			error_exit(errno, "Error finding disk image size");
+		}
 	}
 
 	/* Read all directory entries - except for format command */
@@ -597,7 +775,8 @@ int main(int argc, char**argv)
 	/* format and existing image or create a newly formatted image */
 	if (do_format)
 	{
-		format_disk(fd_img);
+		/* Call the disk-specific format function */
+		disk_format_disk(fd_img);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -610,13 +789,13 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|F]v      <disk_image>\n", progname);
-	printf("%s: -[g|p|e][t|b]v <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P][t|b]v   <disk_image> <filename ...> \n", progname);
+	printf("%s: -[d|r|F]Tv      <disk_image>\n", progname);
+	printf("%s: -[g|p|e][t|b]Tv <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -[G|P][t|b]Tv   <disk_image> <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
-	printf("\t-F\tFormat existing or create new disk image\n");
+	printf("\t-F\tFormat existing or create new disk image. Defaults to %s\n", MITS8IN_FORMAT.type);
 	printf("\t-g\tGet - Copy file from Altair disk image to host\n");
 	printf("\t-p\tPut - Copy file from host to Altair disk image\n");
 	printf("\t-G\tGet Multiple - Copy multiple files from Altair disk image to host\n");
@@ -625,6 +804,7 @@ void print_usage(char* argv0)
 	printf("\t-e\tErase a file\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
+	printf("\t-T\tDisk image type. Supported formats are: %s, %s\n", MITS8IN_FORMAT.type, MITS5MBHDD_FORMAT.type);
 	printf("\t-v\tVerbose - Prints sector read/write information\n");
 	printf("\t-h\tHelp\n");
 }
@@ -770,15 +950,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 	int data_len = disk_data_sector_len();
 	while (dir_entry != NULL)
 	{
-#if 0
-	int mult = 1;
-	int step = 1;
-#else
-//	int step = (dir_entry->num_allocs > 4) ? 1 : 2;
-	int step = 1;
-//	int mult = 2; 
-	int num_records = (dir_entry->num_allocs > 4) ? 128 + dir_entry->num_records : dir_entry->num_records;
-#endif
+		int num_records = (dir_entry->num_allocs > 4) ? 128 + dir_entry->num_records : dir_entry->num_records;
 		for (int recnr = 0 ; recnr < num_records ; recnr ++)
 		{
 			int alloc = dir_entry->allocation[recnr / disk_recs_per_alloc()];
@@ -882,7 +1054,6 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 			{
 				/* No free allocations! 
 				 * write out directory entry (if it has any allocations) before exit */
-				/* TODO: needs to handle 16 bit allocations */
 				if (get_raw_allocation(&dir_entry->raw_entry, 0) != 0)
 				{
 					raw_to_cpmdir(dir_entry);
@@ -968,12 +1139,7 @@ void load_directory_table(int fd)
 		if (entry->valid)
 		{
 			/* Check if there are more extents for this file */
-#if 0			
-			if (entry->num_records == RECORD_MAX &&
-				next_entry->extent_nr == entry->extent_nr + 1)
-#else
 			if (strcmp(entry->full_filename, next_entry->full_filename) == 0)
-#endif
 			{
 				/* If this entry is a full extent, and the next entry has an
 				 * an entr nr + 1*/
@@ -1004,6 +1170,7 @@ void erase_file(int fd, const char* cpm_filename)
 
 /*
  * Create a newly formatted disk / format an existing disk.
+ * The standard function fills every byte with 0xE5
  */
 void format_disk(int fd)
 {
@@ -1011,7 +1178,27 @@ void format_disk(int fd)
 	uint8_t sector_data[MAX_SECT_SIZE];
 
 	memset(sector_data, 0xe5, disk_sector_len());
-	#if 0
+
+	/* TODO: This could literally just be a write() ?*/
+	for (int track = 0 ; track < disk_num_tracks() ; track++)
+	{
+		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
+		{
+			write_raw_sector(fd, track, sector + 1, &sector_data);
+		}
+	}
+}
+
+/*
+ * Create a newly formatted disk / format an existing disk.
+ * This needs to format the raw disk sectors.
+ */
+void mits8in_format_disk(int fd)
+{
+
+	uint8_t sector_data[MAX_SECT_SIZE];
+
+	memset(sector_data, 0xe5, disk_sector_len());
 	sector_data[1] = 0x00;
 	sector_data[2] = 0x01;
 	sector_data[STOP_OFF_T0] = 0xff;
@@ -1048,16 +1235,8 @@ void format_disk(int fd)
 			write_raw_sector(fd, track, sector + 1, &sector_data);
 		}
 	}
-	#endif
-	/* TODO: This could literally just be a write() ?*/
-	for (int track = 0 ; track < disk_num_tracks() ; track++)
-	{
-		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
-		{
-			write_raw_sector(fd, track, sector + 1, &sector_data);
-		}
-	}
 }
+
 
 /*
  * Find the directory entry related to a filename.
@@ -1070,7 +1249,9 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
 	for (int i = start_index ; i < disk_num_directories() ; i++)
 	{
 		/* Is this the first extent for a file? */
-		if ((dir_table[i].extent_nr == 0 && dir_table[i].num_allocs <= 4) ||
+		if (dir_table[i].valid &&
+//			(dir_table[i].extent_nr == 0 && dir_table[i].num_allocs <= 4) || /* TODO: Work this out */
+			(dir_table[i].extent_nr == 0) ||
 			(dir_table[i].extent_nr == 1 && dir_table[i].num_allocs > 4))
 		{
 			/* If filename matches, return it */
@@ -1317,9 +1498,9 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 
 	convert_track_sector(alloc_num, rec_num, &track, &sector);
 	offset = track * disk_track_len() + (sector - 1) * disk_sector_len();
-#if 0
-	offset += (track < 6) ? DATA_OFF_T0 : DATA_OFF_T6;
-#endif
+	/* For 8" floppy format data is offset from start of sector */
+	offset += disk_off_data(track);
+
 	if (VERBOSE)
 		printf("Reading from TRACK[%d], SECTOR[%d], OFFSET[%d]\n", track, sector, offset);
 
@@ -1332,6 +1513,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 		error_exit(errno, "read_sector: Error on read");
 	}
 }
+
 
 /*
  * Write an allocation / record to disk
@@ -1347,37 +1529,12 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	/* offset to start of sector */
 	int sector_offset = track * disk_track_len() + (sector - 1) * disk_sector_len();
 
-#if 0
 	/* Get the offset to start of data, relative to the start of sector */
-	int data_offset = sector_offset + ((track < 6) ? DATA_OFF_T0 : DATA_OFF_T6);
+	int data_offset = sector_offset + disk_off_data(track);
 
-	/* calculate the checksum and offset */	
-	uint16_t csum = calc_checksum(buffer);
-	int csum_offset = sector_offset + ((track < 6) ? CSUM_OFF_T0 : CSUM_OFF_T6);
-#else
-	int data_offset = sector_offset;
-#endif
 	if (VERBOSE)
 		printf("Writing to TRACK[%d], SECTOR[%d], OFFSET[%d]\n", track, sector, data_offset);
-#if 0
-	/* For track 6 onwards, some non-data bytes are added to the checksum */
-	if (track >= 6)
-	{
-		if (lseek(fd, sector_offset, SEEK_SET) < 0)
-		{
-			error_exit(errno, "write_sector: Error seeking");
-		}
-		
-		if (read(fd, checksum_buf, 7) < 0)
-		{
-			error_exit(errno, "write_sector: Error on read checksum bytes");
-		}
-		csum += checksum_buf[2];
-		csum += checksum_buf[3];
-		csum += checksum_buf[5];
-		csum += checksum_buf[6];
-	}
-#endif
+
 	/* write the data */
 	if (lseek(fd, data_offset, SEEK_SET) < 0)
 	{
@@ -1387,17 +1544,41 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "write_sector: Error on write");
 	}
-#if 0
-	/* and the checksum */
-	if (lseek(fd, csum_offset, SEEK_SET) < 0)
+
+	if (disk_csum_method(track) > 0)
 	{
-		error_exit(errno, "write_sector: Error seeking");
+		/* calculate the checksum and offset if required */	
+		uint16_t csum = calc_checksum(buffer);
+		int csum_offset = sector_offset + disk_off_csum(track);
+
+		/* For track 6 onwards, some non-data bytes are added to the checksum */
+		if (track >= 6)
+		{
+			if (lseek(fd, sector_offset, SEEK_SET) < 0)
+			{
+				error_exit(errno, "write_sector: Error seeking");
+			}
+			
+			if (read(fd, checksum_buf, 7) < 0)
+			{
+				error_exit(errno, "write_sector: Error on read checksum bytes");
+			}
+			csum += checksum_buf[2];
+			csum += checksum_buf[3];
+			csum += checksum_buf[5];
+			csum += checksum_buf[6];
+		}
+
+		/* write the checksum */
+		if (lseek(fd, csum_offset, SEEK_SET) < 0)
+		{
+			error_exit(errno, "write_sector: Error seeking");
+		}
+		if (write(fd, &csum, 1) < 0)
+		{
+			error_exit(errno, "write_sector: Error on write");
+		}
 	}
-	if (write(fd, &csum, 1) < 0)
-	{
-		error_exit(errno, "write_sector: Error on write");
-	}
-#endif
 }
 
 
@@ -1429,33 +1610,27 @@ void write_raw_sector(int fd, int track, int sector, void* buffer)
  */
 void convert_track_sector(int allocation, int record, int* track, int* sector)
 {
-	/* TODO: The constants below should be calculated.. but we'll do that 
-	 * when additional formats are supported */
 	*track = allocation / disk_allocs_per_track() + disk_reserved_tracks();
-#if 0
-	int logical_sector = (allocation % 2) * 16 + (record % 16);
-#else
-//	int logical_sector = (((allocation - 1) / 2) * 2 + 1) * disk_recs_per_alloc() + record;
-	int logical_sector = allocation * disk_recs_per_alloc() + (record % 32);
-#endif
+	int modulus = disk_alloc_modulus();
+	int logical_sector;
+	if (modulus > 0)
+	{
+		/* for 8" floppy, this is logical = (allocation % 2) * 16 + (record % 16) */
+		int mult = disk_sectors_per_track() / modulus;
+		logical_sector = (allocation % modulus) * mult + (record % mult);
+	}
+	else
+	{
+		logical_sector = 
+			(allocation * disk_recs_per_alloc() + (record % disk_recs_per_alloc())) % 
+			disk_sectors_per_track();
+	}
+
 	if (VERBOSE)
 		printf("ALLOCATION[%d], RECORD[%d] LOGICAL[%d], ", allocation, record, logical_sector);
 
 	/* Need to "skew" the logical sector into a physical sector */
-#if 0
-	if (*track < 6)		
-	{
-		*sector = skew_table[logical_sector];
-	}
-	else
-	{
-		/* This calculation is due to historical weirdness. It is just how it works.*/
-		*sector = (((skew_table[logical_sector] - 1) * 17) % 32) + 1;
-	}
-#else
-	/* TODO: change the skew table to be 1 based, rather than 0 based */
-	*sector = skew_table[logical_sector % 96] + 1;
-#endif
+	*sector = disk_skew_sector(*track, logical_sector);
 }
 
 /*
