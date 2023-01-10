@@ -57,7 +57,7 @@
 #define NUM_TRACKS		77	/* Total tracks on disk */
 #define RES_TRACKS		2	/* Unused tracks - reserved for OS */
 #else
-#define NUM_TRACKS		405	/* Total tracks on disk */
+#define NUM_TRACKS		406	/* Total tracks on disk */
 #define RES_TRACKS		1	/* Unused tracks - reserved for OS */
 #endif
 
