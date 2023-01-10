@@ -43,42 +43,21 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <limits.h>
-#if 0
-#define SECT_LEN		137	/* Size of on-disk sector */
-#define SECT_DATA_LEN	128	/* only 128 bytes of the 137 sector bytes contains data */
-#define SECT_PER_TRACK	32	/* Sectors per track */
-#else
-#define SECT_LEN		128	/* Size of on-disk sector */
-#define SECT_DATA_LEN	128	/* only 128 bytes of the 137 sector bytes contains data */
-#define SECT_PER_TRACK	96	/* Sectors per track */
-#endif
-#define TRACK_LEN 		(SECT_LEN * SECT_PER_TRACK)
-#if 0
-#define NUM_TRACKS		77	/* Total tracks on disk */
-#define RES_TRACKS		2	/* Unused tracks - reserved for OS */
-#else
-#define NUM_TRACKS		406	/* Total tracks on disk */
-#define RES_TRACKS		1	/* Unused tracks - reserved for OS */
-#endif
 
-#define DIR_ENTRY_LEN	32	/* Length of a single directory entry (extent)*/
-#if 0
-#define NUM_DIRS		64	/* Total number of directory entries */
-#else
-#define NUM_DIRS		256	/* Total number of directory entries */
-#endif
-#define DIRS_PER_SECTOR (SECT_DATA_LEN / DIR_ENTRY_LEN) /* TODO: Correct answer, wrong calculation */
-#define DIRS_PER_ALLOC	128	/* TODO: Calculate */
-#if 0
-#define RECS_PER_ALLOC	16	/* Number of records per allocation */
-#define RECS_PER_EXTENT	128 /* Number of records per directory entry (extent) */
-#define ALLOCS_PER_TRACK 2
-#else
-#define RECS_PER_ALLOC	32	/* Number of records per allocation */
-#define RECS_PER_EXTENT	256 /* Number of records per directory entry (extent) */
-#define ALLOCS_PER_TRACK 3
-#endif
-#define TOTAL_ALLOCS	(NUM_TRACKS - RES_TRACKS) * ALLOCS_PER_TRACK
+#define MAX_SECT_SIZE	256		/* Maximum size of a disk sector read */
+#define MAX_DIRS		512 	/* Maximum size of directory table */
+#define MAX_ALLOCS		2048 	/* Maximum size of allocation table */
+#define DIR_ENTRY_LEN	32		/* Length of a single directory entry (extent)*/
+#define ALLOCS_PER_EXT	16		/* Number of allocations in a directory entry (extent) */
+#define RECORD_MAX		128		/* Max records per directory entry (extent) */
+
+
+#define FILENAME_LEN 	8	
+#define TYPE_LEN	 	3
+#define FULL_FILENAME_LEN (FILENAME_LEN+TYPE_LEN+2)
+#define MAX_USER		15
+#define DELETED_FLAG	0xe5
+
 #define TRACK_OFF_T0	0
 #define DATA_OFF_T0		3	/* Sector data is offset by 3 bytes on TRACKS 0-5  */
 #define STOP_OFF_T0		131
@@ -92,18 +71,33 @@
 #define STOP_OFF_T6		135
 #define	ZERO_OFF_T6		136
 
-#define FILENAME_LEN 	8	
-#define TYPE_LEN	 	3
-#define FULL_FILENAME_LEN (FILENAME_LEN+TYPE_LEN+2)
-#define MAX_USER		15
-#define DELETED_FLAG	0xe5
-#if 0
-#define ALLOCS_PER_ENT	16	
-#define RECORD_MAX		128	/* Max records per directory entry (extent) */
-#else
-#define ALLOCS_PER_ENT	16	
-#define RECORD_MAX		128	/* Max records per directory entry (extent) */
-#endif
+/* Configuration for MITS 8" controller which writes to the raw sector */
+struct disk_offsets {
+	int start_track;		/* starting track which this offset applies */
+	int end_track;			/* ending track */
+	int off_data;			/* offset of the data portion */
+	int	off_stop;			/* offset of stop byte */
+	int off_zero;			/* offset of zero byte */
+	int off_csum;			/* offset of checksum */
+	int csum_method;		/* Checksum method. Only supports method 1 Altair 8" */
+};
+
+/* Disk format Parameters */
+struct disk_format {
+	const char* type[32];
+	int sector_len;			/* length of sector in bytes (must be 128) */
+	int sector_data_len;	/* length of data part of sector in bytes. Note only supports 128 */
+	int num_tracks;			/* Total tracks */
+	int reserved_tracks;	/* Number of tracks reserved by the OS */
+	int sectors_per_track;	/* Number of sectors per track */
+	int block_size;			/* Size of Block / Allocation */
+	int num_directories;	/* maximum number of directories / extents supported */
+	int skew_table_size;	/* number of entries in skew table */
+	int *skew_table;		/* Pointer to the sector skew table */
+	struct disk_offsets offsets[2];		/* Raw sector offsets for MITS 8" controller */
+	int image_size;			/* size of disk image (for auto-detection) */
+};
+
 /* On-disk representation of a directory entry */
 typedef struct raw_dir_entry
 {
@@ -114,7 +108,7 @@ typedef struct raw_dir_entry
 	uint8_t		reserved;
 	uint8_t		extent_h;				/* Not used */
 	uint8_t		num_records;			/* Number of sectors used for this directory entry */
-	uint8_t 	allocation[ALLOCS_PER_ENT];	/* List of 2K Allocations used for the file */
+	uint8_t 	allocation[ALLOCS_PER_EXT];	/* List of 2K Allocations used for the file */
 } raw_dir_entry;
 
 /* Sanitised version of a directory entry */
@@ -131,21 +125,67 @@ typedef struct cpm_dir_entry
 	char			full_filename[FILENAME_LEN+TYPE_LEN+2]; /* filename.ext format */
 	int				num_records;		
 	int				num_allocs;
-	int				allocation[ALLOCS_PER_ENT];
+	int				allocation[ALLOCS_PER_EXT];
 	struct cpm_dir_entry*	next_entry; /* pointer to next directory entry if multiple */
 }	cpm_dir_entry;
 
-cpm_dir_entry	dir_table[NUM_DIRS];			/* Directory entires in order read from "disk" */
-cpm_dir_entry*	sorted_dir_table[NUM_DIRS];		/* Pointers to entries, sorted by name+type and extent nr*/
-uint8_t			alloc_table[TOTAL_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
+cpm_dir_entry	dir_table[MAX_DIRS];			/* Directory entires in order read from "disk" */
+cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries, sorted by name+type and extent nr*/
+uint8_t			alloc_table[MAX_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
 /* Skew table. Converts logical sectors to on-disk sectors */
-#if 0
-int skew_table[] = {
+int mits_skew_table[] = {
 	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
 	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
 };
-#endif
+
+struct disk_format MITS8IN_FORMAT = {
+	.type = "MITS 8\"",
+	.sector_len = 137,
+	.sector_data_len = 128,
+	.num_tracks = 77,
+	.reserved_tracks = 2,
+	.sectors_per_track = 32,
+	.block_size = 2048,
+	.num_directories = 64,
+	.skew_table_size = sizeof(mits_skew_table),
+	.skew_table = mits_skew_table,
+	.offsets = {
+		0, 5, 3, 131, 133, 132, 1,
+		0, 1, 7, 135, 136, 4, 2
+	}
+};
+
+/* Skew table for the 5MB HDD. Note that this requires a 
+ * skew for each CPM sector. Not physical sector */
+int	hd5mb_skew_table[] = {
+	0,1,14,15,28,29,42,43,8,9,22,23,
+	36,37,2,3,16,17,30,31,44,45,10,11,
+	24,25,38,39,4,5,18,19,32,33,46,47,
+	12,13,26,27,40,41,6,7,20,21,34,35,
+	48,49,62,63,76,77,90,91,56,57,70,71,
+	84,85,50,51,64,65,78,79,92,93,58,59,
+	72,73,86,87,52,53,66,67,80,81,94,95,
+	60,61,74,75,88,89,54,55,68,69,82,83
+};
+
+struct disk_format MITS5MBHDD_FORMAT = {
+	.type = "MITS 5MB HDD",
+	.sector_len = 128,
+	.sector_data_len = 128,
+	.num_tracks = 406,
+	.reserved_tracks = 1,
+	.sectors_per_track = 96,
+	.block_size = 4096,
+	.num_directories = 256,
+	.skew_table_size = sizeof(hd5mb_skew_table),
+	.skew_table = hd5mb_skew_table,
+	.offsets = {
+		-1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1
+	}
+};
+
 int	skew_table[] = {
 	0,1,14,15,28,29,42,43,8,9,22,23,
 	36,37,2,3,16,17,30,31,44,45,10,11,
@@ -156,6 +196,8 @@ int	skew_table[] = {
 	72,73,86,87,52,53,66,67,80,81,94,95,
 	60,61,74,75,88,89,54,55,68,69,82,83
 };
+
+struct disk_format *disk_type;
 
 void print_usage(char* argv0); 
 void error_exit(int eno, char *str, ...);
@@ -191,11 +233,95 @@ void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc);
 
 int VERBOSE = 0;	/* Print out Sector read/write information */
 
+int disk_sector_len()
+{
+	return disk_type->sector_len;
+}
+
+int disk_data_sector_len()
+{
+	return disk_type->sector_data_len;
+}
+
+int disk_num_tracks()
+{
+	return disk_type->num_tracks;
+}
+
+int disk_reserved_tracks()
+{
+	return disk_type->reserved_tracks;
+}
+
+int disk_sectors_per_track()
+{
+	return disk_type->sectors_per_track;
+}
+
+int disk_block_size()
+{
+	return disk_type->block_size;
+}
+
+int disk_num_directories()
+{
+	return disk_type->num_directories;
+}
+
+int disk_skew_table_size()
+{
+	return disk_type->skew_table_size;
+}
+
+int disk_skew_sector(int sector_num)
+{
+	return disk_type->skew_table[sector_num];
+}
+
+int disk_track_len()
+{
+	return disk_type->sector_len * disk_type->sectors_per_track;
+}
+
+int disk_total_allocs()
+{
+	return (disk_type->num_tracks - disk_type->reserved_tracks) *
+		disk_type->sectors_per_track *
+		disk_type->sector_data_len /
+		disk_type->block_size;
+}
+
+int disk_allocs_per_track()
+{
+	return disk_total_allocs() / (disk_type->num_tracks - disk_type->reserved_tracks);
+}
+
+int disk_recs_per_alloc()
+{
+	return disk_type->block_size / disk_type->sector_data_len;
+}
+
+int disk_recs_per_extent()
+{
+	/* 8 = NR of allocations per extent */
+	return disk_recs_per_alloc() * 8;
+}
+
+int disk_dirs_per_sector()
+{
+	return disk_type->sector_data_len / DIR_ENTRY_LEN;
+}
+
+int disk_dirs_per_alloc()
+{
+	return disk_type->block_size / DIR_ENTRY_LEN;
+}
+
 int main(int argc, char**argv)
 {
 	int open_mode;	/* read or write depending on selected options */
 	mode_t open_umask = 0666;
-	
+
 	/* command line options */
 	int opt;
 	int do_dir = 0, do_raw = 0, do_get = 0;
@@ -205,6 +331,9 @@ int main(int argc, char**argv)
 	char *disk_filename = NULL; 	/* Altair disk image filename */
 	char from_filename[PATH_MAX];	/* filename to get / put */
 	char to_filename[PATH_MAX];		/* filename to get / put */
+
+
+	disk_type = &MITS5MBHDD_FORMAT;
 
 	/* parse options */
 	while ((opt = getopt(argc, argv, "drhgGpPvFetb")) != -1)
@@ -534,7 +663,7 @@ void directory_list(void)
 	int this_kb = 0;
 	char *last_filename = "";
 
-	for (int i = 0 ; i < NUM_DIRS ; i++)
+	for (int i = 0 ; i < disk_num_directories() ; i++)
 	{
 		/* Valid entries are sorted before invalid ones */
 		entry = sorted_dir_table[i];
@@ -559,29 +688,29 @@ void directory_list(void)
 		/* If there are no more dir entries, print out the file details */
 		if(entry->next_entry == NULL)
 		{
-			this_kb += (this_allocs * RECS_PER_ALLOC * SECT_DATA_LEN) / 1024;
+			this_kb += (this_allocs * disk_recs_per_alloc() * disk_data_sector_len()) / 1024;
 			kb_used += this_kb;
 
 			printf("%s %s %7dB %3dK %d %s\n", 
 				entry->filename, 
 				entry->type,
-				this_records * SECT_LEN,
+				this_records * disk_sector_len(),
 				this_kb,
 				entry->user,
 				entry->attribs);
 		}
 	}
-	for (int i = 0 ; i < TOTAL_ALLOCS ; i++)
+	for (int i = 0 ; i < disk_total_allocs() ; i++)
 	{
 		if(alloc_table[i] == 0)
 		{
-			kb_free+= RECS_PER_ALLOC * SECT_DATA_LEN / 1024;
+			kb_free+= disk_recs_per_alloc() * disk_data_sector_len() / 1024;
 		}
 	}
 	printf("%d file(s), occupying %dK of %dK total capacity\n",
 			file_count, kb_used, kb_used + kb_free);
 	printf("%d directory entries and %dK bytes remain\n",
-			NUM_DIRS - entry_count, kb_free);
+			disk_num_directories() - entry_count, kb_free);
 }
 
 /*
@@ -590,7 +719,7 @@ void directory_list(void)
 void raw_directory_list()
 {
 	printf("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n");
-	for (int i = 0 ; i < NUM_DIRS ; i++)
+	for (int i = 0 ; i < disk_num_directories() ; i++)
 	{
 		cpm_dir_entry *entry = &dir_table[i];
 		if (entry->valid)
@@ -600,9 +729,9 @@ void raw_directory_list()
 				entry->user, entry->filename, entry->type,
 				entry->attribs,
 				entry->extent_nr, entry->num_records);
-			for (int i = 0 ; i < ALLOCS_PER_ENT ; i++)
+			for (int i = 0 ; i < ALLOCS_PER_EXT ; i++)
 			{
-				if (i < ALLOCS_PER_ENT - 1)
+				if (i < ALLOCS_PER_EXT - 1)
 				{
 					printf("%u,", entry->allocation[i]);
 				} 
@@ -616,7 +745,7 @@ void raw_directory_list()
 	}
 	printf ("FREE ALLOCATIONS:\n");
 	int nr_output = 0;
-	for (int i = 0 ; i < TOTAL_ALLOCS ; i++)
+	for (int i = 0 ; i < disk_total_allocs() ; i++)
 	{
 		if (alloc_table[i] == 0)
 		{
@@ -637,8 +766,8 @@ void raw_directory_list()
  */
 void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_mode)
 {
-	uint8_t sector_data[SECT_DATA_LEN];
-	int data_len = SECT_DATA_LEN;
+	uint8_t sector_data[MAX_SECT_SIZE];
+	int data_len = disk_data_sector_len();
 	while (dir_entry != NULL)
 	{
 #if 0
@@ -652,7 +781,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 #endif
 		for (int recnr = 0 ; recnr < num_records ; recnr ++)
 		{
-			int alloc = dir_entry->allocation[recnr / RECS_PER_ALLOC];
+			int alloc = dir_entry->allocation[recnr / disk_recs_per_alloc()];
 			
 			if (alloc == 0)
 				break;
@@ -666,7 +795,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 			if ((text_mode == -1) ||
 				((text_mode == 1) && (recnr == num_records - 1)))
 			{
-				for (int i = 0 ; i < SECT_DATA_LEN ; i++)
+				for (int i = 0 ; i < disk_data_sector_len() ; i++)
 				{
 					/* If auto-detecting text mode, check if char is "text"
 					 * where "text" means 7 bit only  */
@@ -700,7 +829,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
  */
 void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 {
-	uint8_t sector_data[SECT_DATA_LEN];
+	uint8_t sector_data[MAX_SECT_SIZE];
 	char valid_filename[FULL_FILENAME_LEN];
 
 	validate_cpm_filename(cpm_filename, valid_filename);
@@ -721,12 +850,12 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 	cpm_dir_entry *dir_entry = NULL;
 
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
-	memset (&sector_data, 0x1a, SECT_DATA_LEN); 
+	memset (&sector_data, 0x1a, disk_data_sector_len()); 
 	
-	while((nbytes = read(host_fd, &sector_data, SECT_DATA_LEN)) > 0)
+	while((nbytes = read(host_fd, &sector_data, disk_data_sector_len())) > 0)
 	{
 		/* Is this a new Extent (i.e directory entry) ? */
-		if ((rec_nr % RECS_PER_EXTENT) == 0)
+		if ((rec_nr % disk_recs_per_extent()) == 0)
 		{
 			/* if there is a previous directory entry, write it to disk */
 			if (dir_entry != NULL)
@@ -746,7 +875,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 			nr_allocs = 0;
 		}
 		/* Is this a new allocation? */
-		if ((rec_nr % RECS_PER_ALLOC) == 0)
+		if ((rec_nr % disk_recs_per_alloc()) == 0)
 		{
 			allocation = find_free_alloc();
 			if (allocation < 0)
@@ -768,7 +897,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 		dir_entry->raw_entry.extent_l = nr_extents % 32;
 		dir_entry->raw_entry.extent_h = nr_extents / 32;
 		write_sector(cpm_fd, allocation, rec_nr, &sector_data);
-		memset (&sector_data, 0x1a, SECT_DATA_LEN);
+		memset (&sector_data, 0x1a, disk_data_sector_len());
 		rec_nr++;
 		if ((rec_nr % RECORD_MAX) == 0)
 		{
@@ -787,20 +916,20 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
  */
 void load_directory_table(int fd)
 {
-	uint8_t sector_data[SECT_DATA_LEN];
+	uint8_t sector_data[MAX_SECT_SIZE];
 
-	for (int sect_nr = 0 ; sect_nr < (NUM_DIRS) / DIRS_PER_SECTOR; sect_nr++)
+	for (int sect_nr = 0 ; sect_nr < (disk_num_directories()) / disk_dirs_per_sector(); sect_nr++)
 	{
 		/* Read each sector containing a directory entry */
 		/* All directory data is on first 16 sectors of TRACK 2*/
-		int allocation = sect_nr / RECS_PER_ALLOC;
-		int	record = (sect_nr % RECS_PER_ALLOC);
+		int allocation = sect_nr / disk_recs_per_alloc();
+		int	record = (sect_nr % disk_recs_per_alloc());
 
 		read_sector(fd, allocation, record, &sector_data);
-		for (int dir_nr = 0 ; dir_nr < DIRS_PER_SECTOR ; dir_nr++)
+		for (int dir_nr = 0 ; dir_nr < disk_dirs_per_sector() ; dir_nr++)
 		{
 			/* Calculate which directory entry number this is */
-			int index = sect_nr * DIRS_PER_SECTOR + dir_nr;
+			int index = sect_nr * disk_dirs_per_sector() + dir_nr;
 			cpm_dir_entry *entry = &dir_table[index];
 			entry->index = index;
 			memcpy(&entry->raw_entry, sector_data + (DIR_ENTRY_LEN * dir_nr), DIR_ENTRY_LEN);
@@ -811,7 +940,7 @@ void load_directory_table(int fd)
 				raw_to_cpmdir(entry);
 
 				/* Mark off the used allocations */
-				for (int alloc_nr = 0 ; alloc_nr < ALLOCS_PER_ENT ; alloc_nr++)
+				for (int alloc_nr = 0 ; alloc_nr < ALLOCS_PER_EXT ; alloc_nr++)
 				{
 					int alloc = entry->allocation[alloc_nr];
 					
@@ -827,11 +956,11 @@ void load_directory_table(int fd)
 
 	/* Create a list of pointers to the directory table, sorted by:
 	 * Valid, Filename, Type, Extent */
-	qsort(&sorted_dir_table, NUM_DIRS, sizeof(cpm_dir_entry*), compare_sort_ptr);
+	qsort(&sorted_dir_table, disk_num_directories(), sizeof(cpm_dir_entry*), compare_sort_ptr);
 
 	/* link related directory entries */
 	/* No need to check last entry, it can't be related to anything */
-	for (int i = 0 ; i < NUM_DIRS - 1 ; i++)
+	for (int i = 0 ; i < disk_num_directories() - 1 ; i++)
 	{
 		cpm_dir_entry* entry = sorted_dir_table[i];
 		cpm_dir_entry* next_entry = sorted_dir_table[i+1];
@@ -879,26 +1008,26 @@ void erase_file(int fd, const char* cpm_filename)
 void format_disk(int fd)
 {
 
-	uint8_t sector_data[SECT_LEN];
+	uint8_t sector_data[MAX_SECT_SIZE];
 
-	memset(sector_data, 0xe5, SECT_LEN);
+	memset(sector_data, 0xe5, disk_sector_len());
 	#if 0
 	sector_data[1] = 0x00;
 	sector_data[2] = 0x01;
 	sector_data[STOP_OFF_T0] = 0xff;
-	memset(sector_data+ZERO_OFF_T0, 0, SECT_LEN - ZERO_OFF_T0);
+	memset(sector_data+ZERO_OFF_T0, 0, disk_sector_len() - ZERO_OFF_T0);
 
-	for (int track = 0 ; track < NUM_TRACKS ; track++)
+	for (int track = 0 ; track < disk_num_tracks() ; track++)
 	{
 		if (track == 6)
 		{
-			memset(sector_data, 0xe5, SECT_LEN);
+			memset(sector_data, 0xe5, disk_sector_len());
 			sector_data[2] = 0x01;
 			sector_data[STOP_OFF_T6] = 0xff;
 			sector_data[ZERO_OFF_T6] = 0x00;
-			memset(sector_data+ZERO_OFF_T6, 0, SECT_LEN - ZERO_OFF_T6);
+			memset(sector_data+ZERO_OFF_T6, 0, disk_sector_len() - ZERO_OFF_T6);
 		}
-		for (int sector = 0 ; sector < SECT_PER_TRACK ; sector++)
+		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
 		{
 			if (track < 6)
 			{
@@ -921,9 +1050,9 @@ void format_disk(int fd)
 	}
 	#endif
 	/* TODO: This could literally just be a write() ?*/
-	for (int track = 0 ; track < NUM_TRACKS ; track++)
+	for (int track = 0 ; track < disk_num_tracks() ; track++)
 	{
-		for (int sector = 0 ; sector < SECT_PER_TRACK ; sector++)
+		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
 		{
 			write_raw_sector(fd, track, sector + 1, &sector_data);
 		}
@@ -938,7 +1067,7 @@ void format_disk(int fd)
 cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards)
 {
 	int start_index = (prev_entry == NULL) ? 0 : prev_entry->index + 1;
-	for (int i = start_index ; i < NUM_DIRS ; i++)
+	for (int i = start_index ; i < disk_num_directories() ; i++)
 	{
 		/* Is this the first extent for a file? */
 		if ((dir_table[i].extent_nr == 0 && dir_table[i].num_allocs <= 4) ||
@@ -1023,7 +1152,7 @@ int filename_equals(const char *s1, const char *s2, int wildcards)
  */
 cpm_dir_entry* find_free_dir_entry(void)
 {
-	for (int i = 0 ; i < NUM_DIRS ; i++)
+	for (int i = 0 ; i < disk_num_directories() ; i++)
 	{
 		if (!dir_table[i].valid)
 		{
@@ -1079,10 +1208,10 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
 	}
 	entry->num_records = raw->num_records;
 	int num_allocs = 0;
-	for (int i = 0 ; i < ALLOCS_PER_ENT ; i++)
+	for (int i = 0 ; i < ALLOCS_PER_EXT ; i++)
 	{
 		int alloc_nr = get_raw_allocation(&entry->raw_entry, i);
-		if (TOTAL_ALLOCS <= 256)
+		if (disk_total_allocs() <= 256)
 		{
 			/* an 8 bit allocation number */	
 			entry->allocation[i] = alloc_nr;
@@ -1108,7 +1237,7 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
  */
 int find_free_alloc(void)
 {
-	for (int i = 0 ; i < TOTAL_ALLOCS ; i++)
+	for (int i = 0 ; i < disk_total_allocs() ; i++)
 	{
 		if(alloc_table[i] == 0)
 		{
@@ -1159,14 +1288,14 @@ void copy_filename(raw_dir_entry *entry, const char *filename)
  */
 void write_dir_entry(int fd, cpm_dir_entry* entry)
 {
-	uint8_t sector_data[SECT_DATA_LEN];
+	uint8_t sector_data[MAX_SECT_SIZE];
 
-	int allocation = entry->index / DIRS_PER_ALLOC;
-	int record = entry->index / DIRS_PER_SECTOR;
+	int allocation = entry->index / disk_dirs_per_alloc();
+	int record = entry->index / disk_dirs_per_sector();
 	/* start_index is the index of this directory entry that is at 
 	 * the beginning of the sector */
-	int start_index = entry->index / DIRS_PER_SECTOR * DIRS_PER_SECTOR;
-	for (int i = 0 ; i < DIRS_PER_SECTOR ; i++)
+	int start_index = entry->index / disk_dirs_per_sector() * disk_dirs_per_sector();
+	for (int i = 0 ; i < disk_dirs_per_sector() ; i++)
 	{
 		/* copy all directory entries for the sector */
 		memcpy(sector_data + i * DIR_ENTRY_LEN, 
@@ -1187,9 +1316,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	int offset;
 
 	convert_track_sector(alloc_num, rec_num, &track, &sector);
-	offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
-	int tl = TRACK_LEN;
-	int sl = SECT_LEN; 
+	offset = track * disk_track_len() + (sector - 1) * disk_sector_len();
 #if 0
 	offset += (track < 6) ? DATA_OFF_T0 : DATA_OFF_T6;
 #endif
@@ -1200,7 +1327,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "read_sector: Error seeking");
 	}
-	if (read(fd, buffer, SECT_DATA_LEN) < 0)
+	if (read(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "read_sector: Error on read");
 	}
@@ -1218,7 +1345,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	convert_track_sector(alloc_num, rec_num, &track, &sector);
 
 	/* offset to start of sector */
-	int sector_offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
+	int sector_offset = track * disk_track_len() + (sector - 1) * disk_sector_len();
 
 #if 0
 	/* Get the offset to start of data, relative to the start of sector */
@@ -1256,7 +1383,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "write_sector: Error seeking");
 	}
-	if (write(fd, buffer, SECT_DATA_LEN) < 0)
+	if (write(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "write_sector: Error on write");
 	}
@@ -1281,7 +1408,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 void write_raw_sector(int fd, int track, int sector, void* buffer)
 {
 	/* offset to start of sector */
-	int sector_offset = track * TRACK_LEN + (sector - 1) * SECT_LEN;
+	int sector_offset = track * disk_track_len() + (sector - 1) * disk_sector_len();
 
 	if (VERBOSE)
 		printf("Writing to TRACK[%d], SECTOR[%d], OFFSET[%d] (RAW)\n", track, sector, sector_offset);
@@ -1291,7 +1418,7 @@ void write_raw_sector(int fd, int track, int sector, void* buffer)
 	{
 		error_exit(errno, "write_raw_sector: Error seeking");
 	}
-	if (write(fd, buffer, SECT_LEN) < 0)
+	if (write(fd, buffer, disk_sector_len()) < 0)
 	{
 		error_exit(errno, "write_raw_sector: Error on write");
 	}
@@ -1304,12 +1431,12 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 {
 	/* TODO: The constants below should be calculated.. but we'll do that 
 	 * when additional formats are supported */
-	*track = allocation / ALLOCS_PER_TRACK + RES_TRACKS;
+	*track = allocation / disk_allocs_per_track() + disk_reserved_tracks();
 #if 0
 	int logical_sector = (allocation % 2) * 16 + (record % 16);
 #else
-//	int logical_sector = (((allocation - 1) / 2) * 2 + 1) * RECS_PER_ALLOC + record;
-	int logical_sector = allocation * RECS_PER_ALLOC + (record % 32);
+//	int logical_sector = (((allocation - 1) / 2) * 2 + 1) * disk_recs_per_alloc() + record;
+	int logical_sector = allocation * disk_recs_per_alloc() + (record % 32);
 #endif
 	if (VERBOSE)
 		printf("ALLOCATION[%d], RECORD[%d] LOGICAL[%d], ", allocation, record, logical_sector);
@@ -1339,7 +1466,7 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 uint8_t calc_checksum(uint8_t *buffer)
 {
 	uint8_t csum = 0;
-	for (int i = 0 ; i < SECT_DATA_LEN ; i++)
+	for (int i = 0 ; i < disk_data_sector_len() ; i++)
 	{
 		csum += buffer[i];
 	}
@@ -1447,7 +1574,7 @@ int compare_sort_ptr(const void* a, const void* b)
  */
 int get_raw_allocation(raw_dir_entry *raw, int entry_nr)
 {
-	if (TOTAL_ALLOCS <= 256)
+	if (disk_total_allocs() <= 256)
 	{
 		/* an 8 bit allocation number */
 		return raw->allocation[entry_nr];
@@ -1468,7 +1595,7 @@ int get_raw_allocation(raw_dir_entry *raw, int entry_nr)
  */
 void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc)
 {
-	if (TOTAL_ALLOCS <= 256)
+	if (disk_total_allocs() <= 256)
 	{
 		entry->allocation[entry_nr] = alloc;
 	}
