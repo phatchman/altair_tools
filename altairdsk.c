@@ -1210,7 +1210,7 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 	int logical_sector = (allocation % 2) * 16 + (record % 16);
 
 	if (VERBOSE)
-		printf("ALLOCATION[%d], RECORD[%d], ", allocation, record);
+		printf("ALLOCATION[%d], RECORD[%d], LOGICAL[%d], ", allocation, record, logical_sector);
 
 	/* Need to "skew" the logical sector into a physical sector */
 	if (*track < 6)		
