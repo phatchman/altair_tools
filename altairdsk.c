@@ -232,7 +232,7 @@ struct disk_format TARBELLFDD_FORMAT = {
 	.type = "FDD_TAR",
 	.sector_len = 128,
 	.sector_data_len = 128,
-	.num_tracks = 74,
+	.num_tracks = 77,
 	.reserved_tracks = 2,
 	.sectors_per_track = 26,
 	.block_size = 1024,
@@ -354,7 +354,9 @@ int disk_recs_per_alloc()
 int disk_recs_per_extent()
 {
 	/* 8 = nr of allocations per extent */
-	return disk_recs_per_alloc() * 8;
+	/* TODO: FIX*/
+	//return disk_recs_per_alloc() * 8;
+	return 128;
 }
 
 int disk_dirs_per_sector()
@@ -464,6 +466,25 @@ void disk_set_format(const char* format)
 	{
 		error_exit(0,"Invalid disk image format: %s", format);
 	}
+}
+
+void disk_dump_parameters()
+{
+	printf("Sector Len: %d\n", disk_sector_len());
+	printf("Data Len  : %d\n", disk_data_sector_len());
+	printf("Num Tracks: %d\n", disk_num_tracks());
+	printf("Res Tracks: %d\n", disk_reserved_tracks());
+	printf("Secs/Track: %d\n", disk_sectors_per_track());
+	printf("Block Size: %d\n", disk_block_size());
+	printf("Num Dirs  : %d\n", disk_num_directories());
+	printf("Num Tracks: %d\n", disk_num_tracks());
+	printf("Track Len : %d\n", disk_track_len());
+	printf("Allocs/Trk: %d\n", disk_allocs_per_track());
+	printf("Recs/Ext  : %d\n", disk_recs_per_extent());
+	printf("Recs/Alloc: %d\n", disk_recs_per_alloc());
+	printf("Dirs/Sect : %d\n", disk_dirs_per_sector());
+	printf("Dirs/Alloc: %d\n", disk_dirs_per_alloc());
+	printf("Alloc Mod : %d\n", disk_alloc_modulus());
 }
 
 void disk_format_disk(int fd)
@@ -648,6 +669,9 @@ int main(int argc, char**argv)
 			error_exit(errno, "Error finding disk image size");
 		}
 	}
+
+	if (VERBOSE)
+		disk_dump_parameters();
 
 	/* Read all directory entries - except for format command */
 	if (!do_format)
