@@ -30,6 +30,8 @@
  * SOFTWARE.
  */
 
+/* TODO: Better handle when file is > 255 records */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -66,6 +68,7 @@
 #define NUM_DIRS		256	/* Total number of directory entries */
 #endif
 #define DIRS_PER_SECTOR (SECT_DATA_LEN / DIR_ENTRY_LEN)
+#define DIRS_PER_ALLOC	128	/* TODO: Calculate */
 #if 0
 #define RECS_PER_ALLOC	16	/* Number of records per allocation */
 #define RECS_PER_EXTENT	128 /* Number of records per directory entry (extent) */
@@ -75,7 +78,7 @@
 #define RECS_PER_EXTENT	256 /* Number of records per directory entry (extent) */
 #define ALLOCS_PER_TRACK 3
 #endif
-#define TOTAL_ALLOCS	(NUM_TRACKS - RES_TRACKS) * ALLOCS_PER_TRACK	/* This * 2 should be calculated */
+#define TOTAL_ALLOCS	(NUM_TRACKS - RES_TRACKS) * ALLOCS_PER_TRACK
 #define TRACK_OFF_T0	0
 #define DATA_OFF_T0		3	/* Sector data is offset by 3 bytes on TRACKS 0-5  */
 #define STOP_OFF_T0		131
@@ -810,7 +813,7 @@ void load_directory_table(int fd)
 				/* Mark off the used allocations */
 				for (int alloc_nr = 0 ; alloc_nr < ALLOCS_PER_ENT ; alloc_nr++)
 				{
-					uint8_t alloc = entry->allocation[alloc_nr];
+					int alloc = entry->allocation[alloc_nr];
 					
 					/* Allocation of 0, means no more allocations used by this entry */
 					if (alloc == 0)
@@ -1022,9 +1025,10 @@ cpm_dir_entry* find_free_dir_entry(void)
 {
 	for (int i = 0 ; i < NUM_DIRS ; i++)
 	{
-		if (dir_table[i].valid)
-			continue;
-		return &dir_table[i];
+		if (!dir_table[i].valid)
+		{
+			return &dir_table[i];
+		}
 	}
 	return NULL;
 }
@@ -1157,7 +1161,7 @@ void write_dir_entry(int fd, cpm_dir_entry* entry)
 {
 	uint8_t sector_data[SECT_DATA_LEN];
 
-	int allocation = 0;			/* Directories are on allocation 0 */
+	int allocation = entry->index / DIRS_PER_ALLOC;
 	int record = entry->index / DIRS_PER_SECTOR;
 	/* start_index is the index of this directory entry that is at 
 	 * the beginning of the sector */
