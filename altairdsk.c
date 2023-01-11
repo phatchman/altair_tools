@@ -50,25 +50,11 @@
 #define ALLOCS_PER_EXT	16		/* Number of allocations in a directory entry (extent) */
 #define RECORD_MAX		128		/* Max records per directory entry (extent) */
 
-
 #define FILENAME_LEN 	8	
 #define TYPE_LEN	 	3
 #define FULL_FILENAME_LEN (FILENAME_LEN+TYPE_LEN+2)
 #define MAX_USER		15
 #define DELETED_FLAG	0xe5
-
-#define TRACK_OFF_T0	0
-#define DATA_OFF_T0		3	/* Sector data is offset by 3 bytes on TRACKS 0-5  */
-#define STOP_OFF_T0		131
-#define CSUM_OFF_T0		132	/* Checksum offset for Track 0-5 */
-#define	ZERO_OFF_T0		133
-
-#define TRACK_OFF_T6	0
-#define SECT_OFF_T6		1	
-#define CSUM_OFF_T6		4	/* Checksum offset for Track 6+ */
-#define DATA_OFF_T6		7   /* Sectors data is offset by 7 bytes on TRACKS 6-76 */
-#define STOP_OFF_T6		135
-#define	ZERO_OFF_T6		136
 
 /* Configuration for MITS 8" controller which writes to the raw sector */
 struct disk_offsets {
@@ -136,9 +122,10 @@ cpm_dir_entry	dir_table[MAX_DIRS];			/* Directory entires in order read from "di
 cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries, sorted by name+type and extent nr*/
 uint8_t			alloc_table[MAX_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
-
 struct disk_type *disk_type;					/* Pointer to the disk image type */
 
+void format_disk(int fd);
+void mits8in_format_disk(int fd);
 
 /* Skew table. Converts logical sectors to on-disk sectors */
 /* TODO: How TF is this working with a 1-based skew table???? */
@@ -146,9 +133,6 @@ int mits_skew_table[] = {
 	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
 	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
 };
-
-void format_disk(int fd);
-void mits8in_format_disk(int fd);
 
 
 int mits8in_skew_function(int track, int logical_sector)
@@ -299,6 +283,8 @@ struct disk_type FDD15MB_FORMAT = {
 };
 
 
+int VERBOSE = 0;	/* Print out Sector read/write information */
+
 void print_usage(char* argv0); 
 void error_exit(int eno, char *str, ...);
 
@@ -330,225 +316,35 @@ int get_raw_allocation(raw_dir_entry* raw, int entry_nr);
 void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc);
 int is_first_extent(cpm_dir_entry* dir_entry);
 
-int VERBOSE = 0;	/* Print out Sector read/write information */
-
-int disk_sector_len()
-{
-	return disk_type->sector_len;
-}
-
-int disk_data_sector_len()
-{
-	return disk_type->sector_data_len;
-}
-
-int disk_num_tracks()
-{
-	return disk_type->num_tracks;
-}
-
-int disk_reserved_tracks()
-{
-	return disk_type->reserved_tracks;
-}
-
-int disk_sectors_per_track()
-{
-	return disk_type->sectors_per_track;
-}
-
-int disk_block_size()
-{
-	return disk_type->block_size;
-}
-
-int disk_num_directories()
-{
-	return disk_type->num_directories;
-}
-
-int disk_skew_table_size()
-{
-	return disk_type->skew_table_size;
-}
-
-int disk_skew_sector(int track_nr, int logical_sector)
-{
-	return disk_type->skew_function(track_nr, logical_sector);
-}
-
-int disk_track_len()
-{
-	return disk_type->sector_len * disk_type->sectors_per_track;
-}
-
-int disk_total_allocs()
-{
-	return (disk_type->num_tracks - disk_type->reserved_tracks) *
-		disk_type->sectors_per_track *
-		disk_type->sector_data_len /
-		disk_type->block_size;
-}
-
-int disk_allocs_per_track()
-{
-	return disk_total_allocs() / (disk_type->num_tracks - disk_type->reserved_tracks);
-}
-
-int disk_recs_per_alloc()
-{
-	return disk_type->block_size / disk_type->sector_data_len;
-}
-
-int disk_recs_per_extent()
-{
-	/* 8 = nr of allocations per extent */
-	/* rounded upwards to multiple of 128 */
-	return ((disk_recs_per_alloc() * 8) + 127)/ 128 * 128;
-}
-
-int disk_dirs_per_sector()
-{
-	return disk_type->sector_data_len / DIR_ENTRY_LEN;
-}
-
-int disk_dirs_per_alloc()
-{
-	return disk_type->block_size / DIR_ENTRY_LEN;
-}
-
-struct disk_offsets *disk_get_offsets(int track_nr)
-{
-	if ((track_nr >= disk_type->offsets[0].start_track) && 
-		(track_nr <= disk_type->offsets[0].end_track))
-	{
-		return &disk_type->offsets[0];
-	}
-	return &disk_type->offsets[1];
-}
-
-int disk_off_track_nr(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_track_nr;
-}
-
-int disk_off_sect_nr(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_sect_nr;
-}
-
-int disk_off_data(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_data;
-}
-
-int disk_off_stop(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_stop;
-}
-
-int disk_off_zero(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_zero;
-}
-
-int disk_off_csum(int track_nr)
-{
-	return disk_get_offsets(track_nr)->off_csum;
-}
-
-int disk_csum_method(int track_nr)
-{
-	return disk_get_offsets(track_nr)->csum_method;
-}
-
-int disk_detect_type(int fd)
-{
-	off_t length = lseek(fd, 0, SEEK_END);
-	if (length < 0)
-	{
-		return -1;
-	}
-
-	if (length == MITS8IN_FORMAT.image_size)
-	{
-		disk_type = &MITS8IN_FORMAT;
-	}
-	else if (length == MITS5MBHDD_FORMAT.image_size)
-	{
-		disk_type = &MITS5MBHDD_FORMAT;
-	}
-	else if (length == TARBELLFDD_FORMAT.image_size)
-	{
-		disk_type = &TARBELLFDD_FORMAT;
-	}
-	else if (length == FDD15MB_FORMAT.image_size)
-	{
-		disk_type = &FDD15MB_FORMAT;
-	}
-	else if (length == MITS8IN8MB_FORMAT.image_size)
-	{
-		disk_type = &MITS8IN8MB_FORMAT;
-	}
-	else
-	{
-		error_exit(0, "Unknown disk image type. Use -h to see supported types and -T to force a types.");
-	}
-	if (VERBOSE)
-		printf("Detected Format: %s\n", disk_type->type);
-	return 0;
-}
-
-void disk_set_type(const char* type)
-{
-	if (!strcasecmp(type, MITS8IN_FORMAT.type))
-	{
-		disk_type = &MITS8IN_FORMAT;
-	}
-	else if (!strcasecmp(type, MITS5MBHDD_FORMAT.type))
-	{
-		disk_type = &MITS5MBHDD_FORMAT;
-	}
-	else if (!strcasecmp(type, TARBELLFDD_FORMAT.type))
-	{
-		disk_type = &TARBELLFDD_FORMAT;
-	}
-	else if (!strcasecmp(type, FDD15MB_FORMAT.type))
-	{
-		disk_type = &FDD15MB_FORMAT;
-	}
-	else if (!strcasecmp(type, MITS8IN8MB_FORMAT.type))
-	{
-		disk_type = &MITS8IN8MB_FORMAT;
-	}
-	else
-	{
-		error_exit(0,"Invalid disk image type: %s", type);
-	}
-}
-
-void disk_dump_parameters()
-{
-	printf("Sector Len: %d\n", disk_sector_len());
-	printf("Data Len  : %d\n", disk_data_sector_len());
-	printf("Num Tracks: %d\n", disk_num_tracks());
-	printf("Res Tracks: %d\n", disk_reserved_tracks());
-	printf("Secs/Track: %d\n", disk_sectors_per_track());
-	printf("Block Size: %d\n", disk_block_size());
-	printf("Num Dirs  : %d\n", disk_num_directories());
-	printf("Num Tracks: %d\n", disk_num_tracks());
-	printf("Track Len : %d\n", disk_track_len());
-	printf("Allocs/Trk: %d\n", disk_allocs_per_track());
-	printf("Recs/Ext  : %d\n", disk_recs_per_extent());
-	printf("Recs/Alloc: %d\n", disk_recs_per_alloc());
-	printf("Dirs/Sect : %d\n", disk_dirs_per_sector());
-	printf("Dirs/Alloc: %d\n", disk_dirs_per_alloc());
-}
-
-void disk_format_disk(int fd)
-{
-	disk_type->format_function(fd);
-}
+void disk_format_disk(int fd);
+int disk_sector_len();
+int disk_data_sector_len();
+int disk_num_tracks();
+int disk_reserved_tracks();
+int disk_sectors_per_track();
+int disk_block_size();
+int disk_num_directories();
+int disk_skew_table_size();
+int disk_skew_sector(int track_nr, int logical_sector);
+int disk_track_len();
+int disk_total_allocs();
+int disk_allocs_per_track();
+int disk_recs_per_alloc();
+int disk_recs_per_extent();
+int disk_dirs_per_sector();
+int disk_dirs_per_alloc();
+struct disk_offsets *disk_get_offsets(int track_nr);
+int disk_off_track_nr(int track_nr);
+int disk_off_sect_nr(int track_nr);
+int disk_off_data(int track_nr);
+int disk_off_stop(int track_nr);
+int disk_off_zero(int track_nr);
+int disk_off_csum(int track_nr);
+int disk_csum_method(int track_nr);
+int disk_detect_type(int fd);
+void disk_set_type(const char* type);
+void disk_dump_parameters();
+void disk_format_disk(int fd);
 
 int main(int argc, char**argv)
 {
@@ -722,12 +518,12 @@ int main(int argc, char**argv)
 		{
 			if (!do_format)
 			{
-				error_exit(errno, "Error finding disk image size");
+				error_exit(0, "Unknown disk image type. Use -h to see supported types and -T to force a types.");
 			}
 			else
 			{
 				// For format we default to mits 8IN
-				disk_type == &MITS8IN_FORMAT;
+				disk_type = &MITS8IN_FORMAT;
 				fprintf(stderr, "Defaulting to disk type: %s\n", disk_type->type);
 			}
 		}
@@ -1292,8 +1088,8 @@ void mits8in_format_disk(int fd)
 	memset(sector_data, 0xe5, disk_sector_len());
 	sector_data[1] = 0x00;
 	sector_data[2] = 0x01;
-	sector_data[STOP_OFF_T0] = 0xff;
-	memset(sector_data+ZERO_OFF_T0, 0, disk_sector_len() - ZERO_OFF_T0);
+	sector_data[disk_off_stop(0)] = 0xff;
+	memset(sector_data+disk_off_zero(0), 0, disk_sector_len() - disk_off_zero(0));
 
 	for (int track = 0 ; track < disk_num_tracks() ; track++)
 	{
@@ -1301,27 +1097,27 @@ void mits8in_format_disk(int fd)
 		{
 			memset(sector_data, 0xe5, disk_sector_len());
 			sector_data[2] = 0x01;
-			sector_data[STOP_OFF_T6] = 0xff;
-			sector_data[ZERO_OFF_T6] = 0x00;
-			memset(sector_data+ZERO_OFF_T6, 0, disk_sector_len() - ZERO_OFF_T6);
+			sector_data[disk_off_stop(6)] = 0xff;
+			sector_data[disk_off_zero(6)] = 0x00;
+			memset(sector_data+disk_off_zero(6), 0, disk_sector_len() - disk_off_zero(6));
 		}
 		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
 		{
 			if (track < 6)
 			{
-				sector_data[TRACK_OFF_T0] = track | 0x80;
-				sector_data[CSUM_OFF_T0] = calc_checksum(sector_data+DATA_OFF_T0);
+				sector_data[disk_off_track_nr(0)] = track | 0x80;
+				sector_data[disk_off_csum(0)] = calc_checksum(sector_data+disk_off_data(0));
 			}
 			else
 			{
-				sector_data[TRACK_OFF_T6] = track | 0x80;
-				sector_data[SECT_OFF_T6] = (sector * 17) % 32;
-				uint8_t checksum = calc_checksum(sector_data+DATA_OFF_T6);
+				sector_data[disk_off_track_nr(6)] = track | 0x80;
+				sector_data[disk_off_sect_nr(6)] = (sector * 17) % 32;
+				uint8_t checksum = calc_checksum(sector_data+disk_off_data(6));
 				checksum += sector_data[2];
 				checksum += sector_data[3];
 				checksum += sector_data[5];
 				checksum += sector_data[6];
-				sector_data[CSUM_OFF_T6] = checksum;
+				sector_data[disk_off_csum(6)] = checksum;
 			}
 			write_raw_sector(fd, track, sector + 1, &sector_data);
 		}
@@ -1873,3 +1669,233 @@ int is_first_extent(cpm_dir_entry* dir_entry)
 	return ((disk_recs_per_extent() > 128) && (dir_entry->num_allocs > 4) && dir_entry->extent_nr == 1) ||
 			(dir_entry->extent_nr == 0);
 }
+
+
+/* 
+ * Disk parameter support routines.
+ */
+int disk_sector_len()
+{
+	return disk_type->sector_len;
+}
+
+int disk_data_sector_len()
+{
+	return disk_type->sector_data_len;
+}
+
+int disk_num_tracks()
+{
+	return disk_type->num_tracks;
+}
+
+int disk_reserved_tracks()
+{
+	return disk_type->reserved_tracks;
+}
+
+int disk_sectors_per_track()
+{
+	return disk_type->sectors_per_track;
+}
+
+int disk_block_size()
+{
+	return disk_type->block_size;
+}
+
+int disk_num_directories()
+{
+	return disk_type->num_directories;
+}
+
+int disk_skew_table_size()
+{
+	return disk_type->skew_table_size;
+}
+
+int disk_skew_sector(int track_nr, int logical_sector)
+{
+	return disk_type->skew_function(track_nr, logical_sector);
+}
+
+int disk_track_len()
+{
+	return disk_type->sector_len * disk_type->sectors_per_track;
+}
+
+int disk_total_allocs()
+{
+	return (disk_type->num_tracks - disk_type->reserved_tracks) *
+		disk_type->sectors_per_track *
+		disk_type->sector_data_len /
+		disk_type->block_size;
+}
+
+int disk_allocs_per_track()
+{
+	return disk_total_allocs() / (disk_type->num_tracks - disk_type->reserved_tracks);
+}
+
+int disk_recs_per_alloc()
+{
+	return disk_type->block_size / disk_type->sector_data_len;
+}
+
+int disk_recs_per_extent()
+{
+	/* 8 = nr of allocations per extent as per CP/M specification  */
+	/* result rounded upwards to multiple of 128 */
+	return ((disk_recs_per_alloc() * 8) + 127)/ 128 * 128;
+}
+
+int disk_dirs_per_sector()
+{
+	return disk_type->sector_data_len / DIR_ENTRY_LEN;
+}
+
+int disk_dirs_per_alloc()
+{
+	return disk_type->block_size / DIR_ENTRY_LEN;
+}
+
+struct disk_offsets *disk_get_offsets(int track_nr)
+{
+	/* Assumes only 2 offsets. Which is pretty safe. Only MITS 8IN formats use them */
+	if ((track_nr >= disk_type->offsets[0].start_track) && 
+		(track_nr <= disk_type->offsets[0].end_track))
+	{
+		return &disk_type->offsets[0];
+	}
+	return &disk_type->offsets[1];
+}
+
+int disk_off_track_nr(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_track_nr;
+}
+
+int disk_off_sect_nr(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_sect_nr;
+}
+
+int disk_off_data(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_data;
+}
+
+int disk_off_stop(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_stop;
+}
+
+int disk_off_zero(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_zero;
+}
+
+int disk_off_csum(int track_nr)
+{
+	return disk_get_offsets(track_nr)->off_csum;
+}
+
+int disk_csum_method(int track_nr)
+{
+	return disk_get_offsets(track_nr)->csum_method;
+}
+
+/*
+ * Detect the image type based on the file size
+ */
+int disk_detect_type(int fd)
+{
+	off_t length = lseek(fd, 0, SEEK_END);
+	if (length <= 0)
+	{
+		return -1;
+	}
+
+	if (length == MITS8IN_FORMAT.image_size)
+	{
+		disk_type = &MITS8IN_FORMAT;
+	}
+	else if (length == MITS5MBHDD_FORMAT.image_size)
+	{
+		disk_type = &MITS5MBHDD_FORMAT;
+	}
+	else if (length == TARBELLFDD_FORMAT.image_size)
+	{
+		disk_type = &TARBELLFDD_FORMAT;
+	}
+	else if (length == FDD15MB_FORMAT.image_size)
+	{
+		disk_type = &FDD15MB_FORMAT;
+	}
+	else if (length == MITS8IN8MB_FORMAT.image_size)
+	{
+		disk_type = &MITS8IN8MB_FORMAT;
+	}
+	else
+	{
+		return -1;
+	}
+	if (VERBOSE)
+		printf("Detected Format: %s\n", disk_type->type);
+	return 0;
+}
+
+/*
+ * Manually set the image type
+ */
+void disk_set_type(const char* type)
+{
+	if (!strcasecmp(type, MITS8IN_FORMAT.type))
+	{
+		disk_type = &MITS8IN_FORMAT;
+	}
+	else if (!strcasecmp(type, MITS5MBHDD_FORMAT.type))
+	{
+		disk_type = &MITS5MBHDD_FORMAT;
+	}
+	else if (!strcasecmp(type, TARBELLFDD_FORMAT.type))
+	{
+		disk_type = &TARBELLFDD_FORMAT;
+	}
+	else if (!strcasecmp(type, FDD15MB_FORMAT.type))
+	{
+		disk_type = &FDD15MB_FORMAT;
+	}
+	else if (!strcasecmp(type, MITS8IN8MB_FORMAT.type))
+	{
+		disk_type = &MITS8IN8MB_FORMAT;
+	}
+	else
+	{
+		error_exit(0,"Invalid disk image type: %s", type);
+	}
+}
+
+void disk_format_disk(int fd)
+{
+    disk_type->format_function(fd);
+}
+
+void disk_dump_parameters()
+{
+	printf("Sector Len: %d\n", disk_sector_len());
+	printf("Data Len  : %d\n", disk_data_sector_len());
+	printf("Num Tracks: %d\n", disk_num_tracks());
+	printf("Res Tracks: %d\n", disk_reserved_tracks());
+	printf("Secs/Track: %d\n", disk_sectors_per_track());
+	printf("Block Size: %d\n", disk_block_size());
+	printf("Num Dirs  : %d\n", disk_num_directories());
+	printf("Num Tracks: %d\n", disk_num_tracks());
+	printf("Track Len : %d\n", disk_track_len());
+	printf("Allocs/Trk: %d\n", disk_allocs_per_track());
+	printf("Recs/Ext  : %d\n", disk_recs_per_extent());
+	printf("Recs/Alloc: %d\n", disk_recs_per_alloc());
+	printf("Dirs/Sect : %d\n", disk_dirs_per_sector());
+	printf("Dirs/Alloc: %d\n", disk_dirs_per_alloc());
+}
+
