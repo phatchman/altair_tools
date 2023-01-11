@@ -2,7 +2,7 @@
  *****************************************************************************
  * ALTAIR Disk Tools 
  *
- * Manipulate Altair MITS 2.2 CPM Disk Images
+ * Manipulate Altair CPM Disk Images
  * 
  *****************************************************************************
 */
@@ -29,7 +29,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/* TODO: Validate if no filename, only an extension */
+/* TODO: Validate if filename, only has an extension */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +141,7 @@ struct disk_type *disk_type;					/* Pointer to the disk image type */
 
 
 /* Skew table. Converts logical sectors to on-disk sectors */
+/* TODO: How TF is this working with a 1-based skew table???? */
 int mits_skew_table[] = {
 	1,9,17,25,3,11,19,27,05,13,21,29,7,15,23,31,
 	2,10,18,26,4,12,20,28,06,14,22,30,8,16,24,32
@@ -178,6 +179,27 @@ struct disk_type MITS8IN_FORMAT = {
 		6, 77, 7, 0, 1, 135, 136, 4, 1
 	}
 };
+
+struct disk_type MITS8IN8MB_FORMAT = {
+	.type = "FDD_8IN_8MB",
+	.sector_len = 137,
+	.sector_data_len = 128,
+	.num_tracks = 2048,
+	.reserved_tracks = 2,
+	.sectors_per_track = 32,
+	.block_size = 4096,
+	.num_directories = 512,
+	.image_size = 8978432,	/* Note some images are 337664 */
+	.skew_table_size = sizeof(mits_skew_table),
+	.skew_table = mits_skew_table,
+	.skew_function = &mits8in_skew_function,
+	.format_function = &mits8in_format_disk,
+	.offsets = {
+		0,  5, 3, 0, 0, 131, 133, 132, 0,
+		6, 77, 7, 0, 1, 135, 136, 4, 1
+	}
+};
+
 
 /* Skew table for the 5MB HDD. Note that this requires a 
  * skew for each CPM sector. Not physical sector */
@@ -237,6 +259,37 @@ struct disk_type TARBELLFDD_FORMAT = {
 	.image_size = 256256,
 	.skew_table_size = sizeof(hd5mb_skew_table),
 	.skew_table = tarbell_skew_table,
+	.skew_function = &standard_skew_function,
+	.format_function = &format_disk,
+	.offsets = {
+		0, 77,  0,  -1, -1, -1, -1, -1, -1,
+		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+	}
+};
+
+int fdd15mb_skew_table[] = {
+	0,1,2,3,4,5,6,7,8,9,
+	10,11,12,13,14,15,16,17,18,19,
+	20,21,22,23,24,25,26,27,28,29,
+	30,31,32,33,34,35,36,37,38,39,
+	40,41,42,43,44,45,46,47,48,49,
+	50,51,52,53,54,55,56,57,58,59,
+	60,61,62,63,64,65,66,67,68,69,
+	70,71,72,73,74,75,76,77,78,79
+};
+
+struct disk_type FDD15MB_FORMAT = {
+	.type = "FDD_1.5MB",
+	.sector_len = 128,
+	.sector_data_len = 128,
+	.num_tracks = 149,
+	.reserved_tracks = 1,
+	.sectors_per_track = 80,
+	.block_size = 4096,
+	.num_directories = 256,
+	.image_size = 1525760,
+	.skew_table_size = sizeof(fdd15mb_skew_table),
+	.skew_table = fdd15mb_skew_table,
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
@@ -429,6 +482,14 @@ int disk_detect_type(int fd)
 	{
 		disk_type = &TARBELLFDD_FORMAT;
 	}
+	else if (length == FDD15MB_FORMAT.image_size)
+	{
+		disk_type = &FDD15MB_FORMAT;
+	}
+	else if (length == MITS8IN8MB_FORMAT.image_size)
+	{
+		disk_type = &MITS8IN8MB_FORMAT;
+	}
 	else
 	{
 		error_exit(0, "Unknown disk image type. Use -h to see supported types and -T to force a types.");
@@ -451,6 +512,14 @@ void disk_set_type(const char* type)
 	else if (!strcasecmp(type, TARBELLFDD_FORMAT.type))
 	{
 		disk_type = &TARBELLFDD_FORMAT;
+	}
+	else if (!strcasecmp(type, FDD15MB_FORMAT.type))
+	{
+		disk_type = &FDD15MB_FORMAT;
+	}
+	else if (!strcasecmp(type, MITS8IN8MB_FORMAT.type))
+	{
+		disk_type = &MITS8IN8MB_FORMAT;
 	}
 	else
 	{
@@ -822,8 +891,9 @@ void print_usage(char* argv0)
 	printf("\t-e\tErase a file\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
-	printf("\t-T\tDisk image type. Supported types are: %s, %s, %s\n", 
-		MITS8IN_FORMAT.type, MITS5MBHDD_FORMAT.type, TARBELLFDD_FORMAT.type);
+	printf("\t-T\tDisk image type. Supported types are: %s, %s, %s, %s, %s\n", 
+		MITS8IN_FORMAT.type, MITS5MBHDD_FORMAT.type, TARBELLFDD_FORMAT.type,
+		FDD15MB_FORMAT.type, MITS8IN8MB_FORMAT.type);
 	printf("\t-v\tVerbose - Prints sector read/write information\n");
 	printf("\t-h\tHelp\n");
 }
