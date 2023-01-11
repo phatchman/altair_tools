@@ -84,7 +84,7 @@ struct disk_offsets {
 };
 
 /* Disk format Parameters */
-struct disk_format {
+struct disk_type {
 	const char* type;		/* String type name */
 	int sector_len;			/* length of sector in bytes (must be 128) */
 	int sector_data_len;	/* length of data part of sector in bytes. Note only supports 128 */
@@ -137,7 +137,7 @@ cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries, sorted by na
 uint8_t			alloc_table[MAX_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
 
-struct disk_format *disk_type;					/* Pointer to the disk image type */
+struct disk_type *disk_type;					/* Pointer to the disk image type */
 
 
 /* Skew table. Converts logical sectors to on-disk sectors */
@@ -159,7 +159,7 @@ int mits8in_skew_function(int track, int logical_sector)
 	return (((mits_skew_table[logical_sector] - 1) * 17) % 32) + 1;
 }
 
-struct disk_format MITS8IN_FORMAT = {
+struct disk_type MITS8IN_FORMAT = {
 	.type = "FDD_8IN",
 	.sector_len = 137,
 	.sector_data_len = 128,
@@ -197,7 +197,7 @@ int standard_skew_function(int track, int logical_sector)
 	return disk_type->skew_table[logical_sector] + 1;
 }
 
-struct disk_format MITS5MBHDD_FORMAT = {
+struct disk_type MITS5MBHDD_FORMAT = {
 	.type = "HDD_5MB",
 	.sector_len = 128,
 	.sector_data_len = 128,
@@ -225,7 +225,7 @@ int tarbell_skew_table[] = {
 	15, 21
 };
 
-struct disk_format TARBELLFDD_FORMAT = {
+struct disk_type TARBELLFDD_FORMAT = {
 	.type = "FDD_TAR",
 	.sector_len = 128,
 	.sector_data_len = 128,
@@ -409,7 +409,7 @@ int disk_csum_method(int track_nr)
 	return disk_get_offsets(track_nr)->csum_method;
 }
 
-int disk_detect_format(int fd)
+int disk_detect_type(int fd)
 {
 	off_t length = lseek(fd, 0, SEEK_END);
 	if (length < 0)
@@ -431,30 +431,30 @@ int disk_detect_format(int fd)
 	}
 	else
 	{
-		error_exit(0, "Unknown disk image format. Use -h to see supported formats and -T to force a format.");
+		error_exit(0, "Unknown disk image type. Use -h to see supported types and -T to force a types.");
 	}
 	if (VERBOSE)
 		printf("Detected Format: %s\n", disk_type->type);
 	return 0;
 }
 
-void disk_set_format(const char* format)
+void disk_set_type(const char* type)
 {
-	if (!strcasecmp(format, MITS8IN_FORMAT.type))
+	if (!strcasecmp(type, MITS8IN_FORMAT.type))
 	{
 		disk_type = &MITS8IN_FORMAT;
 	}
-	else if (!strcasecmp(format, MITS5MBHDD_FORMAT.type))
+	else if (!strcasecmp(type, MITS5MBHDD_FORMAT.type))
 	{
 		disk_type = &MITS5MBHDD_FORMAT;
 	}
-	else if (!strcasecmp(format, TARBELLFDD_FORMAT.type))
+	else if (!strcasecmp(type, TARBELLFDD_FORMAT.type))
 	{
 		disk_type = &TARBELLFDD_FORMAT;
 	}
 	else
 	{
-		error_exit(0,"Invalid disk image format: %s", format);
+		error_exit(0,"Invalid disk image type: %s", type);
 	}
 }
 
@@ -644,18 +644,23 @@ int main(int argc, char**argv)
 	/* Try and work out what format this image is */
 	if (has_type)
 	{
-		disk_set_format(image_type);
-	}
-	else if (do_format)
-	{
-		/* Default to 8" floppy format */
-		disk_type = &MITS8IN_FORMAT;
+		disk_set_type(image_type);
 	}
 	else
 	{
-		if (disk_detect_format(fd_img) < 0)
+		/* try to auto-detect type */
+		if (disk_detect_type(fd_img) < 0)
 		{
-			error_exit(errno, "Error finding disk image size");
+			if (!do_format)
+			{
+				error_exit(errno, "Error finding disk image size");
+			}
+			else
+			{
+				// For format we default to mits 8IN
+				disk_type == &MITS8IN_FORMAT;
+				fprintf(stderr, "Defaulting to disk type: %s\n", disk_type->type);
+			}
 		}
 	}
 
@@ -817,7 +822,8 @@ void print_usage(char* argv0)
 	printf("\t-e\tErase a file\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
-	printf("\t-T\tDisk image type. Supported formats are: %s, %s\n", MITS8IN_FORMAT.type, MITS5MBHDD_FORMAT.type);
+	printf("\t-T\tDisk image type. Supported types are: %s, %s, %s\n", 
+		MITS8IN_FORMAT.type, MITS5MBHDD_FORMAT.type, TARBELLFDD_FORMAT.type);
 	printf("\t-v\tVerbose - Prints sector read/write information\n");
 	printf("\t-h\tHelp\n");
 }
