@@ -95,7 +95,6 @@ struct disk_format {
 	int num_directories;	/* maximum number of directories / extents supported */
 	int image_size;			/* size of disk image (for auto-detection) */
 	int skew_table_size;	/* number of entries in skew table */
-	int alloc_modulus;		/* modulus applied when converting allocation to logical sector */
 	int *skew_table;		/* Pointer to the sector skew table */
 	int (*skew_function)(int,int);		/* logical to physical sector skew conversion */
 	void (*format_function)(int);		/* pointer to formatting function */
@@ -171,7 +170,6 @@ struct disk_format MITS8IN_FORMAT = {
 	.num_directories = 64,
 	.image_size = 337568,	/* Note some images are 337664 */
 	.skew_table_size = sizeof(mits_skew_table),
-	.alloc_modulus = 2,
 	.skew_table = mits_skew_table,
 	.skew_function = &mits8in_skew_function,
 	.format_function = &mits8in_format_disk,
@@ -210,13 +208,12 @@ struct disk_format MITS5MBHDD_FORMAT = {
 	.num_directories = 256,
 	.image_size = 4988928,
 	.skew_table_size = sizeof(hd5mb_skew_table),
-	.alloc_modulus = 0,
 	.skew_table = hd5mb_skew_table,
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
 		0, 406, 0,  -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, 0, -1, -1, -1, -1, -1, -1,
 	}
 };
 
@@ -239,13 +236,12 @@ struct disk_format TARBELLFDD_FORMAT = {
 	.num_directories = 64,
 	.image_size = 256256,
 	.skew_table_size = sizeof(hd5mb_skew_table),
-	.alloc_modulus = 0,
 	.skew_table = tarbell_skew_table,
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
-		0, 74,  0,  -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1,
+		0, 77,  0,  -1, -1, -1, -1, -1, -1,
+		-1, -1, 0, -1, -1, -1, -1, -1, -1,
 	}
 };
 
@@ -279,7 +275,7 @@ int compare_sort(const void *a, const void *b);
 int compare_sort_ptr(const void *a, const void *b);
 int get_raw_allocation(raw_dir_entry* raw, int entry_nr);
 void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc);
-
+int is_first_extent(cpm_dir_entry* dir_entry);
 
 int VERBOSE = 0;	/* Print out Sector read/write information */
 
@@ -354,9 +350,8 @@ int disk_recs_per_alloc()
 int disk_recs_per_extent()
 {
 	/* 8 = nr of allocations per extent */
-	/* TODO: FIX*/
-	//return disk_recs_per_alloc() * 8;
-	return 128;
+	/* rounded upwards to multiple of 128 */
+	return ((disk_recs_per_alloc() * 8) + 127)/ 128 * 128;
 }
 
 int disk_dirs_per_sector()
@@ -367,11 +362,6 @@ int disk_dirs_per_sector()
 int disk_dirs_per_alloc()
 {
 	return disk_type->block_size / DIR_ENTRY_LEN;
-}
-
-int disk_alloc_modulus()
-{
-	return disk_type->alloc_modulus;
 }
 
 struct disk_offsets *disk_get_offsets(int track_nr)
@@ -443,7 +433,7 @@ int disk_detect_format(int fd)
 	{
 		error_exit(0, "Unknown disk image format. Use -h to see supported formats and -T to force a format.");
 	}
-//	if (VERBOSE)
+	if (VERBOSE)
 		printf("Detected Format: %s\n", disk_type->type);
 	return 0;
 }
@@ -484,7 +474,6 @@ void disk_dump_parameters()
 	printf("Recs/Alloc: %d\n", disk_recs_per_alloc());
 	printf("Dirs/Sect : %d\n", disk_dirs_per_sector());
 	printf("Dirs/Alloc: %d\n", disk_dirs_per_alloc());
-	printf("Alloc Mod : %d\n", disk_alloc_modulus());
 }
 
 void disk_format_disk(int fd)
@@ -974,7 +963,9 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 	int data_len = disk_data_sector_len();
 	while (dir_entry != NULL)
 	{
-		int num_records = (dir_entry->num_allocs > 4) ? 128 + dir_entry->num_records : dir_entry->num_records;
+		int num_records = ((disk_recs_per_extent() > 128) && (dir_entry->num_allocs > 4)) ? 
+							128 + dir_entry->num_records : dir_entry->num_records;
+
 		for (int recnr = 0 ; recnr < num_records ; recnr ++)
 		{
 			int alloc = dir_entry->allocation[recnr / disk_recs_per_alloc()];
@@ -1274,9 +1265,7 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
 	{
 		/* Is this the first extent for a file? */
 		if (dir_table[i].valid &&
-//			(dir_table[i].extent_nr == 0 && dir_table[i].num_allocs <= 4) || /* TODO: Work this out */
-			(dir_table[i].extent_nr == 0) ||
-			(dir_table[i].extent_nr == 1 && dir_table[i].num_allocs > 4))
+			is_first_extent(&dir_table[i]))
 		{
 			/* If filename matches, return it */
 			if (filename_equals(full_filename, dir_table[i].full_filename, wildcards) == 0)
@@ -1634,21 +1623,16 @@ void write_raw_sector(int fd, int track, int sector, void* buffer)
  */
 void convert_track_sector(int allocation, int record, int* track, int* sector)
 {
-	*track = allocation / disk_allocs_per_track() + disk_reserved_tracks();
-	int modulus = disk_alloc_modulus();
-	int logical_sector;
-	if (modulus > 0)
-	{
-		/* for 8" floppy, this is logical = (allocation % 2) * 16 + (record % 16) */
-		int mult = disk_sectors_per_track() / modulus;
-		logical_sector = (allocation % modulus) * mult + (record % mult);
-	}
-	else
-	{
-		logical_sector = 
+	/* Find the number of records this allocation and record number equals 
+	 * Each record = 1 sector. Divide number of records by sectors / track to get the track.
+	 * Note: For some disks the block size is not a multiple of the sectors/track, so can't just
+	 *       calculate allocs/track here. 
+	 */
+	*track = (allocation * disk_recs_per_alloc() + (record % disk_recs_per_alloc())) / 
+				disk_sectors_per_track() + disk_reserved_tracks();
+	int logical_sector = 
 			(allocation * disk_recs_per_alloc() + (record % disk_recs_per_alloc())) % 
 			disk_sectors_per_track();
-	}
 
 	if (VERBOSE)
 		printf("ALLOCATION[%d], RECORD[%d] LOGICAL[%d], ", allocation, record, logical_sector);
@@ -1803,4 +1787,13 @@ void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc)
 		entry->allocation[entry_nr * 2] = alloc & 0xff;
 		entry->allocation[entry_nr * 2 + 1] = (alloc >> 8) & 0xff;
 	}
+}
+
+/* 
+ * Returns TRUE if this is the first extent for a file 
+ */
+int is_first_extent(cpm_dir_entry* dir_entry)
+{
+	return ((disk_recs_per_extent() > 128) && (dir_entry->num_allocs > 4) && dir_entry->extent_nr == 1) ||
+			(dir_entry->extent_nr == 0);
 }
