@@ -27,26 +27,33 @@ There is no install target provided. So copy the executable to your desired inst
 
 ## Command Line
 ```
-altairdsk: -[d|r|F]v       <disk_image> 
-altairdsk: -[g|p|e][t|b]v  <disk_image> <src_filename> [dst_filename]
-altairdsk: -[G|P][t|b]v    <disk_image> <filename ...>
+altairdsk: -[d|r|F]Tv      [image_type] <disk_image>
+altairdsk: -[g|p|e][t|b]Tv [image_type] <disk_image> <src_filename> [dst_filename]
+altairdsk: -[G|P][t|b]Tv   [image_type] <disk_image> <filename ...>
 altairdsk: -h
         -d      Directory listing (default)
-        -r      Raw directory listing    
-        -F      Format existing or create new disk image
+        -r      Raw directory listing
+        -F      Format existing or create new disk image. Defaults to FDD_8IN
         -g      Get - Copy file from Altair disk image to host
         -p      Put - Copy file from host to Altair disk image
         -G      Get Multiple - Copy multiple files from Altair disk image to host
-                               wildcards * and ? are supported e.g '*.COM'                            
+                               wildcards * and ? are supported e.g '*.COM'
         -P      Put Multiple - Copy multiple files from host to Altair disk image
         -e      Erase a file
         -t      Put/Get a file in text mode
         -b      Put/Get a file in binary mode
+        -T      Disk image type. Auto-detected if possible. Supported types are:
+                        * FDD_8IN - MITS 8" Floppy Disk (Default)
+                        * HDD_5MB - MITS 5MB Hard Disk
+                        * FDD_TAR - Tarbell Floppy Disk
+                        * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
+                        * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk
         -v      Verbose - Prints sector read/write information
         -h      Help
 ```
-        
+
 ## Some things to note:
+* The image type is auto-detected based on the size of the disk image. You should only need to use the -T <type> optiom when formatting a new image, or if the image size has been changed by another application. SIMH is known to do this.
 * On linux you have the option of putting the disk image before the option. For example: altairdsk cpm.dsk -g ASM.COM. I find this more convenient.
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
@@ -89,7 +96,9 @@ U is the user number<br>
 At is the file attributes. R - Read only, W - Read/write. S - System
 
 ### Format a disk
-`./altairdsk new.dsk -F`
+`./altairdsk -F new.dsk`
+`./altairdsk -F new.dsk -T FDD_TAR`
+
 
 ### Copy a file from the disk (get)
 `./altairdsk cpm.dsk -g LADDER.COM`
