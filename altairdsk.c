@@ -31,6 +31,7 @@
  */
 /* TODO: Validate if filename, only has an extension */
 /* TODO: Test test heading alignment for large directory listings */
+/* TODO: Skip files that error in multiput and multiget, rather than error_exit-ing */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,6 +84,7 @@ struct disk_type {
 	int sectors_per_track;	/* Number of sectors per track */
 	int block_size;			/* Size of Block / Allocation */
 	int num_directories;	/* maximum number of directories / extents supported */
+	int directory_allocs;	/* number of allocations reserved for directory entries */
 	int image_size;			/* size of disk image (for auto-detection) */
 	int skew_table_size;	/* number of entries in skew table */
 	int *skew_table;		/* Pointer to the sector skew table */
@@ -160,6 +162,7 @@ struct disk_type MITS8IN_FORMAT = {
 	.sectors_per_track = 32,
 	.block_size = 2048,
 	.num_directories = 64,
+	.directory_allocs = 2,
 	.image_size = 337568,	/* Note images formatted in simh are 337664 */
 	.skew_table_size = sizeof(mits_skew_table),
 	.skew_table = mits_skew_table,
@@ -181,6 +184,7 @@ struct disk_type MITS8IN8MB_FORMAT = {
 	.sectors_per_track = 32,
 	.block_size = 4096,
 	.num_directories = 512,
+	.directory_allocs = 2,
 	.image_size = 8978432,	
 	.skew_table_size = sizeof(mits_skew_table),
 	.skew_table = mits_skew_table,
@@ -211,6 +215,7 @@ int standard_skew_function(int track, int logical_sector)
 	return disk_type->skew_table[logical_sector] + 1;
 }
 
+
 /* MITS 5MB HDD Format */
 struct disk_type MITS5MBHDD_FORMAT = {
 	.type = "HDD_5MB",
@@ -221,6 +226,29 @@ struct disk_type MITS5MBHDD_FORMAT = {
 	.sectors_per_track = 96,
 	.block_size = 4096,
 	.num_directories = 256,
+	.directory_allocs = 2,
+	.image_size = 4988928,
+	.skew_table_size = sizeof(hd5mb_skew_table),
+	.skew_table = hd5mb_skew_table,
+	.skew_function = &standard_skew_function,
+	.format_function = &format_disk,
+	.offsets = {
+		0, 406, 0, -1, -1, -1, -1, -1, -1,
+		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+	}
+};
+
+/* MITS 5MB HDD Format with 1024 directory entries */
+struct disk_type MITS5MBHDD1024_FORMAT = {
+	.type = "HDD_5MB_1024",
+	.sector_len = 128,
+	.sector_data_len = 128,
+	.num_tracks = 406,
+	.reserved_tracks = 1,
+	.sectors_per_track = 96,
+	.block_size = 4096,
+	.num_directories = 1024,
+	.directory_allocs = 8,
 	.image_size = 4988928,
 	.skew_table_size = sizeof(hd5mb_skew_table),
 	.skew_table = hd5mb_skew_table,
@@ -250,6 +278,7 @@ struct disk_type TARBELLFDD_FORMAT = {
 	.sectors_per_track = 26,
 	.block_size = 1024,
 	.num_directories = 64,
+	.directory_allocs = 2,
 	.image_size = 256256,
 	.skew_table_size = sizeof(hd5mb_skew_table),
 	.skew_table = tarbell_skew_table,
@@ -282,6 +311,7 @@ struct disk_type FDD15MB_FORMAT = {
 	.sectors_per_track = 80,
 	.block_size = 4096,
 	.num_directories = 256,
+	.directory_allocs = 2,
 	.image_size = 1525760,
 	.skew_table_size = sizeof(fdd15mb_skew_table),
 	.skew_table = fdd15mb_skew_table,
@@ -301,7 +331,7 @@ void error_exit(int eno, char *str, ...);
 void directory_list();
 void raw_directory_list();
 void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_mode);
-void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename);
+void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename);
 
 void load_directory_table(int fd); 
 cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards);
@@ -340,6 +370,7 @@ int disk_track_len();
 int disk_total_allocs();
 int disk_recs_per_alloc();
 int disk_recs_per_extent();
+int disk_directory_allocs();
 int disk_dirs_per_sector();
 int disk_dirs_per_alloc();
 struct disk_offsets *disk_get_offsets(int track_nr);
@@ -509,7 +540,7 @@ int main(int argc, char**argv)
 	int fd_img = -1;		/* fd of disk image */
 	
 	/* Initialise allocation tables. First 2 allocs are reserved */
-	alloc_table[0] = alloc_table[1] = 1;
+	//alloc_table[0] = alloc_table[1] = 1;
 
 	/* Open the Altair disk image*/
 	if ((fd_img = open(disk_filename, open_mode, open_umask)) < 0)
@@ -542,6 +573,10 @@ int main(int argc, char**argv)
 
 	if (VERBOSE)
 		disk_dump_parameters();
+
+	/* Initialize allocation table - Reserve allocations used by directories */
+	for (int i = 0; i < disk_directory_allocs(); i++)
+	    alloc_table[i] = 1;
 
 	/* Read all directory entries - except for format command */
 	if (!do_format)
@@ -642,7 +677,7 @@ int main(int argc, char**argv)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_to_cpm(fd_img, fd_file, basename(to_filename));
+		copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -660,7 +695,8 @@ int main(int argc, char**argv)
 			{
 				error_exit(errno, "Error opening file %s", from_filename);
 			}
-			copy_to_cpm(fd_img, fd_file, basename(to_filename));
+			copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename);
+			close(fd_file);
 		}
 		exit(EXIT_SUCCESS);
 	}
@@ -706,6 +742,7 @@ void print_usage(char* argv0)
 	printf("\t-T\tDisk image type. Auto-detected if possible. Supported types are:\n");
 	printf("\t\t\t* %s - MITS 8\" Floppy Disk (Default)\n", MITS8IN_FORMAT.type);
 	printf("\t\t\t* %s - MITS 5MB Hard Disk\n", MITS5MBHDD_FORMAT.type);
+	printf("\t\t\t* %s - MITS 5MBH, 1024 directory\n", MITS5MBHDD1024_FORMAT.type);
 	printf("\t\t\t* %s - Tarbell Floppy Disk\n", TARBELLFDD_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 1.5MB Floppy Disk\n", FDD15MB_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 8MB \"Floppy\" Disk\n", MITS8IN8MB_FORMAT.type);
@@ -904,7 +941,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 /*
  * Copy file from host to Altair CPM disk image
  */
-void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
+void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename)
 {
 	uint8_t sector_data[MAX_SECT_SIZE];
 	char valid_filename[FULL_FILENAME_LEN];
@@ -928,8 +965,19 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
 	memset (&sector_data, 0x1a, disk_data_sector_len()); 
-	
-	while((nbytes = read(host_fd, &sector_data, disk_data_sector_len())) > 0)
+	/* Read the first sector */
+	nbytes = read(host_fd, &sector_data, disk_data_sector_len());
+	if (nbytes < 0)
+	{
+		/* TODO: This can't really ever be triggered. Should do the skip in the do_multiput and do_multiget */
+		fprintf(stderr, "Error reading from file %s. File not copied: %s\n", host_filename, strerror(errno));
+	}
+	else if (nbytes == 0)
+	{
+		/* If it is an empty file. Treat as a 1 char file of ^Z */
+		nbytes == 1;
+	}
+	do
 	{
 		/* Is this a new Extent (i.e directory entry) ? */
 		if ((rec_nr % disk_recs_per_extent()) == 0)
@@ -980,6 +1028,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename)
 			nr_extents++;
 		}
 	}
+	while ((nbytes = read(host_fd, &sector_data, disk_data_sector_len())) > 0);
 	/* File is done. Write out the last directory entry */
 	raw_to_cpmdir(dir_entry);
 	write_dir_entry(cpm_fd, dir_entry);
@@ -1589,7 +1638,7 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 			char_count++;
 			/* If we have a file filename (excluding ext), but not found a dot */
 			/* then add a dot and ignore everything up until the next dot */
-			if (char_count == FILENAME_LEN && !found_dot)
+			if (char_count == FILENAME_LEN && !found_dot && *(in_char+1) != '\0')
 			{
 				/* make sure filename contains a separator */
 				*out_char++ = '.';
@@ -1771,6 +1820,11 @@ int disk_dirs_per_alloc()
 	return disk_type->block_size / DIR_ENTRY_LEN;
 }
 
+int disk_directory_allocs()
+{
+	return disk_type->directory_allocs;
+}
+
 struct disk_offsets *disk_get_offsets(int track_nr)
 {
 	/* Assumes only 2 offsets. Which is pretty safe. Only MITS 8IN formats use them */
@@ -1870,6 +1924,10 @@ void disk_set_type(const char* type)
 	{
 		disk_type = &MITS5MBHDD_FORMAT;
 	}
+	else if (!strcasecmp(type, MITS5MBHDD1024_FORMAT.type))
+	{
+		disk_type = &MITS5MBHDD1024_FORMAT;
+	}
 	else if (!strcasecmp(type, TARBELLFDD_FORMAT.type))
 	{
 		disk_type = &TARBELLFDD_FORMAT;
@@ -1907,7 +1965,7 @@ void disk_dump_parameters()
 	printf("Recs/Alloc: %d\n", disk_recs_per_alloc());
 	printf("Dirs/Sect : %d\n", disk_dirs_per_sector());
 	printf("Dirs/Alloc: %d\n", disk_dirs_per_alloc());
+	printf("Dir Allocs: %d\n", disk_directory_allocs());
 	printf("Num Dirs  : %d [max: %d]\n", disk_num_directories(), MAX_DIRS);
 	printf("Tot Allocs: %d [max: %d]\n", disk_total_allocs(), MAX_ALLOCS);
 }
-
