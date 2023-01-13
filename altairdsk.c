@@ -32,6 +32,8 @@
 /* TODO: Validate if filename, only has an extension */
 /* TODO: Test test heading alignment for large directory listings */
 /* TODO: Skip files that error in multiput and multiget, rather than error_exit-ing */
+/* TODO: What to do when copying from multiple users that have the same file names? Add a _user? How to detect this */
+/* TODO: Same issue with erase when the same file exists for multiple users */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -326,21 +328,22 @@ struct disk_type FDD15MB_FORMAT = {
 int VERBOSE = 0;	/* Print out Sector read/write information */
 
 void print_usage(char* argv0); 
+void print_mits_5mb_1k_warning(FILE* fp);
 void error_exit(int eno, char *str, ...);
 
-void directory_list();
+void directory_list(int user);
 void raw_directory_list();
 void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_mode);
-void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename);
+void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename, int user);
 
 void load_directory_table(int fd); 
-cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards);
+cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards, int user);
 int filename_equals(const char* fn1, const char* fn2, int wildcards);
 cpm_dir_entry* find_free_dir_entry(void);
 void raw_to_cpmdir(cpm_dir_entry* entry);
 int find_free_alloc(void);
 void copy_filename(raw_dir_entry *entry, const char *filename);
-void erase_file(int fd, const char* cpm_filename);
+void erase_file(int fd, const char* cpm_filename, int user);
 
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
@@ -402,13 +405,13 @@ int main(int argc, char**argv)
 	char from_filename[PATH_MAX];	/* filename to get / put */
 	char to_filename[PATH_MAX];		/* filename to get / put */
 	char *image_type;				/* manually specify type of disk image */
-
+	int user = -1;					/* The CP/M user -1 = all users*/
 
 	/* Default to 8" floppy. This default should not be used. Just here for safety */
 	disk_type = &MITS8IN_FORMAT;
 
 	/* parse command line options */
-	while ((opt = getopt(argc, argv, "drhgGpPvFetbT:")) != -1)
+	while ((opt = getopt(argc, argv, "drhgGpPvFetbT:u:")) != -1)
 	{
 		switch (opt)
 		{
@@ -459,6 +462,14 @@ int main(int argc, char**argv)
 			case 'T':
 				has_type = 1;
 				image_type = optarg;
+				break;
+			case 'u':
+				char* end;
+				user = strtol(optarg, &end, 10);
+				if(*end != '\0' || user < 0 || user > 15)
+				{
+					error_exit(0, "User must be a valid number between 0 and 15\n");
+				}
 				break;
 			case '?':
 				exit(EXIT_FAILURE);
@@ -594,7 +605,7 @@ int main(int argc, char**argv)
 	/* Formatted directory listing */
 	if (do_dir)
 	{
-		directory_list();
+		directory_list(user);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -602,7 +613,7 @@ int main(int argc, char**argv)
 	if (do_get)
 	{
 		/* does the file exist in CPM? */
-		cpm_dir_entry* entry = find_dir_by_filename(basename(from_filename), NULL, 0);
+		cpm_dir_entry* entry = find_dir_by_filename(basename(from_filename), NULL, 0, user);
 		if (entry == NULL)
 		{
 			error_exit(ENOENT, "Error copying file %s", from_filename);
@@ -637,7 +648,7 @@ int main(int argc, char**argv)
 			while(1)
 			{
 				/* The filename may contain wildcards. If so, loop for each expanded filename */
-				entry = find_dir_by_filename(from_filename, entry, 1);
+				entry = find_dir_by_filename(from_filename, entry, 1, user);
 
 				if (entry == NULL)
 				{
@@ -677,7 +688,7 @@ int main(int argc, char**argv)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
 		}
-		copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename);
+		copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename, user);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -695,7 +706,7 @@ int main(int argc, char**argv)
 			{
 				error_exit(errno, "Error opening file %s", from_filename);
 			}
-			copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename);
+			copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename, user);
 			close(fd_file);
 		}
 		exit(EXIT_SUCCESS);
@@ -704,12 +715,16 @@ int main(int argc, char**argv)
 	/* erase a single file from the disk image */
 	if (do_erase)
 	{
-		erase_file(fd_img, from_filename);
+		erase_file(fd_img, from_filename, user);
 	}
 
 	/* format and existing image or create a newly formatted image */
 	if (do_format)
 	{
+		if (disk_type == &MITS5MBHDD1024_FORMAT)
+		{
+			print_mits_5mb_1k_warning(stderr);
+		}
 		/* Call the disk-specific format function */
 		disk_format_disk(fd_img);
 		exit(EXIT_SUCCESS);
@@ -718,15 +733,16 @@ int main(int argc, char**argv)
 	return 0;
 }
 
+
 /*
  * Usage information
  */
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|F]Tv      <disk_image>\n", progname);
-	printf("%s: -[g|p|e][t|b]Tv <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P][t|b]Tv   <disk_image> <filename ...> \n", progname);
+	printf("%s: -[d|r|F]Tuv      <disk_image>\n", progname);
+	printf("%s: -[g|p|e][t|b]Tuv <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -[G|P][t|b]Tuv   <disk_image> <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
@@ -739,17 +755,28 @@ void print_usage(char* argv0)
 	printf("\t-e\tErase a file\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
+	printf("\t-u\tUser - Restrict operation to CP/M user\n");
 	printf("\t-T\tDisk image type. Auto-detected if possible. Supported types are:\n");
 	printf("\t\t\t* %s - MITS 8\" Floppy Disk (Default)\n", MITS8IN_FORMAT.type);
 	printf("\t\t\t* %s - MITS 5MB Hard Disk\n", MITS5MBHDD_FORMAT.type);
-	printf("\t\t\t* %s - MITS 5MBH, 1024 directory\n", MITS5MBHDD1024_FORMAT.type);
+	printf("\t\t\t* %s - MITS 5MB, with 1024 directories (!!!)\n", MITS5MBHDD1024_FORMAT.type);
 	printf("\t\t\t* %s - Tarbell Floppy Disk\n", TARBELLFDD_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 1.5MB Floppy Disk\n", FDD15MB_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 8MB \"Floppy\" Disk\n", MITS8IN8MB_FORMAT.type);
 	printf("\t-v\tVerbose - Prints sector read/write information\n");
-	printf("\t-h\tHelp\n");
+	printf("\t-h\tHelp\n\n");
+
+	print_mits_5mb_1k_warning(stdout);
 }
 
+/*
+ * Print a warning that this format cannot be auto-detected.
+ */
+void print_mits_5mb_1k_warning(FILE* fp)
+{
+	fprintf(fp, "!!! The %s type cannot be auto-detected. Always use -T with this format,\n", MITS5MBHDD1024_FORMAT.type);
+	fprintf(fp, "otherwise your disk image will auto-detect as the standard 5MB type and be corrupted.\n");
+}
 
 /* 
  * Print formatted error string and exit.
@@ -769,13 +796,17 @@ void error_exit(int eno, char *str, ...)
 
 /*
  * Print nicely formatted directory listing 
+ * user - -1 = all users, otherwise restrict to that user number
  */
-void directory_list(void)
+void directory_list(int user)
 {
 	int file_count = 0;
 	int kb_used = 0;
 	int kb_free = 0;
 	int entry_count = 0;
+
+	int kb_total = (disk_total_allocs() - disk_directory_allocs()) * disk_block_size() / 1024;
+
 	printf("Name     Ext   Length Used U At\n");
 
 	cpm_dir_entry *entry = NULL;
@@ -783,6 +814,7 @@ void directory_list(void)
 	int this_allocs = 0;
 	int this_kb = 0;
 	char *last_filename = "";
+	int last_user = 0;
 
 	for (int i = 0 ; i < disk_num_directories() ; i++)
 	{
@@ -792,15 +824,23 @@ void directory_list(void)
 		{
 			break;
 		}
+
 		entry_count++;
+
+		/* skip if not for all users or not for this user */
+		if (user != -1 && user != entry->user)
+			continue;
+
 		/* If this is the first record for this file, then reset the file totals */
-		if(strcmp(entry->full_filename, last_filename) != 0)
+		if((strcmp(entry->full_filename, last_filename) != 0) &&
+			(entry->user == last_user))
 		{
 			file_count++;
 			this_records = 0;
 			this_allocs = 0;
 			this_kb = 0;
 			last_filename = entry->full_filename;
+			last_user = entry->user;
 		}
 
 		this_records += entry->num_records;
@@ -809,7 +849,7 @@ void directory_list(void)
 		/* If there are no more dir entries, print out the file details */
 		if(entry->next_entry == NULL)
 		{
-			this_kb += (this_allocs * disk_recs_per_alloc() * disk_data_sector_len()) / 1024;
+			this_kb += (this_allocs * disk_block_size()) / 1024;
 			kb_used += this_kb;
 
 			printf("%s %s %7dB %3dK %d %s\n", 
@@ -821,15 +861,15 @@ void directory_list(void)
 				entry->attribs);
 		}
 	}
-	for (int i = 0 ; i < disk_total_allocs() ; i++)
+	for (int i = disk_directory_allocs() ; i < disk_total_allocs() ; i++)
 	{
 		if(alloc_table[i] == 0)
 		{
-			kb_free+= disk_recs_per_alloc() * disk_data_sector_len() / 1024;
+			kb_free+= disk_block_size() / 1024;
 		}
 	}
 	printf("%d file(s), occupying %dK of %dK total capacity\n",
-			file_count, kb_used, kb_used + kb_free);
+			file_count, kb_used, kb_total);
 	printf("%d directory entries and %dK bytes remain\n",
 			disk_num_directories() - entry_count, kb_free);
 }
@@ -941,17 +981,22 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 /*
  * Copy file from host to Altair CPM disk image
  */
-void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename)
+void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename, int user)
 {
 	uint8_t sector_data[MAX_SECT_SIZE];
 	char valid_filename[FULL_FILENAME_LEN];
+
+	if (user == -1)
+	{
+		user = 0;
+	}
 
 	validate_cpm_filename(cpm_filename, valid_filename);
 	if (strcasecmp(cpm_filename, valid_filename))
 	{
 		fprintf(stderr, "Converting filename %s to %s\n", cpm_filename, valid_filename);
 	}
-	if (find_dir_by_filename(valid_filename, 0, 0) != NULL)
+	if (find_dir_by_filename(valid_filename, 0, 0, user) != NULL)
 	{
 		error_exit(EEXIST, "Error creating file %s", valid_filename);
 	}
@@ -997,6 +1042,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 			/* Initialise the directory entry */
 			memset(&dir_entry->raw_entry, 0, sizeof(raw_dir_entry));
 			copy_filename(&dir_entry->raw_entry, valid_filename);
+			dir_entry->raw_entry.user = user;
 			nr_allocs = 0;
 		}
 		/* Is this a new allocation? */
@@ -1093,7 +1139,8 @@ void load_directory_table(int fd)
 		if (entry->valid)
 		{
 			/* Check if there are more extents for this file */
-			if (strcmp(entry->full_filename, next_entry->full_filename) == 0)
+			if ((strcmp(entry->full_filename, next_entry->full_filename) == 0) &&
+				(entry->user == next_entry->user))
 			{
 				/* If this entry is a full extent, and the next entry has an
 				 * an entr nr + 1*/
@@ -1106,9 +1153,9 @@ void load_directory_table(int fd)
 /*
  * Erase a file
  */
-void erase_file(int fd, const char* cpm_filename)
+void erase_file(int fd, const char* cpm_filename, int user)
 {
-	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename, NULL, 0);
+	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename, NULL, 0, user);
 	if (entry == NULL)
 	{
 		error_exit(ENOENT, "Error erasing %s", cpm_filename);
@@ -1196,18 +1243,21 @@ void mits8in_format_disk(int fd)
  * Find the directory entry related to a filename.
  * If prev_entry != NULL, start searching from the next entry after prev_entry
  * If wildcards = 1, allow wildcard characters * and ? to be used when matching to the filename
+ * user - user number or -1 for all users
  */
-cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards)
+cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards, int user)
 {
 	int start_index = (prev_entry == NULL) ? 0 : prev_entry->index + 1;
 	for (int i = start_index ; i < disk_num_directories() ; i++)
 	{
-		/* Is this the first extent for a file? */
+		/* Is this the first extent for a file? 
+		 * And is this entry for the correct user (or all users) */
 		if (dir_table[i].valid &&
 			is_first_extent(&dir_table[i]))
 		{
 			/* If filename matches, return it */
-			if (filename_equals(full_filename, dir_table[i].full_filename, wildcards) == 0)
+			if ((filename_equals(full_filename, dir_table[i].full_filename, wildcards) == 0) &&
+				(user == -1 || user == dir_table[i].user))
 			{
 				return &dir_table[i];
 			}
@@ -1668,7 +1718,7 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 }
 
 /* 
- * Sort by valid = 1, filename+type, then extent_nr 
+ * Sort by valid = 1, user, filename+type, then extent_nr 
  */
 int compare_sort_ptr(const void* a, const void* b)
 {
@@ -1681,6 +1731,10 @@ int compare_sort_ptr(const void* a, const void* b)
 	}
 	/* Otherwise, sort on valid, filename, extent_nr */
 	int result = (*second)->valid - (*first)->valid;
+	if (result == 0)
+	{
+		result = (*first)->user - (*second)->user;
+	}
 	if (result == 0)
 	{
 		result = strcmp((*first)->full_filename, (*second)->full_filename); 
