@@ -33,7 +33,7 @@
 /* TODO: Test test heading alignment for large directory listings */
 /* TODO: Skip files that error in multiput and multiget, rather than error_exit-ing */
 /* TODO: What to do when copying from multiple users that have the same file names? Add a _user? How to detect this */
-/* TODO: Same issue with erase when the same file exists for multiple users */
+/* TODO: Same issue with erase when the same file exists for multiple users - potentially treat all operations as "multi" if user is -1 */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -740,9 +740,9 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|F]Tuv      <disk_image>\n", progname);
-	printf("%s: -[g|p|e][t|b]Tuv <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P][t|b]Tuv   <disk_image> <filename ...> \n", progname);
+	printf("%s: -[d|r|F]v      [-T <type>] [-u <user>] <disk_image>\n", progname);
+	printf("%s: -[g|p|e][t|b]v [-T <type>] [-u <user>] <disk_image> <src_filename> [dst_filename]\n", progname);
+	printf("%s: -[G|P][t|b]v   [-T <type>] [-u <user>] <disk_image> <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
