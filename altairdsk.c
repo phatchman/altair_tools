@@ -29,12 +29,6 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/* TODO: Validate if filename, only has an extension */
-/* TODO: Test test heading alignment for large directory listings */
-/* TODO: Skip files that error in multiput and multiget, rather than error_exit-ing */
-/* TODO: What to do when copying from multiple users that have the same file names? Add a _user? How to detect this */
-/* TODO: Same issue with erase when the same file exists for multiple users - potentially treat all operations as "multi" if user is -1 */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -325,11 +319,14 @@ struct disk_type FDD15MB_FORMAT = {
 	}
 };
 
-int VERBOSE = 0;	/* Print out Sector read/write information */
+/* Global Variables */
+int VERBOSE = 0;	/* Print out Sector read/write and other information */
+int EXIT_VALUE = EXIT_SUCCESS;
 
 void print_usage(char* argv0); 
 void print_mits_5mb_1k_warning(FILE* fp);
 void error_exit(int eno, char *str, ...);
+void error(int eno, char *str, ...);
 
 void directory_list(int user);
 void raw_directory_list();
@@ -338,12 +335,13 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 
 void load_directory_table(int fd); 
 cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards, int user);
+int exist_filename_other_users(cpm_dir_entry *entry);
 int filename_equals(const char* fn1, const char* fn2, int wildcards);
 cpm_dir_entry* find_free_dir_entry(void);
 void raw_to_cpmdir(cpm_dir_entry* entry);
 int find_free_alloc(void);
 void copy_filename(raw_dir_entry *entry, const char *filename);
-void erase_file(int fd, const char* cpm_filename, int user);
+void erase_file(int fd, cpm_dir_entry* entry);
 
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
@@ -385,7 +383,7 @@ int disk_off_zero(int track_nr);
 int disk_off_csum(int track_nr);
 int disk_csum_method(int track_nr);
 int disk_detect_type(int fd);
-void disk_set_type(const char* type);
+void disk_set_type(int img_fd, const char* type);
 void disk_dump_parameters();
 void disk_format_disk(int fd);
 
@@ -399,6 +397,7 @@ int main(int argc, char**argv)
 	int do_dir = 0, do_raw = 0, do_get = 0;
 	int do_put = 0 , do_help = 0, do_format = 0;
 	int do_erase = 0, do_multiput = 0, do_multiget = 0;
+	int do_multierase = 0;
 	int has_type = 0;				/* has the user specified a type? */
 	int text_mode = -1;				/* default to auto-detect text/binary */
 	char *disk_filename = NULL; 	/* Altair disk image filename */
@@ -411,7 +410,7 @@ int main(int argc, char**argv)
 	disk_type = &MITS8IN_FORMAT;
 
 	/* parse command line options */
-	while ((opt = getopt(argc, argv, "drhgGpPvFetbT:u:")) != -1)
+	while ((opt = getopt(argc, argv, "drhgGpPvFeEtbT:u:")) != -1)
 	{
 		switch (opt)
 		{
@@ -449,6 +448,10 @@ int main(int argc, char**argv)
 				do_erase = 1;
 				open_mode = O_RDWR;
 				break;
+			case 'E':
+				do_multierase = 1;
+				open_mode = O_RDWR;
+				break;
 			case 'F':
 				do_format = 1;
 				open_mode = O_WRONLY | O_CREAT;
@@ -478,7 +481,8 @@ int main(int argc, char**argv)
 	/* make sure only one option is selected */
 	int nr_opts = do_dir + do_raw + do_help + 
 				  do_put + do_get + do_format +
-				  do_erase + do_multiget + do_multiput;
+				  do_erase + do_multiget + do_multiput +
+				  do_multierase;
 	if (nr_opts > 1)
 	{
 		fprintf(stderr, "%s: Too many options supplied.\n", basename(argv[0]));
@@ -531,7 +535,7 @@ int main(int argc, char**argv)
 	}
 	/* For multiget and multi-put, just make sure at least 1 filename supplied */
 	/* Filenames will be processed later */
-	if (do_multiget || do_multiput)
+	if (do_multiget || do_multiput || do_multierase)
 	{
 		if (optind == argc) 
 		{
@@ -556,13 +560,13 @@ int main(int argc, char**argv)
 	/* Open the Altair disk image*/
 	if ((fd_img = open(disk_filename, open_mode, open_umask)) < 0)
 	{
-		error_exit(errno, "Error opening file %s", disk_filename);
+		error_exit(errno, "Error opening disk image file %s", disk_filename);
 	}
 
-	/* Try and work out what format this image is */
+	/* Set the format of this image */
 	if (has_type)
 	{
-		disk_set_type(image_type);
+		disk_set_type(fd_img, image_type);
 	}
 	else
 	{
@@ -587,7 +591,9 @@ int main(int argc, char**argv)
 
 	/* Initialize allocation table - Reserve allocations used by directories */
 	for (int i = 0; i < disk_directory_allocs(); i++)
+	{
 	    alloc_table[i] = 1;
+	}
 
 	/* Read all directory entries - except for format command */
 	if (!do_format)
@@ -599,14 +605,14 @@ int main(int argc, char**argv)
 	if (do_raw)
 	{
 		raw_directory_list();
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* Formatted directory listing */
 	if (do_dir)
 	{
 		directory_list(user);
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* Copy file from disk image to host */
@@ -631,18 +637,17 @@ int main(int argc, char**argv)
 		}
 		/* finally copy the file from disk image*/
 		copy_from_cpm(fd_img, fd_file, entry, text_mode);
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* Copy multiple files from disk image to host */
 	if (do_multiget)
 	{
+		char this_filename[FULL_FILENAME_LEN + 3];			/* current file being copied +3 for _uu (user number) */
 		while (optind != argc)
 		{
-			int idx = 0;
 			int file_found = 0;
 			cpm_dir_entry *entry = NULL;
-
 			strcpy(from_filename, argv[optind++]);
 			/* process all filenames */
 			while(1)
@@ -652,32 +657,47 @@ int main(int argc, char**argv)
 
 				if (entry == NULL)
 				{
-					/* error exit if there is not at least one file copied */
-					/* otherwise no more files to copy. copy is complete */
+					/* If not at least 1 file found for this from_filename */
 					if (!file_found)
-						error_exit(ENOENT, "Error copying %s", from_filename);
-					else
-						break;
+					{
+						error(ENOENT, "Error copying %s", from_filename);
+					}
+					/* process next file */
+					break;
 				}
-				char *this_filename = entry->full_filename;
+				/* Check if there are multiple copies of this filename for different users
+				 * If so, append _user to the filename
+				 * But don't append user number for user 0 */
+				if (user == -1 && 
+					entry->user != 0 &&
+					exist_filename_other_users(entry))
+				{
+					sprintf(this_filename, "%s_%d", entry->full_filename, entry->user);
+				}
+				else
+				{
+					strcpy(this_filename, entry->full_filename);
+				}
 				file_found = 1;
 				/* delete the host file we are about to copy into */
 				if ((unlink(this_filename) < 0) && (errno != ENOENT))
 				{
-					error_exit(errno, "Error removing old file %s", this_filename);
+					error(errno, "Skipping file. Error removing old file %s.", this_filename);
+					break;
 				}
 				/* create the file to copy into */
 				int fd_file = open(this_filename, O_CREAT | O_WRONLY, 0666);
 				if (fd_file < 0)
 				{
-					error_exit(errno, "Error opening file %s", this_filename);
+					error(errno, "Skipping file. Error opening file %s", this_filename);
+					break;
 				}
 				/* copy it */
 				copy_from_cpm(fd_img, fd_file, entry, text_mode);
 				close(fd_file);
 			}
 		}
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* Copy file from host to disk image */
@@ -689,7 +709,7 @@ int main(int argc, char**argv)
 			error_exit(errno, "Error opening file %s", from_filename);
 		}
 		copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename, user);
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* Copy multiple files from host to disk image */
@@ -704,18 +724,56 @@ int main(int argc, char**argv)
 			int fd_file = open(from_filename, O_RDONLY);
 			if (fd_file < 0)
 			{
-				error_exit(errno, "Error opening file %s", from_filename);
+				error(errno, "Error opening file %s", from_filename);
+				continue;
 			}
 			copy_to_cpm(fd_img, fd_file, basename(to_filename), from_filename, user);
 			close(fd_file);
 		}
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
 	/* erase a single file from the disk image */
 	if (do_erase)
 	{
-		erase_file(fd_img, from_filename, user);
+		cpm_dir_entry *entry = find_dir_by_filename(from_filename, entry, 0, user);
+		if (entry == NULL)
+		{
+			error_exit(ENOENT, "Error erasing %s", from_filename);
+		}
+		erase_file(fd_img, entry);
+		exit(EXIT_VALUE);
+	}
+
+	if(do_multierase)
+	{
+		while (optind != argc)
+		{
+			int file_found = 0;
+			cpm_dir_entry *entry = NULL;
+
+			strcpy(from_filename, argv[optind++]);
+			/* process all filenames */
+			while(1)
+			{
+				/* The filename may contain wildcards. If so, loop for each expanded filename */
+				entry = find_dir_by_filename(from_filename, entry, 1, user);
+
+				if (entry == NULL)
+				{
+					/* If not at least 1 file found for this from_filename */
+					if (!file_found)
+					{
+						error(ENOENT, "Error erasing %s", from_filename);
+					}
+					/* process next file */
+					break;
+				}
+				file_found = 1;
+				erase_file(fd_img, entry);
+			}
+		}
+		exit(EXIT_VALUE);
 	}
 
 	/* format and existing image or create a newly formatted image */
@@ -727,10 +785,10 @@ int main(int argc, char**argv)
 		}
 		/* Call the disk-specific format function */
 		disk_format_disk(fd_img);
-		exit(EXIT_SUCCESS);
+		exit(EXIT_VALUE);
 	}
 
-	return 0;
+	exit(EXIT_VALUE);
 }
 
 
@@ -742,17 +800,18 @@ void print_usage(char* argv0)
 	char *progname = basename(argv0);
 	printf("%s: -[d|r|F]v      [-T <type>] [-u <user>] <disk_image>\n", progname);
 	printf("%s: -[g|p|e][t|b]v [-T <type>] [-u <user>] <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P][t|b]v   [-T <type>] [-u <user>] <disk_image> <filename ...> \n", progname);
+	printf("%s: -[G|P|E][t|b]v [-T <type>] [-u <user>] <disk_image> <filename ...> \n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
 	printf("\t-F\tFormat existing or create new disk image. Defaults to %s\n", MITS8IN_FORMAT.type);
 	printf("\t-g\tGet - Copy file from Altair disk image to host\n");
-	printf("\t-p\tPut - Copy file from host to Altair disk image\n");
 	printf("\t-G\tGet Multiple - Copy multiple files from Altair disk image to host\n");
-	printf("\t  \t               wildcards * and ? are supported e.g '*.COM'\n");
+	printf("\t-p\tPut - Copy file from host to Altair disk image\n");
 	printf("\t-P\tPut Multiple - Copy multiple files from host to Altair disk image\n");
+	printf("\t  \t               wildcards * and ? are supported e.g '*.COM'\n");
 	printf("\t-e\tErase a file\n");
+	printf("\t-E\tErase Multiple - wildcards supported\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
 	printf("\t-u\tUser - Restrict operation to CP/M user\n");
@@ -763,7 +822,7 @@ void print_usage(char* argv0)
 	printf("\t\t\t* %s - Tarbell Floppy Disk\n", TARBELLFDD_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 1.5MB Floppy Disk\n", FDD15MB_FORMAT.type);
 	printf("\t\t\t* %s - FDC+ 8MB \"Floppy\" Disk\n", MITS8IN8MB_FORMAT.type);
-	printf("\t-v\tVerbose - Prints sector read/write information\n");
+	printf("\t-v\tVerbose - Prints image type and sector read/write information\n");
 	printf("\t-h\tHelp\n\n");
 
 	print_mits_5mb_1k_warning(stdout);
@@ -794,6 +853,23 @@ void error_exit(int eno, char *str, ...)
 	exit(EXIT_FAILURE);
 }
 
+/* 
+ * Print formatted error string and exit.
+ */
+void error(int eno, char *str, ...)
+{
+	va_list argp;
+  	va_start(argp, str);
+
+	vfprintf(stderr, str, argp);
+	if (eno > 0)
+		fprintf(stderr,": %s\n", strerror(eno));
+	else
+		fprintf(stderr, "\n");
+	va_end(argp);
+	EXIT_VALUE = EXIT_FAILURE;
+}
+
 /*
  * Print nicely formatted directory listing 
  * user - -1 = all users, otherwise restrict to that user number
@@ -814,7 +890,7 @@ void directory_list(int user)
 	int this_allocs = 0;
 	int this_kb = 0;
 	char *last_filename = "";
-	int last_user = 0;
+	int last_user = -1;
 
 	for (int i = 0 ; i < disk_num_directories() ; i++)
 	{
@@ -832,8 +908,8 @@ void directory_list(int user)
 			continue;
 
 		/* If this is the first record for this file, then reset the file totals */
-		if((strcmp(entry->full_filename, last_filename) != 0) &&
-			(entry->user == last_user))
+		if((strcmp(entry->full_filename, last_filename) != 0) ||
+			(entry->user != last_user))
 		{
 			file_count++;
 			this_records = 0;
@@ -998,7 +1074,8 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	}
 	if (find_dir_by_filename(valid_filename, 0, 0, user) != NULL)
 	{
-		error_exit(EEXIST, "Error creating file %s", valid_filename);
+		error(EEXIST, "Error creating file %s", valid_filename);
+		return;
 	}
 	
 	int rec_nr = 0;
@@ -1014,8 +1091,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	nbytes = read(host_fd, &sector_data, disk_data_sector_len());
 	if (nbytes < 0)
 	{
-		/* TODO: This can't really ever be triggered. Should do the skip in the do_multiput and do_multiget */
-		fprintf(stderr, "Error reading from file %s. File not copied: %s\n", host_filename, strerror(errno));
+		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
 	}
 	else if (nbytes == 0)
 	{
@@ -1119,6 +1195,10 @@ void load_directory_table(int fd)
 					if (alloc == 0)
 						break;
 					/* otherwise mark the allocation as used */
+					if (alloc >= MAX_ALLOCS)
+					{
+						error_exit(0, "Invalid allocation number. Possible incorrect image type. Use -v to check image type detected or selected.");
+					}
 					alloc_table[alloc] = 1;
 				}
 			}
@@ -1153,13 +1233,8 @@ void load_directory_table(int fd)
 /*
  * Erase a file
  */
-void erase_file(int fd, const char* cpm_filename, int user)
+void erase_file(int fd, cpm_dir_entry* entry)
 {
-	cpm_dir_entry *entry = find_dir_by_filename(cpm_filename, NULL, 0, user);
-	if (entry == NULL)
-	{
-		error_exit(ENOENT, "Error erasing %s", cpm_filename);
-	}
 	/* Set user on all directory entries for this file to "DELETED" */
 	do
 	{
@@ -1265,6 +1340,25 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
 	}
 	/* No matching filename found */
 	return NULL;
+}
+
+/*
+ * Returns 1 if this filename exists for other users, otherwise 0
+ */
+int exist_filename_other_users(cpm_dir_entry *entry)
+{
+	for (int i = 0 ; i < disk_num_directories() ; i++)
+	{
+		/* Does directory table entry have same filename, but is not the same entry as being one being checked */
+		if (dir_table[i].valid &&
+			&dir_table[i] != entry &&
+			is_first_extent(&dir_table[i]) &&
+			filename_equals(entry->full_filename, dir_table[i].full_filename, 0))
+			{
+				return 1;
+			}
+	}
+	return 0;
 }
 
 /* 
@@ -1547,7 +1641,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 		error_exit(errno, "write_sector: Error on write");
 	}
 
-	if (disk_csum_method(track) > 0)
+	if (disk_csum_method(track) >= 0)
 	{
 		/* calculate the checksum and offset if required */	
 		uint16_t csum = calc_checksum(buffer);
@@ -1672,6 +1766,12 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 			*in_char != '(' && *in_char != ')' &&
 			*in_char != '/' && *in_char != '\\')
 		{
+			/* If filename starts with a dot, then ignore the dot */
+			if (*in_char == '.' && in_char == filename)
+			{
+				in_char++;
+				continue;
+			}
 			if (*in_char == '.')
 			{
 				if (found_dot)
@@ -1718,7 +1818,7 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 }
 
 /* 
- * Sort by valid = 1, user, filename+type, then extent_nr 
+ * Sort by valid = 1, filename+type, then user, then extent_nr
  */
 int compare_sort_ptr(const void* a, const void* b)
 {
@@ -1733,11 +1833,11 @@ int compare_sort_ptr(const void* a, const void* b)
 	int result = (*second)->valid - (*first)->valid;
 	if (result == 0)
 	{
-		result = (*first)->user - (*second)->user;
+		result = strcmp((*first)->full_filename, (*second)->full_filename); 
 	}
 	if (result == 0)
 	{
-		result = strcmp((*first)->full_filename, (*second)->full_filename); 
+		result = (*first)->user - (*second)->user;
 	}
 	if (result == 0)
 	{
@@ -1936,7 +2036,10 @@ int disk_detect_type(int fd)
 		return -1;
 	}
 
-	if (length == MITS8IN_FORMAT.image_size)
+	/* Some emulators write out in multiples of 128 bytes, rather than the 137 bytes used by some types */
+	off_t alt_length = (length + 127) / 128 * 128;	/* round up to nearest 128 byte boundary */
+
+	if (length == MITS8IN_FORMAT.image_size || length == alt_length)
 	{
 		disk_type = &MITS8IN_FORMAT;
 	}
@@ -1952,7 +2055,7 @@ int disk_detect_type(int fd)
 	{
 		disk_type = &FDD15MB_FORMAT;
 	}
-	else if (length == MITS8IN8MB_FORMAT.image_size)
+	else if (length == MITS8IN8MB_FORMAT.image_size || length == alt_length)
 	{
 		disk_type = &MITS8IN8MB_FORMAT;
 	}
@@ -1968,8 +2071,11 @@ int disk_detect_type(int fd)
 /*
  * Manually set the image type
  */
-void disk_set_type(const char* type)
+void disk_set_type(int fd, const char* type)
 {
+
+	off_t length = lseek(fd, 0, SEEK_END);
+
 	if (!strcasecmp(type, MITS8IN_FORMAT.type))
 	{
 		disk_type = &MITS8IN_FORMAT;
@@ -1997,6 +2103,11 @@ void disk_set_type(const char* type)
 	else
 	{
 		error_exit(0,"Invalid disk image type: %s", type);
+	}
+
+	if (length != disk_type->image_size)
+	{
+		fprintf(stderr, "WARNING: Disk image size does not equal the expected size of %d.\n", disk_type->image_size);
 	}
 }
 
