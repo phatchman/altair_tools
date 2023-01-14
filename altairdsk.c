@@ -43,10 +43,9 @@
 
 #define MAX_SECT_SIZE	256		/* Maximum size of a disk sector read */
 #define MAX_DIRS		1024 	/* Maximum size of directory table */
-								/* There is a 5MB HDD format with 1024 extents, but not yet supported */
-								/* Current max is 8MB FDC+ format with 512 entries */
+								/* Current max is HDD_5MB_1024 format with 1024 entries */
 #define MAX_ALLOCS		2048 	/* Maximum size of allocation table */
-								/* 8MB FDC+ type uses 2046 blocks */
+								/* Current max is 8MB FDC+ type with 2046 allocs */
 #define DIR_ENTRY_LEN	32		/* Length of a single directory entry (extent)*/
 #define ALLOCS_PER_EXT	16		/* Number of allocations in a directory entry (extent) */
 #define RECORD_MAX		128		/* Max records per directory entry (extent) */
@@ -67,7 +66,7 @@ struct disk_offsets {
 	int	off_stop;			/* offset of stop byte */
 	int off_zero;			/* offset of zero byte */
 	int off_csum;			/* offset of checksum */
-	int csum_method;		/* Checksum method. Only supports method 1 Altair 8" */
+	int csum_method;		/* Checksum method. Only supports methods 0 and 1 for Altair 8" */
 };
 
 /* Disk format Parameters */
@@ -95,11 +94,11 @@ typedef struct raw_dir_entry
 	uint8_t		user;					/* User (0-15). E5 = Deleted */
 	char 		filename[FILENAME_LEN];	
 	char 		type[TYPE_LEN];
-	uint8_t		extent_l;				/* Extent number. */
+	uint8_t		extent_l;				/* Extent number low 32 */
 	uint8_t		reserved;
-	uint8_t		extent_h;				/* Not used */
+	uint8_t		extent_h;				/* Extent number high 32 */
 	uint8_t		num_records;			/* Number of sectors used for this directory entry */
-	uint8_t 	allocation[ALLOCS_PER_EXT];	/* List of 2K Allocations used for the file */
+	uint8_t 	allocation[ALLOCS_PER_EXT];	/* List of allocations used for the file */
 } raw_dir_entry;
 
 /* Sanitised version of a directory entry */
@@ -193,7 +192,7 @@ struct disk_type MITS8IN8MB_FORMAT = {
 };
 
 
-/* Skew table for the 5MB HDD. Note that this requires a 
+/* Skew table for the 5MB HDD. Note that we require a 
  * skew for each CPM sector. Not physical sector */
 int	hd5mb_skew_table[] = {
 	0,1,14,15,28,29,42,43,8,9,22,23,
@@ -287,7 +286,7 @@ struct disk_type TARBELLFDD_FORMAT = {
 };
 
 int fdd15mb_skew_table[] = {
-	0,1,2,3,4,5,6,7,8,9,
+	 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
 	10,11,12,13,14,15,16,17,18,19,
 	20,21,22,23,24,25,26,27,28,29,
 	30,31,32,33,34,35,36,37,38,39,
@@ -811,7 +810,7 @@ void print_usage(char* argv0)
 	printf("\t-P\tPut Multiple - Copy multiple files from host to Altair disk image\n");
 	printf("\t  \t               wildcards * and ? are supported e.g '*.COM'\n");
 	printf("\t-e\tErase a file\n");
-	printf("\t-E\tErase Multiple - wildcards supported\n");
+	printf("\t-E\tErase multiple files - wildcards supported\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
 	printf("\t-u\tUser - Restrict operation to CP/M user\n");
@@ -834,7 +833,7 @@ void print_usage(char* argv0)
 void print_mits_5mb_1k_warning(FILE* fp)
 {
 	fprintf(fp, "!!! The %s type cannot be auto-detected. Always use -T with this format,\n", MITS5MBHDD1024_FORMAT.type);
-	fprintf(fp, "otherwise your disk image will auto-detect as the standard 5MB type and be corrupted.\n");
+	fprintf(fp, "otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.\n");
 }
 
 /* 
@@ -1038,7 +1037,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 						}
 					}
 					/* If in text mode and on last block, then check for ^Z for EOF 
-					 * Set data_len to make sure that data stop writing prior to first ^Z */
+					 * Set data_len to make sure that data stops writing prior to first ^Z */
 					if (text_mode && (recnr == num_records - 1) &&
 							sector_data[i] == 0x1a)
 					{
@@ -1092,6 +1091,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	if (nbytes < 0)
 	{
 		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
+		return;
 	}
 	else if (nbytes == 0)
 	{
@@ -1168,7 +1168,6 @@ void load_directory_table(int fd)
 	for (int sect_nr = 0 ; sect_nr < (disk_num_directories()) / disk_dirs_per_sector(); sect_nr++)
 	{
 		/* Read each sector containing a directory entry */
-		/* All directory data is on first 16 sectors of TRACK 2*/
 		int allocation = sect_nr / disk_recs_per_alloc();
 		int	record = (sect_nr % disk_recs_per_alloc());
 
@@ -1197,7 +1196,7 @@ void load_directory_table(int fd)
 					/* otherwise mark the allocation as used */
 					if (alloc >= MAX_ALLOCS)
 					{
-						error_exit(0, "Invalid allocation number. Possible incorrect image type. Use -v to check image type detected or selected.");
+						error_exit(0, "Invalid allocation number found in directory table.\nPossible incorrect image type. Use -v to check image type detected or selected.");
 					}
 					alloc_table[alloc] = 1;
 				}
@@ -2036,10 +2035,10 @@ int disk_detect_type(int fd)
 		return -1;
 	}
 
-	/* Some emulators write out in multiples of 128 bytes, rather than the 137 bytes used by some types */
-	off_t alt_length = (length + 127) / 128 * 128;	/* round up to nearest 128 byte boundary */
+	/* Some emulators write out in multiples of 128 bytes, rather than the 137 bytes used by the 8" disk */
+	off_t mits_alt_length = (MITS8IN_FORMAT.image_size + 127) / 128 * 128;	/* round up to nearest 128 byte boundary */
 
-	if (length == MITS8IN_FORMAT.image_size || length == alt_length)
+	if (length == MITS8IN_FORMAT.image_size || length == mits_alt_length)
 	{
 		disk_type = &MITS8IN_FORMAT;
 	}
@@ -2055,7 +2054,7 @@ int disk_detect_type(int fd)
 	{
 		disk_type = &FDD15MB_FORMAT;
 	}
-	else if (length == MITS8IN8MB_FORMAT.image_size || length == alt_length)
+	else if (length == MITS8IN8MB_FORMAT.image_size)
 	{
 		disk_type = &MITS8IN8MB_FORMAT;
 	}
@@ -2064,7 +2063,7 @@ int disk_detect_type(int fd)
 		return -1;
 	}
 	if (VERBOSE)
-		printf("Detected Format: %s\n", disk_type->type);
+		printf("Detected image type: %s\n", disk_type->type);
 	return 0;
 }
 
@@ -2109,6 +2108,9 @@ void disk_set_type(int fd, const char* type)
 	{
 		fprintf(stderr, "WARNING: Disk image size does not equal the expected size of %d.\n", disk_type->image_size);
 	}
+	if (VERBOSE)
+		printf("Selected image type: %s\n", disk_type->type);
+
 }
 
 void disk_format_disk(int fd)
