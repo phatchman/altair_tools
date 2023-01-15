@@ -331,6 +331,8 @@ void directory_list(int user);
 void raw_directory_list();
 void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_mode);
 void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* host_filename, int user);
+void extract_cpm(int cpm_fd, int host_fd);
+void install_cpm(int cpm_fd, int host_fd);
 
 void load_directory_table(int fd); 
 cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *prev_entry, int wildcards, int user);
@@ -388,7 +390,7 @@ void disk_format_disk(int fd);
 
 int main(int argc, char**argv)
 {
-	int open_mode;	/* read or write depending on selected options */
+	int open_mode = O_RDONLY;	/* read or write depending on selected options */
 	mode_t open_umask = 0666;
 
 	/* command line options */
@@ -396,7 +398,7 @@ int main(int argc, char**argv)
 	int do_dir = 0, do_raw = 0, do_get = 0;
 	int do_put = 0 , do_help = 0, do_format = 0;
 	int do_erase = 0, do_multiput = 0, do_multiget = 0;
-	int do_multierase = 0;
+	int do_multierase = 0, do_extractsystem = 0, do_writesystem = 0;
 	int has_type = 0;				/* has the user specified a type? */
 	int text_mode = -1;				/* default to auto-detect text/binary */
 	char *disk_filename = NULL; 	/* Altair disk image filename */
@@ -409,7 +411,7 @@ int main(int argc, char**argv)
 	disk_type = &MITS8IN_FORMAT;
 
 	/* parse command line options */
-	while ((opt = getopt(argc, argv, "drhgGpPvFeEtbT:u:")) != -1)
+	while ((opt = getopt(argc, argv, "drhgGpPvFeEtbxsT:u:")) != -1)
 	{
 		switch (opt)
 		{
@@ -473,6 +475,14 @@ int main(int argc, char**argv)
 					error_exit(0, "User must be a valid number between 0 and 15\n");
 				}
 				break;
+			case 'x':
+				do_extractsystem = 1;
+				open_mode = O_RDONLY;
+				break;
+			case 's':
+				do_writesystem = 1;
+				open_mode = O_RDWR;
+				break;
 			case '?':
 				exit(EXIT_FAILURE);
 		}
@@ -481,7 +491,7 @@ int main(int argc, char**argv)
 	int nr_opts = do_dir + do_raw + do_help + 
 				  do_put + do_get + do_format +
 				  do_erase + do_multiget + do_multiput +
-				  do_multierase;
+				  do_multierase + do_extractsystem + do_writesystem;
 	if (nr_opts > 1)
 	{
 		fprintf(stderr, "%s: Too many options supplied.\n", basename(argv[0]));
@@ -511,8 +521,8 @@ int main(int argc, char**argv)
 	}
 
 	/* Get and Put need a from_filename and an optional to_filename*/
-	/* Erase just needs a from_filename */
-	if (do_get || do_put || do_erase) 
+	/* Erase, extract and system just need a single filename */
+	if (do_get || do_put || do_erase || do_extractsystem || do_writesystem) 
 	{
 		if (optind == argc) 
 		{
@@ -522,7 +532,7 @@ int main(int argc, char**argv)
 		else 
 		{
 			strcpy(from_filename, argv[optind++]);
-			if (!do_erase && optind < argc)
+			if (!(do_erase || do_extractsystem || do_writesystem) && optind < argc)
 			{
 				strcpy(to_filename, argv[optind++]);
 			}
@@ -594,8 +604,8 @@ int main(int argc, char**argv)
 	    alloc_table[i] = 1;
 	}
 
-	/* Read all directory entries - except for format command */
-	if (!do_format)
+	/* Read all directory entries - except for commands that don't need it */
+	if (!do_format && !do_extractsystem && !do_writesystem)
 	{
 		load_directory_table(fd_img);
 	}
@@ -787,6 +797,30 @@ int main(int argc, char**argv)
 		exit(EXIT_VALUE);
 	}
 
+	/* Extract the CP/M system files*/
+	if (do_extractsystem)
+	{
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY, open_umask);
+		if (fd_file < 0)
+		{
+			error_exit(errno, "Error opening %s", to_filename);
+		}
+		extract_cpm(fd_img, fd_file);
+		exit(EXIT_VALUE);
+	}
+
+	/* Copy system tracks onto disk image */
+	if (do_writesystem)
+	{
+		int fd_file = open(from_filename, O_RDONLY, open_umask);
+		if (fd_file < 0)
+		{
+			error_exit(errno, "Error opening %s", from_filename);
+		}
+		install_cpm(fd_img, fd_file);
+		exit(EXIT_VALUE);
+	}
+
 	exit(EXIT_VALUE);
 }
 
@@ -797,9 +831,10 @@ int main(int argc, char**argv)
 void print_usage(char* argv0)
 {
 	char *progname = basename(argv0);
-	printf("%s: -[d|r|F]v      [-T <type>] [-u <user>] <disk_image>\n", progname);
+	printf("%s: -[d|r|F]v  [-T <type>] [-u <user>] <disk_image>\n", progname);
 	printf("%s: -[g|p|e][t|b]v [-T <type>] [-u <user>] <disk_image> <src_filename> [dst_filename]\n", progname);
-	printf("%s: -[G|P|E][t|b]v [-T <type>] [-u <user>] <disk_image> <filename ...> \n", progname);
+	printf("%s: -[G|P|E][t|b]v [-T <type>] [-u <user>] <disk_image> <filename ...>\n", progname);
+	printf("%s: -[x|s]v        [-T <type>] <disk_image> <system_image>\n", progname);
 	printf("%s: -h\n", progname);
 	printf("\t-d\tDirectory listing (default)\n");
 	printf("\t-r\tRaw directory listing\n");
@@ -814,6 +849,8 @@ void print_usage(char* argv0)
 	printf("\t-t\tPut/Get a file in text mode\n");
 	printf("\t-b\tPut/Get a file in binary mode\n");
 	printf("\t-u\tUser - Restrict operation to CP/M user\n");
+	printf("\t-x\tExtract CP/M system (from a bootable disk image) to a file\n");
+	printf("\t-s\tWrite saved CP/M system image to disk image (make disk bootable)\n");
 	printf("\t-T\tDisk image type. Auto-detected if possible. Supported types are:\n");
 	printf("\t\t\t* %s - MITS 8\" Floppy Disk (Default)\n", MITS8IN_FORMAT.type);
 	printf("\t\t\t* %s - MITS 5MB Hard Disk\n", MITS5MBHDD_FORMAT.type);
@@ -1047,7 +1084,11 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 				}
 			}
 			/* write out current sector */
-			write(host_fd, sector_data, data_len);
+			if (write(host_fd, sector_data, data_len) < 0)
+			{
+				error(errno, "Error writing local file");
+				return;
+			}
 		}
 		dir_entry = dir_entry->next_entry;
 	}
@@ -1085,9 +1126,9 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	cpm_dir_entry *dir_entry = NULL;
 
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
-	memset (&sector_data, 0x1a, disk_data_sector_len()); 
+	memset (sector_data, 0x1a, disk_data_sector_len()); 
 	/* Read the first sector */
-	nbytes = read(host_fd, &sector_data, disk_data_sector_len());
+	nbytes = read(host_fd, sector_data, disk_data_sector_len());
 	if (nbytes < 0)
 	{
 		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
@@ -1142,19 +1183,82 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		dir_entry->raw_entry.num_records = (rec_nr % RECORD_MAX) + 1;
 		dir_entry->raw_entry.extent_l = nr_extents % 32;
 		dir_entry->raw_entry.extent_h = nr_extents / 32;
-		write_sector(cpm_fd, allocation, rec_nr, &sector_data);
-		memset (&sector_data, 0x1a, disk_data_sector_len());
+		write_sector(cpm_fd, allocation, rec_nr, sector_data);
+		memset (sector_data, 0x1a, disk_data_sector_len());
 		rec_nr++;
 		if ((rec_nr % RECORD_MAX) == 0)
 		{
 			nr_extents++;
 		}
 	}
-	while ((nbytes = read(host_fd, &sector_data, disk_data_sector_len())) > 0);
+	while ((nbytes = read(host_fd, sector_data, disk_data_sector_len())) > 0);
 	/* File is done. Write out the last directory entry */
 	raw_to_cpmdir(dir_entry);
 	write_dir_entry(cpm_fd, dir_entry);
 }	
+
+/* 
+ * Extract the CP/M operating system tracks and save to host file
+ */
+void extract_cpm(int cpm_fd, int host_fd)
+{
+	uint8_t sector_data[MAX_SECT_SIZE];
+	if (lseek(cpm_fd, 0, SEEK_SET) < 0)
+	{
+		error_exit(errno, "extract_cpm: Error seeking disk image");
+	}
+	for (int track_nr = 0 ; track_nr < disk_reserved_tracks() ; track_nr++)
+	{
+		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
+		{
+			if (read(cpm_fd, sector_data, disk_sector_len()) < 0)
+			{
+				error_exit(errno, "extract_cpm: Error reading");
+			}
+			if (write(host_fd, sector_data, disk_sector_len()) < 0)
+			{
+				error_exit(errno, "extract_cpm: Error writing");
+			}
+		}
+	}
+}
+
+/*
+ * Install the CP/M operating system tracks from a host file
+ */
+void install_cpm(int cpm_fd, int host_fd)
+{
+	uint8_t sector_data[MAX_SECT_SIZE];
+	int required_size = disk_reserved_tracks() * disk_track_len();
+	if (lseek(host_fd, 0, SEEK_END) != required_size)
+	{
+		error_exit(0, "System image size must be %d bytes. Aborting", required_size);
+	}
+	if (lseek(host_fd, 0, SEEK_SET) < 0)
+	{
+		error_exit(errno, "install_cpm: Error seeking system image");
+	}
+	if (lseek(cpm_fd, 0, SEEK_SET) < 0)
+	{
+		error_exit(errno, "install_cpm: Error seeking disk image");
+	}
+
+
+	for (int track_nr = 0 ; track_nr < disk_reserved_tracks() ; track_nr++)
+	{
+		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
+		{
+			if (read(host_fd, sector_data, disk_sector_len()) < 0)
+			{
+				error_exit(errno, "install_cpm: Error reading");
+			}
+			if (write(cpm_fd, sector_data, disk_sector_len()) < 0)
+			{
+				error_exit(errno, "install_cpm: Error writing");
+			}
+		}
+	}
+}
 
 /*
  * Loads all of the directory entries into dir_table 
@@ -1171,7 +1275,7 @@ void load_directory_table(int fd)
 		int allocation = sect_nr / disk_recs_per_alloc();
 		int	record = (sect_nr % disk_recs_per_alloc());
 
-		read_sector(fd, allocation, record, &sector_data);
+		read_sector(fd, allocation, record, sector_data);
 		for (int dir_nr = 0 ; dir_nr < disk_dirs_per_sector() ; dir_nr++)
 		{
 			/* Calculate which directory entry number this is */
@@ -1258,7 +1362,7 @@ void format_disk(int fd)
 	{
 		for (int sector = 0 ; sector < disk_sectors_per_track() ; sector++)
 		{
-			write_raw_sector(fd, track, sector + 1, &sector_data);
+			write_raw_sector(fd, track, sector + 1, sector_data);
 		}
 	}
 }
@@ -1307,7 +1411,7 @@ void mits8in_format_disk(int fd)
 				checksum += sector_data[6];
 				sector_data[disk_off_csum(6)] = checksum;
 			}
-			write_raw_sector(fd, track, sector + 1, &sector_data);
+			write_raw_sector(fd, track, sector + 1, sector_data);
 		}
 	}
 }
@@ -2104,7 +2208,7 @@ void disk_set_type(int fd, const char* type)
 		error_exit(0,"Invalid disk image type: %s", type);
 	}
 
-	if (length != disk_type->image_size)
+	if (length != 0 && length != disk_type->image_size)
 	{
 		fprintf(stderr, "WARNING: Disk image size does not equal the expected size of %d.\n", disk_type->image_size);
 	}
