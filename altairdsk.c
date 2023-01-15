@@ -841,9 +841,9 @@ void print_usage(char* argv0)
 	printf("\t-F\tFormat existing or create new disk image. Defaults to %s\n", MITS8IN_FORMAT.type);
 	printf("\t-g\tGet - Copy file from Altair disk image to host\n");
 	printf("\t-G\tGet Multiple - Copy multiple files from Altair disk image to host\n");
+	printf("\t  \t               wildcards * and ? are supported e.g '*.COM'\n");
 	printf("\t-p\tPut - Copy file from host to Altair disk image\n");
 	printf("\t-P\tPut Multiple - Copy multiple files from host to Altair disk image\n");
-	printf("\t  \t               wildcards * and ? are supported e.g '*.COM'\n");
 	printf("\t-e\tErase a file\n");
 	printf("\t-E\tErase multiple files - wildcards supported\n");
 	printf("\t-t\tPut/Get a file in text mode\n");
