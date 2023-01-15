@@ -186,7 +186,10 @@ Copy the CP/M system tracks
 `altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`
 Copy the files from user 0. The directory entries for user 0 are all valid.
 `cd files`
+On linux/unix
 `altairdsk ../HDSK03.DSK -Gu0 '*'`
+On Windows do not use the quotes
+`altairdsk ../HDSK03.DSK -Gu0 *`
 `altairdsk ../HDSK03_NEW.DSK -P *`
 
 You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
