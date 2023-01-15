@@ -1301,9 +1301,12 @@ void load_directory_table(int fd)
 					/* otherwise mark the allocation as used */
 					if (alloc >= MAX_ALLOCS)
 					{
-						error_exit(0, "Invalid allocation number found in directory table.\nPossible incorrect image type. Use -v to check image type detected or selected.");
+						error(0, "Invalid allocation number found in directory table.\nPossible incorrect image type. Use -v to check image type detected or selected.");
 					}
-					alloc_table[alloc] = 1;
+					else
+					{
+						alloc_table[alloc] = 1;
+					}
 				}
 			}
 		}
