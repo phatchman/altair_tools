@@ -179,7 +179,7 @@ struct disk_type MITS8IN8MB_FORMAT = {
 	.sectors_per_track = 32,
 	.block_size = 4096,
 	.num_directories = 512,
-	.directory_allocs = 2,
+	.directory_allocs = 4,
 	.image_size = 8978432,	
 	.skew_table_size = sizeof(mits_skew_table),
 	.skew_table = mits_skew_table,
@@ -455,7 +455,7 @@ int main(int argc, char**argv)
 				break;
 			case 'F':
 				do_format = 1;
-				open_mode = O_WRONLY | O_CREAT;
+				open_mode = O_WRONLY | O_CREAT | O_TRUNC;
 				break;
 			case 't':
 				text_mode = 1;
@@ -639,7 +639,7 @@ int main(int argc, char**argv)
 			error_exit(errno, "Error removing old file %s", to_filename);
 		}
 		/* open file to save into */
-		int fd_file = open(to_filename, O_CREAT | O_WRONLY, 0666);
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
@@ -695,7 +695,7 @@ int main(int argc, char**argv)
 					break;
 				}
 				/* create the file to copy into */
-				int fd_file = open(this_filename, O_CREAT | O_WRONLY, 0666);
+				int fd_file = open(this_filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
 				if (fd_file < 0)
 				{
 					error(errno, "Skipping file. Error opening file %s", this_filename);
@@ -800,7 +800,7 @@ int main(int argc, char**argv)
 	/* Extract the CP/M system files*/
 	if (do_extractsystem)
 	{
-		int fd_file = open(to_filename, O_CREAT | O_WRONLY, open_umask);
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC, open_umask);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening %s", to_filename);
@@ -1134,11 +1134,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
 		return;
 	}
-	else if (nbytes == 0)
-	{
-		/* If it is an empty file. Treat as a 1 char file of ^Z */
-		nbytes == 1;
-	}
+	/* Note will enter the loop once for an empty file */
 	do
 	{
 		/* Is this a new Extent (i.e directory entry) ? */
@@ -1165,7 +1161,9 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		/* Is this a new allocation? */
 		if ((rec_nr % disk_recs_per_alloc()) == 0)
 		{
-			allocation = find_free_alloc();
+			/* A zero length file has 0 allocations */
+			allocation = (nbytes > 0) ? find_free_alloc() : 0;
+
 			if (allocation < 0)
 			{
 				/* No free allocations! 
@@ -1183,8 +1181,11 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		dir_entry->raw_entry.num_records = (rec_nr % RECORD_MAX) + 1;
 		dir_entry->raw_entry.extent_l = nr_extents % 32;
 		dir_entry->raw_entry.extent_h = nr_extents / 32;
-		write_sector(cpm_fd, allocation, rec_nr, sector_data);
-		memset (sector_data, 0x1a, disk_data_sector_len());
+		if (nbytes > 0)
+		{
+			write_sector(cpm_fd, allocation, rec_nr, sector_data);
+			memset (sector_data, 0x1a, disk_data_sector_len());
+		}
 		rec_nr++;
 		if ((rec_nr % RECORD_MAX) == 0)
 		{
@@ -1869,12 +1870,6 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 			*in_char != '(' && *in_char != ')' &&
 			*in_char != '/' && *in_char != '\\')
 		{
-			/* If filename starts with a dot, then ignore the dot */
-			if (*in_char == '.' && in_char == filename)
-			{
-				in_char++;
-				continue;
-			}
 			if (*in_char == '.')
 			{
 				if (found_dot)
