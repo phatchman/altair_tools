@@ -1,7 +1,0 @@
-[
-{
-  "directory": "/home/phatc/src/altair_tools/build",
-  "command": "/usr/bin/gcc   -g -o CMakeFiles/altairdsk.dir/altairdsk.c.o -c /home/phatc/src/altair_tools/altairdsk.c",
-  "file": "/home/phatc/src/altair_tools/altairdsk.c"
-}
-]
