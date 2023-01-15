@@ -344,6 +344,9 @@ int find_free_alloc(void);
 void copy_filename(raw_dir_entry *entry, const char *filename);
 void erase_file(int fd, cpm_dir_entry* entry);
 
+ssize_t safe_read(int fd, void *buf, size_t count);
+ssize_t safe_write(int fd, const void *buf, size_t count);
+
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
 void write_sector(int fd, int alloc_num, int rec_num, void* buffer);
@@ -1084,7 +1087,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 				}
 			}
 			/* write out current sector */
-			if (write(host_fd, sector_data, data_len) < 0)
+			if (safe_write(host_fd, sector_data, data_len) < 0)
 			{
 				error(errno, "Error writing local file");
 				return;
@@ -1092,6 +1095,52 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 		}
 		dir_entry = dir_entry->next_entry;
 	}
+}
+
+/*
+ * Read a full buffer's worth of data
+ */
+ssize_t safe_read(int fd, void *buf, size_t count)
+{
+	size_t bytes_left = count;
+	size_t bytes_read = 0;
+	size_t nbytes = 0;
+
+	while ((nbytes = read(fd, buf + bytes_read, bytes_left)) > 0)
+	{
+		bytes_read += nbytes;
+		bytes_left -= nbytes;
+
+		if (bytes_read == count)
+			return bytes_read;
+	}
+	if (nbytes < 0)
+		return nbytes;
+	return bytes_read;
+}
+
+/*
+ * Write a full buffer's worth of data
+ */
+ssize_t safe_write(int fd, const void *buf, size_t count)
+{
+	size_t bytes_left = count;
+	size_t bytes_written = 0;
+	size_t nbytes = 0;
+
+	while((nbytes = write(fd, buf + bytes_written, bytes_left)) > 0)
+	{
+		bytes_written += nbytes;
+		bytes_left -= nbytes;
+
+		if (nbytes == count)
+		{
+			return bytes_written;
+		}
+	}
+	if (nbytes < 0)
+		return nbytes;
+	return bytes_written;
 }
 
 /*
@@ -1128,7 +1177,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
 	memset (sector_data, 0x1a, disk_data_sector_len()); 
 	/* Read the first sector */
-	nbytes = read(host_fd, sector_data, disk_data_sector_len());
+	nbytes = safe_read(host_fd, sector_data, disk_data_sector_len());
 	if (nbytes < 0)
 	{
 		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
@@ -1192,7 +1241,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 			nr_extents++;
 		}
 	}
-	while ((nbytes = read(host_fd, sector_data, disk_data_sector_len())) > 0);
+	while ((nbytes = safe_read(host_fd, sector_data, disk_data_sector_len())) > 0);
 	/* File is done. Write out the last directory entry */
 	raw_to_cpmdir(dir_entry);
 	write_dir_entry(cpm_fd, dir_entry);
@@ -1212,11 +1261,11 @@ void extract_cpm(int cpm_fd, int host_fd)
 	{
 		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
 		{
-			if (read(cpm_fd, sector_data, disk_sector_len()) < 0)
+			if (safe_read(cpm_fd, sector_data, disk_sector_len()) < 0)
 			{
 				error_exit(errno, "extract_cpm: Error reading");
 			}
-			if (write(host_fd, sector_data, disk_sector_len()) < 0)
+			if (safe_write(host_fd, sector_data, disk_sector_len()) < 0)
 			{
 				error_exit(errno, "extract_cpm: Error writing");
 			}
@@ -1249,11 +1298,11 @@ void install_cpm(int cpm_fd, int host_fd)
 	{
 		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
 		{
-			if (read(host_fd, sector_data, disk_sector_len()) < 0)
+			if (safe_read(host_fd, sector_data, disk_sector_len()) < 0)
 			{
 				error_exit(errno, "install_cpm: Error reading");
 			}
-			if (write(cpm_fd, sector_data, disk_sector_len()) < 0)
+			if (safe_write(cpm_fd, sector_data, disk_sector_len()) < 0)
 			{
 				error_exit(errno, "install_cpm: Error writing");
 			}
@@ -1711,7 +1760,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "read_sector: Error seeking");
 	}
-	if (read(fd, buffer, disk_data_sector_len()) < 0)
+	if (safe_read(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "read_sector: Error on read");
 	}
@@ -1743,7 +1792,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "write_sector: Error seeking");
 	}
-	if (write(fd, buffer, disk_data_sector_len()) < 0)
+	if (safe_write(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "write_sector: Error on write");
 	}
@@ -1762,7 +1811,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 				error_exit(errno, "write_sector: Error seeking");
 			}
 			
-			if (read(fd, checksum_buf, 7) < 0)
+			if (safe_read(fd, checksum_buf, 7) < 0)
 			{
 				error_exit(errno, "write_sector: Error on read checksum bytes");
 			}
@@ -1777,7 +1826,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 		{
 			error_exit(errno, "write_sector: Error seeking");
 		}
-		if (write(fd, &csum, 1) < 0)
+		if (safe_write(fd, &csum, 1) < 0)
 		{
 			error_exit(errno, "write_sector: Error on write");
 		}
@@ -1802,7 +1851,7 @@ void write_raw_sector(int fd, int track, int sector, void* buffer)
 	{
 		error_exit(errno, "write_raw_sector: Error seeking");
 	}
-	if (write(fd, buffer, disk_sector_len()) < 0)
+	if (safe_write(fd, buffer, disk_sector_len()) < 0)
 	{
 		error_exit(errno, "write_raw_sector: Error on write");
 	}
