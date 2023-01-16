@@ -42,7 +42,7 @@
 #include <limits.h>
 
 #if !defined(_WIN32)
-#define O_BINARY
+#define O_BINARY 0
 #endif
 
 #define MAX_SECT_SIZE	256		/* Maximum size of a disk sector read */
@@ -364,6 +364,7 @@ int compare_sort_ptr(const void *a, const void *b);
 int get_raw_allocation(raw_dir_entry* raw, int entry_nr);
 void set_raw_allocation(raw_dir_entry *entry, int entry_nr, int alloc);
 int is_first_extent(cpm_dir_entry* dir_entry);
+char* strip_quotes(char* filename);
 
 void disk_format_disk(int fd);
 int disk_sector_len();
@@ -664,7 +665,7 @@ int main(int argc, char**argv)
 		{
 			int file_found = 0;
 			cpm_dir_entry *entry = NULL;
-			strcpy(from_filename, argv[optind++]);
+			strcpy(from_filename, strip_quotes(argv[optind++]));
 			/* process all filenames */
 			while(1)
 			{
@@ -768,7 +769,7 @@ int main(int argc, char**argv)
 			int file_found = 0;
 			cpm_dir_entry *entry = NULL;
 
-			strcpy(from_filename, argv[optind++]);
+			strcpy(from_filename, strip_quotes(argv[optind++]));
 			/* process all filenames */
 			while(1)
 			{
@@ -2042,6 +2043,30 @@ int is_first_extent(cpm_dir_entry* dir_entry)
 {
 	return ((disk_recs_per_extent() > 128) && (dir_entry->num_allocs > 4) && dir_entry->extent_nr == 1) ||
 			(dir_entry->extent_nr == 0);
+}
+
+/*
+ * On windows, strip single quotes from filenames. e.g. '*' becomes *
+ */
+char* strip_quotes(char* filename)
+{
+#if !defined(_WIN32)
+	return filename;
+#else
+	char *ptr = filename;
+	/* If starts with ' */
+	if (*ptr == '\'')
+	{
+		while(*ptr++ != '\0');
+		/* If ends with ' then remove it */
+		if(*(ptr-1) == '\'')
+		{
+			*(ptr-1) = '\0';
+		}
+		return filename + 1;
+	}
+	return filename;
+#endif
 }
 
 
