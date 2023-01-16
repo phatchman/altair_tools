@@ -85,8 +85,7 @@ This is only needed when copying a file from the altair disk.<br>
 
 ### Get a directory listing
 `./altairdsk -d cpm.dsk`<br>
-`./altairdsk cpm.dsk`
-
+`./altairdsk cpm.dsk`<br>
 Restrict the directory listing to a particular user with the -u option
 `./altairdsk -u0 cpm.dsk`
 
@@ -121,29 +120,28 @@ U is the user number<br>
 At is the file attributes. R - Read only, W - Read/write. S - System
 
 ### Format a disk
-`./altairdsk -F new.dsk`
-
-To format for a specific type
+`./altairdsk -F new.dsk`<br>
+To format for a specific type<br>
 `./altairdsk -F -T HDD_5MB new.dsk`
 
-Or on linux/unix you can put options in any order
+Or on linux/unix you can put options in any order<br>
 `./altairdsk new.dsk -FT HDD_5MB`
 `./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Copy a file from the disk (get)
 `./altairdsk -g cpm.dsk LADDER.COM`
 
-get files for a single user
+get files for a single user<br>
 `./altairdsk -g -u1 cpm.dsk LADDER.COM`
 
-### Copy a file to the disk (put)
+### Copy a file to the disk (put)<br>
 `./altairdsk -p cpm.dsk LADDER.COM`
 
 ### Copy multiple files from the disk (get multiple)
-This command allows wildcards of * or ?. Note the use of single quotes to stop the shell/command prompt expanding wildcards
+This command allows wildcards of * or ?. Note the use of single quotes to stop the shell/command prompt expanding wildcards<br>
 `./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'`
 
-To get all files from the disk
+To get all files from the disk<br>
 `./altairdsk -G cpm.dsk '*'`
 
 If the same file exists for multiple users, the user number is appended to the filename e.g. ASM.TXT_1.
@@ -151,7 +149,7 @@ If the same file exists for multiple users, the user number is appended to the f
 ### Copy multiple files to the disk image (put multiple)
 `./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com`
 
-Copy multiple files to user 1
+Copy multiple files to user 1<br>
 `./altairdsk -Pu1 cpm.dsk *.com`
 
 ### Erase a file
@@ -163,7 +161,7 @@ If the same file exists for multiple users, only the first copy of the file will
 `./altairdsk -E cpm.dsk 'asm.*'`
 
 If the same file exists for multiple users, the -E option will remove the file from all users, unless the -u option is specified.<br>
-To remove all files from user 2
+To remove all files from user 2<br>
 `./altairdsk -E -u 2 cpm.dsk '*'`
 
 ### Save CP/M system tracks from bootable disk
@@ -177,17 +175,18 @@ The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have s
 Note that you will receive the error message below multiple times during this operation. The error is caused by the invalid directory entries and are expected.
 _Invalid allocation number found in directory table.
 Possible incorrect image type. Use -v to check image type detected or selected._<br>
-Create a new directory named _files_ below where you keep the HDSK03.DSK
-`mkdir files`
-Create a new disk image
-`altairdsk -FT HDD_5MB HDSK03_NEW.DSK`
-Copy the CP/M system tracks
+
+Create a new directory named _files_ below where you keep the HDSK03.DSK<br>
+`mkdir files`<br>
+Create a new disk image<br>
+`altairdsk -FT HDD_5MB HDSK03_NEW.DSK`<br>
+Copy the CP/M system tracks<br>
 `altairdsk -x HDSK03.DSK hdsk_cpm.bin`
-`altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`
-Copy the files from user 0. The directory entries for user 0 are all valid.
+`altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`<br>
+Copy the files from user 0. The directory entries for user 0 are all valid.<br>
 `cd files`
 `altairdsk ../HDSK03.DSK -Gu0 '*'`
-`altairdsk ../HDSK03_NEW.DSK -P *`
+`altairdsk ../HDSK03_NEW.DSK -P *`<br>
 Note that quotes around '*' are used for the Get, but not on the Put.<br>
 You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
 
