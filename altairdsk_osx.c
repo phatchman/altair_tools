@@ -753,7 +753,7 @@ int main(int argc, char**argv)
 	/* erase a single file from the disk image */
 	if (do_erase)
 	{
-		cpm_dir_entry *entry = find_dir_by_filename(from_filename, entry, 0, user);
+		cpm_dir_entry *entry = find_dir_by_filename(from_filename, NULL, 0, user);
 		if (entry == NULL)
 		{
 			error_exit(ENOENT, "Error erasing %s", from_filename);
