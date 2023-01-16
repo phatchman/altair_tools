@@ -41,6 +41,10 @@
 #include <ctype.h>
 #include <limits.h>
 
+#if !defined(_WIN32)
+#define O_BINARY
+#endif
+
 #define MAX_SECT_SIZE	256		/* Maximum size of a disk sector read */
 #define MAX_DIRS		1024 	/* Maximum size of directory table */
 								/* Current max is HDD_5MB_1024 format with 1024 entries */
@@ -570,7 +574,7 @@ int main(int argc, char**argv)
 	//alloc_table[0] = alloc_table[1] = 1;
 
 	/* Open the Altair disk image*/
-	if ((fd_img = open(disk_filename, open_mode, open_umask)) < 0)
+	if ((fd_img = open(disk_filename, open_mode | O_BINARY, open_umask)) < 0)
 	{
 		error_exit(errno, "Error opening disk image file %s", disk_filename);
 	}
@@ -642,7 +646,7 @@ int main(int argc, char**argv)
 			error_exit(errno, "Error removing old file %s", to_filename);
 		}
 		/* open file to save into */
-		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0666);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening file %s", from_filename);
@@ -698,7 +702,7 @@ int main(int argc, char**argv)
 					break;
 				}
 				/* create the file to copy into */
-				int fd_file = open(this_filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+				int fd_file = open(this_filename, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0666);
 				if (fd_file < 0)
 				{
 					error(errno, "Skipping file. Error opening file %s", this_filename);
@@ -733,7 +737,7 @@ int main(int argc, char**argv)
 			strcpy(from_filename, argv[optind++]);
 			strcpy(to_filename, from_filename);
 
-			int fd_file = open(from_filename, O_RDONLY);
+			int fd_file = open(from_filename, O_RDONLY | O_BINARY);
 			if (fd_file < 0)
 			{
 				error(errno, "Error opening file %s", from_filename);
@@ -803,7 +807,7 @@ int main(int argc, char**argv)
 	/* Extract the CP/M system files*/
 	if (do_extractsystem)
 	{
-		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC, open_umask);
+		int fd_file = open(to_filename, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, open_umask);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening %s", to_filename);
@@ -815,7 +819,7 @@ int main(int argc, char**argv)
 	/* Copy system tracks onto disk image */
 	if (do_writesystem)
 	{
-		int fd_file = open(from_filename, O_RDONLY, open_umask);
+		int fd_file = open(from_filename, O_RDONLY | O_BINARY, open_umask);
 		if (fd_file < 0)
 		{
 			error_exit(errno, "Error opening %s", from_filename);
