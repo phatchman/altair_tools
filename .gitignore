@@ -4,6 +4,7 @@
 *.COM
 *.txt
 *.TXT
+.vscode/*
 CMakeFiles/*
 Testing/*
 cmake_install.cmake
