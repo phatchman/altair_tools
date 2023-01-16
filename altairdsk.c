@@ -95,12 +95,12 @@ struct disk_type {
 /* On-disk representation of a directory entry */
 typedef struct raw_dir_entry
 {
-	uint8_t		user;					/* User (0-15). E5 = Deleted */
+	uint8_t		user;					/* User (0-15). 0xE5 = Deleted */
 	char 		filename[FILENAME_LEN];	
 	char 		type[TYPE_LEN];
-	uint8_t		extent_l;				/* Extent number low 32 */
+	uint8_t		extent_l;				/* Extent number low 0-31 */
 	uint8_t		reserved;
-	uint8_t		extent_h;				/* Extent number high 32 */
+	uint8_t		extent_h;				/* Extent number high 32x */
 	uint8_t		num_records;			/* Number of sectors used for this directory entry */
 	uint8_t 	allocation[ALLOCS_PER_EXT];	/* List of allocations used for the file */
 } raw_dir_entry;
@@ -125,7 +125,8 @@ typedef struct cpm_dir_entry
 }	cpm_dir_entry;
 
 cpm_dir_entry	dir_table[MAX_DIRS];			/* Directory entires in order read from "disk" */
-cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries, sorted by name+type and extent nr*/
+cpm_dir_entry*	sorted_dir_table[MAX_DIRS];		/* Pointers to entries sorted by 
+												 * valid, filename+type, user, extent_nr */
 uint8_t			alloc_table[MAX_ALLOCS];		/* Allocation table. 0 = Unused, 1 = Used */
 
 struct disk_type *disk_type;					/* Pointer to the disk image type */
@@ -168,8 +169,8 @@ struct disk_type MITS8IN_FORMAT = {
 	.skew_function = &mits8in_skew_function,
 	.format_function = &mits8in_format_disk,
 	.offsets = {
-		0,  5, 3, 0, 0, 131, 133, 132, 0,
-		6, 77, 7, 0, 1, 135, 136, 4, 1
+		{ 0,  5, 3, 0, 0, 131, 133, 132, 0 },
+		{ 6, 77, 7, 0, 1, 135, 136, 4, 1 }
 	}
 };
 
@@ -190,8 +191,8 @@ struct disk_type MITS8IN8MB_FORMAT = {
 	.skew_function = &mits8in_skew_function,
 	.format_function = &mits8in_format_disk,
 	.offsets = {
-		0,  5, 3, 0, 0, 131, 133, 132, 0,
-		6, 77, 7, 0, 1, 135, 136, 4, 1
+		{ 0,  5, 3, 0, 0, 131, 133, 132, 0 },
+		{ 6, 77, 7, 0, 1, 135, 136, 4, 1 }
 	}
 };
 
@@ -232,8 +233,8 @@ struct disk_type MITS5MBHDD_FORMAT = {
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
-		0, 406, 0, -1, -1, -1, -1, -1, -1,
-		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+		{ 0, 406, 0, -1, -1, -1, -1, -1, -1 },
+		{ -1, -1, 0, -1, -1, -1, -1, -1, -1 }
 	}
 };
 
@@ -254,8 +255,8 @@ struct disk_type MITS5MBHDD1024_FORMAT = {
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
-		0, 406, 0, -1, -1, -1, -1, -1, -1,
-		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+		{ 0, 406, 0, -1, -1, -1, -1, -1, -1 },
+		{ -1, -1, 0, -1, -1, -1, -1, -1, -1 }
 	}
 };
 
@@ -284,8 +285,8 @@ struct disk_type TARBELLFDD_FORMAT = {
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
-		0, 77,  0,  -1, -1, -1, -1, -1, -1,
-		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+		{ 0, 77,  0,  -1, -1, -1, -1, -1, -1 },
+		{ -1, -1, 0, -1, -1, -1, -1, -1, -1 }
 	}
 };
 
@@ -317,8 +318,8 @@ struct disk_type FDD15MB_FORMAT = {
 	.skew_function = &standard_skew_function,
 	.format_function = &format_disk,
 	.offsets = {
-		0, 77,  0,  -1, -1, -1, -1, -1, -1,
-		-1, -1, 0, -1, -1, -1, -1, -1, -1,
+		{ 0, 77,  0,  -1, -1, -1, -1, -1, -1 },
+		{ -1, -1, 0, -1, -1, -1, -1, -1, -1 }
 	}
 };
 
@@ -349,7 +350,7 @@ void copy_filename(raw_dir_entry *entry, const char *filename);
 void erase_file(int fd, cpm_dir_entry* entry);
 
 ssize_t safe_read(int fd, void *buf, size_t count);
-ssize_t safe_write(int fd, const void *buf, size_t count);
+ssize_t full_write(int fd, const void *buf, size_t count);
 
 void write_dir_entry(int fd, cpm_dir_entry* entry);
 void read_sector(int fd, int alloc_num, int rec_num, void* buffer); 
@@ -476,7 +477,8 @@ int main(int argc, char**argv)
 				image_type = optarg;
 				break;
 			case 'u':
-			{	char *end;
+			{
+				char* end;
 				user = strtol(optarg, &end, 10);
 				if(*end != '\0' || user < 0 || user > 15)
 				{
@@ -572,9 +574,6 @@ int main(int argc, char**argv)
 	 */
 	int fd_img = -1;		/* fd of disk image */
 	
-	/* Initialise allocation tables. First 2 allocs are reserved */
-	//alloc_table[0] = alloc_table[1] = 1;
-
 	/* Open the Altair disk image*/
 	if ((fd_img = open(disk_filename, open_mode | O_BINARY, open_umask)) < 0)
 	{
@@ -899,7 +898,8 @@ void error_exit(int eno, char *str, ...)
 }
 
 /* 
- * Print formatted error string and exit.
+ * Print formatted error string. 
+ * Set global EXIT_VALUE to failure value.
  */
 void error(int eno, char *str, ...)
 {
@@ -967,7 +967,7 @@ void directory_list(int user)
 		this_records += entry->num_records;
 		this_allocs += entry->num_allocs;
 
-		/* If there are no more dir entries, print out the file details */
+		/* If there are no more dir entries for this file, print out the file details */
 		if(entry->next_entry == NULL)
 		{
 			this_kb += (this_allocs * disk_block_size()) / 1024;
@@ -1052,6 +1052,11 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 	int data_len = disk_data_sector_len();
 	while (dir_entry != NULL)
 	{
+		/* Each record in this extent represents a 128 byte sector to a maximum of 128 entries. (exception below)
+		 * Where more than 128 records are allowed and there are more than 4 allocations used in this extent,
+		 * then the number of records is actually 128 + the record number. But the maximum record number is still 128.
+		 * .i.e. 128 means 256. In this case the extent number will also be 1 more than normally expected. 
+		 * e.g. It could be 1 for the first extent, 3 for the second and 4 for the third extent */
 		int num_records = ((disk_recs_per_extent() > 128) && (dir_entry->num_allocs > 4)) ? 
 							128 + dir_entry->num_records : dir_entry->num_records;
 
@@ -1093,7 +1098,7 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 				}
 			}
 			/* write out current sector */
-			if (safe_write(host_fd, sector_data, data_len) < 0)
+			if (full_write(host_fd, sector_data, data_len) < 0)
 			{
 				error(errno, "Error writing local file");
 				return;
@@ -1106,11 +1111,11 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 /*
  * Read a full buffer's worth of data
  */
-ssize_t safe_read(int fd, void *buf, size_t count)
+ssize_t full_read(int fd, void *buf, size_t count)
 {
 	size_t bytes_left = count;
 	size_t bytes_read = 0;
-	size_t nbytes = 0;
+	ssize_t nbytes = 0;
 
 	while ((nbytes = read(fd, buf + bytes_read, bytes_left)) > 0)
 	{
@@ -1118,7 +1123,9 @@ ssize_t safe_read(int fd, void *buf, size_t count)
 		bytes_left -= nbytes;
 
 		if (bytes_read == count)
+		{
 			return bytes_read;
+		}
 	}
 	if (nbytes < 0)
 		return nbytes;
@@ -1128,11 +1135,11 @@ ssize_t safe_read(int fd, void *buf, size_t count)
 /*
  * Write a full buffer's worth of data
  */
-ssize_t safe_write(int fd, const void *buf, size_t count)
+ssize_t full_write(int fd, const void *buf, size_t count)
 {
 	size_t bytes_left = count;
 	size_t bytes_written = 0;
-	size_t nbytes = 0;
+	ssize_t nbytes = 0;
 
 	while((nbytes = write(fd, buf + bytes_written, bytes_left)) > 0)
 	{
@@ -1162,6 +1169,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		user = 0;
 	}
 
+	/* Turn the supplied filename into something valid for CP/M */
 	validate_cpm_filename(cpm_filename, valid_filename);
 	if (strcasecmp(cpm_filename, valid_filename))
 	{
@@ -1169,10 +1177,17 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	}
 	if (find_dir_by_filename(valid_filename, 0, 0, user) != NULL)
 	{
+		/* File already exists. Error and skip */
 		error(EEXIST, "Error creating file %s", valid_filename);
 		return;
 	}
-	
+	/*
+	 * For each 128 byte sector. Increment the record number.
+     * If reach # recs / alloc, then find a new free allocation.
+	 * If reach # recs / extent, then write out this extent and create a new one
+	 * If reach rec % 128, then increment the extent number (to cater for > 128 recs / extent)
+	 * Note that even for > 128 recs per extent, the rec number still has a max of 128.
+	 */
 	int rec_nr = 0;
 	int nr_extents = 0;
 	int allocation = 0;
@@ -1183,10 +1198,10 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 	/* Fill the sector with Ctrl-Z (EOF) in case not fully filled by read from host*/
 	memset (sector_data, 0x1a, disk_data_sector_len()); 
 	/* Read the first sector */
-	nbytes = safe_read(host_fd, sector_data, disk_data_sector_len());
+	nbytes = full_read(host_fd, sector_data, disk_data_sector_len());
 	if (nbytes < 0)
 	{
-		error(errno,"Error reading from file %s. File not copied: %s\n", host_filename);
+		error(errno,"Error reading from file %s. File not copied.\n", host_filename);
 		return;
 	}
 	/* Note will enter the loop once for an empty file */
@@ -1195,7 +1210,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 		/* Is this a new Extent (i.e directory entry) ? */
 		if ((rec_nr % disk_recs_per_extent()) == 0)
 		{
-			/* if there is a previous directory entry, write it to disk */
+			/* if there is already a directory entry, write it to disk */
 			if (dir_entry != NULL)
 			{
 				raw_to_cpmdir(dir_entry);
@@ -1247,7 +1262,7 @@ void copy_to_cpm(int cpm_fd, int host_fd, const char* cpm_filename, const char* 
 			nr_extents++;
 		}
 	}
-	while ((nbytes = safe_read(host_fd, sector_data, disk_data_sector_len())) > 0);
+	while ((nbytes = full_read(host_fd, sector_data, disk_data_sector_len())) > 0);
 	/* File is done. Write out the last directory entry */
 	raw_to_cpmdir(dir_entry);
 	write_dir_entry(cpm_fd, dir_entry);
@@ -1263,17 +1278,18 @@ void extract_cpm(int cpm_fd, int host_fd)
 	{
 		error_exit(errno, "extract_cpm: Error seeking disk image");
 	}
+	int sector_len = disk_sector_len();
 	for (int track_nr = 0 ; track_nr < disk_reserved_tracks() ; track_nr++)
 	{
 		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
 		{
-			if (safe_read(cpm_fd, sector_data, disk_sector_len()) < 0)
+			if (full_read(cpm_fd, sector_data, sector_len) != sector_len)
 			{
-				error_exit(errno, "extract_cpm: Error reading");
+				error_exit(errno, "extract_cpm: Error reading sector");
 			}
-			if (safe_write(host_fd, sector_data, disk_sector_len()) < 0)
+			if (full_write(host_fd, sector_data, sector_len) != sector_len)
 			{
-				error_exit(errno, "extract_cpm: Error writing");
+				error_exit(errno, "extract_cpm: Error writing sector");
 			}
 		}
 	}
@@ -1299,18 +1315,18 @@ void install_cpm(int cpm_fd, int host_fd)
 		error_exit(errno, "install_cpm: Error seeking disk image");
 	}
 
-
+	int sector_len = disk_sector_len();
 	for (int track_nr = 0 ; track_nr < disk_reserved_tracks() ; track_nr++)
 	{
 		for (int sect_nr = 0 ; sect_nr < disk_sectors_per_track() ; sect_nr++)
 		{
-			if (safe_read(host_fd, sector_data, disk_sector_len()) < 0)
+			if (full_read(host_fd, sector_data, sector_len) != sector_len)
 			{
-				error_exit(errno, "install_cpm: Error reading");
+				error_exit(errno, "install_cpm: Error reading sector");
 			}
-			if (safe_write(cpm_fd, sector_data, disk_sector_len()) < 0)
+			if (full_write(cpm_fd, sector_data, sector_len) != sector_len)
 			{
-				error_exit(errno, "install_cpm: Error writing");
+				error_exit(errno, "install_cpm: Error writing sector");
 			}
 		}
 	}
@@ -1368,7 +1384,7 @@ void load_directory_table(int fd)
 	}
 
 	/* Create a list of pointers to the directory table, sorted by:
-	 * Valid, Filename, Type, Extent */
+	 * Valid, Filename, Type, User, Extent */
 	qsort(&sorted_dir_table, disk_num_directories(), sizeof(cpm_dir_entry*), compare_sort_ptr);
 
 	/* link related directory entries */
@@ -1384,8 +1400,6 @@ void load_directory_table(int fd)
 			if ((strcmp(entry->full_filename, next_entry->full_filename) == 0) &&
 				(entry->user == next_entry->user))
 			{
-				/* If this entry is a full extent, and the next entry has an
-				 * an entr nr + 1*/
 				entry->next_entry = next_entry;
 			}
 		}
@@ -1408,7 +1422,7 @@ void erase_file(int fd, cpm_dir_entry* entry)
 
 /*
  * Create a newly formatted disk / format an existing disk.
- * The standard function which fills every byte with 0xE5
+ * The standard format function which fills every byte with 0xE5
  */
 void format_disk(int fd)
 {
@@ -1492,7 +1506,7 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
 		if (dir_table[i].valid &&
 			is_first_extent(&dir_table[i]))
 		{
-			/* If filename matches, return it */
+			/* If filename and user matches, return the directory entry */
 			if ((filename_equals(full_filename, dir_table[i].full_filename, wildcards) == 0) &&
 				(user == -1 || user == dir_table[i].user))
 			{
@@ -1500,12 +1514,13 @@ cpm_dir_entry* find_dir_by_filename(const char *full_filename, cpm_dir_entry *pr
 			}
 		}
 	}
-	/* No matching filename found */
+	/* No matching filename / user found */
 	return NULL;
 }
 
 /*
- * Returns 1 if this filename exists for other users, otherwise 0
+ * Check if this filename.ext exists for other users in the directory table.
+ * Returns 1 if exists for other users, otherwise 0
  */
 int exist_filename_other_users(cpm_dir_entry *entry)
 {
@@ -1602,7 +1617,7 @@ cpm_dir_entry* find_free_dir_entry(void)
 }
 
 /*
- * Convert each cpm directory entry (extent) into an structure that is
+ * Convert a raw cpm directory entry (extent) into an structure that is
  * easier to work with.
  */
 void raw_to_cpmdir(cpm_dir_entry* entry)
@@ -1661,7 +1676,7 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
 			entry->allocation[i/2] = alloc_nr;
 			i++;
 		}
-		/* zero allocation means there are no more allocations to come */
+		/* a zero allocation entry means there are no more allocations to come */
 		if (alloc_nr == 0)
 			break;
 
@@ -1673,6 +1688,7 @@ void raw_to_cpmdir(cpm_dir_entry* entry)
 
 /*
  * Find a free allocation. Mark is as used.
+ * Returns the allocation, or -1 if no free allocation found
  */
 int find_free_alloc(void)
 {
@@ -1688,7 +1704,7 @@ int find_free_alloc(void)
 }
 
 /*
- * Copy a "file.ext" format filename to a directory entry
+ * Copy a "file.ext" format filename into a directory entry,
  * converting to upper case.
  */
 void copy_filename(raw_dir_entry *entry, const char *filename)
@@ -1731,8 +1747,8 @@ void write_dir_entry(int fd, cpm_dir_entry* entry)
 
 	int allocation = entry->index / disk_dirs_per_alloc();
 	int record = entry->index / disk_dirs_per_sector();
-	/* start_index is the index of this directory entry that is at 
-	 * the beginning of the sector */
+	/* start_index is the index of the directory entry that is at 
+	 * the beginning of this sector */
 	int start_index = entry->index / disk_dirs_per_sector() * disk_dirs_per_sector();
 	for (int i = 0 ; i < disk_dirs_per_sector() ; i++)
 	{
@@ -1766,7 +1782,7 @@ void read_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "read_sector: Error seeking");
 	}
-	if (safe_read(fd, buffer, disk_data_sector_len()) < 0)
+	if (full_read(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "read_sector: Error on read");
 	}
@@ -1798,7 +1814,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 	{
 		error_exit(errno, "write_sector: Error seeking");
 	}
-	if (safe_write(fd, buffer, disk_data_sector_len()) < 0)
+	if (full_write(fd, buffer, disk_data_sector_len()) < 0)
 	{
 		error_exit(errno, "write_sector: Error on write");
 	}
@@ -1817,7 +1833,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 				error_exit(errno, "write_sector: Error seeking");
 			}
 			
-			if (safe_read(fd, checksum_buf, 7) < 0)
+			if (full_read(fd, checksum_buf, 7) < 0)
 			{
 				error_exit(errno, "write_sector: Error on read checksum bytes");
 			}
@@ -1832,7 +1848,7 @@ void write_sector(int fd, int alloc_num, int rec_num, void* buffer)
 		{
 			error_exit(errno, "write_sector: Error seeking");
 		}
-		if (safe_write(fd, &csum, 1) < 0)
+		if (full_write(fd, &csum, 1) < 0)
 		{
 			error_exit(errno, "write_sector: Error on write");
 		}
@@ -1857,7 +1873,7 @@ void write_raw_sector(int fd, int track, int sector, void* buffer)
 	{
 		error_exit(errno, "write_raw_sector: Error seeking");
 	}
-	if (safe_write(fd, buffer, disk_sector_len()) < 0)
+	if (full_write(fd, buffer, disk_sector_len()) < 0)
 	{
 		error_exit(errno, "write_raw_sector: Error on write");
 	}
@@ -1890,7 +1906,7 @@ void convert_track_sector(int allocation, int record, int* track, int* sector)
 /*
  * Calculate the sector checksum for the data portion.
  * Note this is not the full checksum as 4 non-data bytes
- * need to be included in the checksum.
+ * need to be included in the checksum. (MITS *IN Formats only)
  */
 uint8_t calc_checksum(uint8_t *buffer)
 {
@@ -1974,7 +1990,10 @@ void validate_cpm_filename(const char *filename, char *validated_filename)
 }
 
 /* 
- * Sort by valid = 1, filename+type, then user, then extent_nr
+ * Sort by valid, filename+type, then user, then extent_nr
+ * This sort order is optimal for searching by name.
+ * Note code relies on valid entries being sorted first.
+ * Note code relies on lower extent nr's being sorted before higher extent numbers (for the same file)
  */
 int compare_sort_ptr(const void* a, const void* b)
 {
@@ -1985,7 +2004,7 @@ int compare_sort_ptr(const void* a, const void* b)
 	{
 		return 0;
 	}
-	/* Otherwise, sort on valid, filename, extent_nr */
+	/* Otherwise, sort on valid, filename, user, extent_nr */
 	int result = (*second)->valid - (*first)->valid;
 	if (result == 0)
 	{
@@ -2073,6 +2092,7 @@ char* strip_quotes(char* filename)
 
 /* 
  * Disk parameter support routines.
+ * These generally get optimised away by GCC for any optimisation level.
  */
 int disk_sector_len()
 {
