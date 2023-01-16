@@ -5,6 +5,7 @@
 *.txt
 *.TXT
 CMakeFiles/*
+Testing/*
 cmake_install.cmake
 Makefile
 altairdsk

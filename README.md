@@ -7,17 +7,29 @@ A collection of utilities for the Altair 8800
 If you are looking for a utility similar to cpmtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
 It has been tested under Windows and Linux, but would probably work on MacOS as well.
 
-altairdks allows you to:
+altairdsk allows you to:
   1. Perform a directory listing
   2. Copy files to and from the disk
   3. Erase files
-  4. Format and existing disk or create a newly formatted disk.
+  4. Format an existing disk or create a newly formatted disk.
+  5. Create bootable CP/M disk images
 
-PLEASE make sure you make a backup of any disk images before writing to them with this utility.
+## Supported Disk Image Types
+
+| Type              | Description   |
+|-------------------|---------------|
+| FDD_8IN (default) | The MITS 8" hard-sectored floppy disk images |
+| FDD_TAR           | Tarbell disk images |
+| HDD_5MB           | The MITS 5MB hard disk disk images |
+| HDD_5MB_1024      | The MITS 5MB hard disk, but modified for 1024 directory entries. Note you need the modified CP/M image to use this format. See https://github.com/ratboy666/hd1024 |
+| FDD_1.5MB         | FDC+ 1.5MB images |
+| FDD_8IN_8MB       | FDC+ 8MB "floppy" images |
+
+While every care has been taken to ensure this utility will not corrupt you disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 
 ## Build Instructions
 
-For windows you can get the pre-combiled binary from the windows directory<br>
+For windows you can get the pre-compiled binary from the windows directory<br>
 For linux and other unix-ish platforms:
 ```
 % cmake .
@@ -27,37 +39,57 @@ There is no install target provided. So copy the executable to your desired inst
 
 ## Command Line
 ```
-altairdsk: -[d|r|F]v       <disk_image> 
-altairdsk: -[g|p|e][t|b]v  <disk_image> <src_filename> [dst_filename]
-altairdsk: -[G|P][t|b]v    <disk_image> <filename ...>
+altairdsk: -[d|r|F]v  [-T <type>] [-u <user>] <disk_image>
+altairdsk: -[g|p|e][t|b]v [-T <type>] [-u <user>] <disk_image> <src_filename> [dst_filename]
+altairdsk: -[G|P|E][t|b]v [-T <type>] [-u <user>] <disk_image> <filename ...>
+altairdsk: -[x|s]v        [-T <type>] <disk_image> <system_image>
 altairdsk: -h
         -d      Directory listing (default)
-        -r      Raw directory listing    
-        -F      Format existing or create new disk image
+        -r      Raw directory listing
+        -F      Format existing or create new disk image. Defaults to FDD_8IN
         -g      Get - Copy file from Altair disk image to host
-        -p      Put - Copy file from host to Altair disk image
         -G      Get Multiple - Copy multiple files from Altair disk image to host
-                               wildcards * and ? are supported e.g '*.COM'                            
+                               wildcards * and ? are supported e.g '*.COM'
         -P      Put Multiple - Copy multiple files from host to Altair disk image
         -e      Erase a file
+        -E      Erase multiple files - wildcards supported
         -t      Put/Get a file in text mode
         -b      Put/Get a file in binary mode
-        -v      Verbose - Prints sector read/write information
+        -u      User - Restrict operation to CP/M user
+        -x      Extract CP/M system (from a bootable disk image) to a file
+        -s      Write saved CP/M system image to disk image (make disk bootable)
+        -T      Disk image type. Auto-detected if possible. Supported types are:
+                        * FDD_8IN - MITS 8" Floppy Disk (Default)
+                        * HDD_5MB - MITS 5MB Hard Disk
+                        * HDD_5MB_1024 - MITS 5MB, with 1024 directories (!!!)
+                        * FDD_TAR - Tarbell Floppy Disk
+                        * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
+                        * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk
+        -v      Verbose - Prints image type and sector read/write information
         -h      Help
+
+!!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format,
+otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.
 ```
-        
+
 ## Some things to note:
-* On linux you have the option of putting the disk image before the option. For example: altairdsk cpm.dsk -g ASM.COM. I find this more convenient.
+* The 5MB HDD images that come with the Altair-Duino have an invalid directory table. If you do a directory listing on these images, you will see some strange directory entries. See the examples below for details on how to create new, valid disk images with this utility.
+* On linux you have the option of putting the disk image before the options. For example: altairdsk cpm.dsk -g ASM.COM. I find this syntax more convenient.
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
 * If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
 * Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension, and get all files. On CP/M you would use '\*.\*'. You can still use '\*.TXT' and 'ABC.\*' and that will work as expected.
+* As mentioned in the usage, if using the HDD_5MB_1024 format with 1024 directory entries, make sure you always use the -T option.
 
 ## Examples
 
 ### Get a directory listing
-`./altairdsk cpm.dsk -d`<br>
+`./altairdsk -d cpm.dsk`<br>
 `./altairdsk cpm.dsk`
+
+Restrict the directory listing to a particular user with the -u option
+`./altairdsk -u0 cpm.dsk`
+
 ```
 Name     Ext  Length Used U At
 ASM      COM   8768B   8K 0 W
@@ -84,31 +116,80 @@ XDIR     COM  11782B  12K 0 W
 41 directory entries and 118K bytes remain
 ```
 Length is length of the file to nearest 128k sector<br>
-Used is the amount of space actually used on the disk (in 2K blocks)<br>
+Used is the amount of space actually used on the disk (in multiples of 1 block)<br>
 U is the user number<br>
 At is the file attributes. R - Read only, W - Read/write. S - System
 
 ### Format a disk
-`./altairdsk new.dsk -F`
+`./altairdsk -F new.dsk`
+
+To format for a specific type
+`./altairdsk -F -T HDD_5MB new.dsk`
+
+Or on linux/unix you can put options in any order
+`./altairdsk new.dsk -FT HDD_5MB`
+`./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Copy a file from the disk (get)
-`./altairdsk cpm.dsk -g LADDER.COM`
+`./altairdsk -g cpm.dsk LADDER.COM`
+
+get files for a single user
+`./altairdsk -g -u1 cpm.dsk LADDER.COM`
 
 ### Copy a file to the disk (put)
 `./altairdsk -p cpm.dsk LADDER.COM`
 
 ### Copy multiple files from the disk (get multiple)
-This command allows wildcards of * or ?. Note on Windows you shouldn't use the quotes around the wildcarded filenames. They are only needed on linux/unix.<br>
+This command allows wildcards of * or ?. Note the use of single quotes to stop the shell/command prompt expanding wildcards
 `./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'`
 
-To get all files from the disk<br>
+To get all files from the disk
 `./altairdsk -G cpm.dsk '*'`
 
-### Copy multiple files to the disk image (get multiple)
+If the same file exists for multiple users, the user number is appended to the filename e.g. ASM.TXT_1.
+
+### Copy multiple files to the disk image (put multiple)
 `./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com`
 
+Copy multiple files to user 1
+`./altairdsk -Pu1 cpm.dsk *.com`
+
 ### Erase a file
-`./altairdsk -E cpm.dsk asm.com`
+`./altairdsk -e cpm.dsk asm.com`
+
+If the same file exists for multiple users, only the first copy of the file will be erased. Use the -E option to erase the file for all users.
+
+### Erase a multiple files
+`./altairdsk -E cpm.dsk 'asm.*'`
+
+If the same file exists for multiple users, the -E option will remove the file from all users, unless the -u option is specified.<br>
+To remove all files from user 2
+`./altairdsk -E -u 2 cpm.dsk '*'`
+
+### Save CP/M system tracks from bootable disk
+`./altairdsk -x cpm.dsk boot.img`
+
+### Make a bootable disk from previously saved system tracks
+`./altairdsk -s cpm.dsk boot.img`
+
+### Fixup Altair Duino 5MB HDSK images
+The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. You can fix this by creating a new image with a copy of the files. Example below.<br>
+Note that you will receive the error message below multiple times during this operation. The error is caused by the invalid directory entries and are expected.
+_Invalid allocation number found in directory table.
+Possible incorrect image type. Use -v to check image type detected or selected._<br>
+Create a new directory named _files_ below where you keep the HDSK03.DSK
+`mkdir files`
+Create a new disk image
+`altairdsk -FT HDD_5MB HDSK03_NEW.DSK`
+Copy the CP/M system tracks
+`altairdsk -x HDSK03.DSK hdsk_cpm.bin`
+`altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`
+Copy the files from user 0. The directory entries for user 0 are all valid.
+`cd files`
+`altairdsk ../HDSK03.DSK -Gu0 '*'`
+`altairdsk ../HDSK03_NEW.DSK -P *`
+Note that quotes around '*' are used for the Get, but not on the Put.<br>
+You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
 
 ### Raw directory listing
 Dumps the CP/M extent information<br>

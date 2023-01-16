@@ -1,0 +1,32 @@
+{
+    "cSpell.ignoreWords": [
+        "Hatchman",
+        "MITS",
+        "Sanitised",
+        "allocnr",
+        "cpmdir",
+        "drhgp",
+        "drhgpv",
+        "simh"
+    ],
+    "cSpell.words": [
+        "altairdsk",
+        "bootable",
+        "COMMMMMM",
+        "cpmtools",
+        "drhg",
+        "Etbxs",
+        "extractsystem",
+        "Fetb",
+        "MBHDD",
+        "multierase",
+        "multiput",
+        "recnr",
+        "TARBELLFDD",
+        "writesystem"
+    ],
+    "files.associations": {
+        "stdio.h": "c",
+        "stdint.h": "c"
+    }
+}
