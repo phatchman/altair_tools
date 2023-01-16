@@ -86,7 +86,7 @@ This is only needed when copying a file from the altair disk.<br>
 ### Get a directory listing
 `./altairdsk -d cpm.dsk`<br>
 `./altairdsk cpm.dsk`<br>
-Restrict the directory listing to a particular user with the -u option
+Restrict the directory listing to a particular user with the -u option<br>
 `./altairdsk -u0 cpm.dsk`
 
 ```
@@ -125,7 +125,7 @@ To format for a specific type<br>
 `./altairdsk -F -T HDD_5MB new.dsk`
 
 Or on linux/unix you can put options in any order<br>
-`./altairdsk new.dsk -FT HDD_5MB`
+`./altairdsk new.dsk -FT HDD_5MB`<br>
 `./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Copy a file from the disk (get)
@@ -181,7 +181,7 @@ Create a new directory named _files_ below where you keep the HDSK03.DSK<br>
 Create a new disk image<br>
 `altairdsk -FT HDD_5MB HDSK03_NEW.DSK`<br>
 Copy the CP/M system tracks<br>
-`altairdsk -x HDSK03.DSK hdsk_cpm.bin`
+`altairdsk -x HDSK03.DSK hdsk_cpm.bin`<br>
 `altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`<br>
 Copy the files from user 0. The directory entries for user 0 are all valid.<br>
 `cd files`
