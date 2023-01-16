@@ -188,7 +188,7 @@ Copy the files from user 0. The directory entries for user 0 are all valid.
 `cd files`
 `altairdsk ../HDSK03.DSK -Gu0 '*'`
 `altairdsk ../HDSK03_NEW.DSK -P *`
-
+Note that quotes around '*' are used for the Get, but not on the Put.<br>
 You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
 
 ### Raw directory listing
