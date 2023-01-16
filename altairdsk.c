@@ -2059,11 +2059,11 @@ char* strip_quotes(char* filename)
 	{
 		while(*ptr++ != '\0');
 		/* If ends with ' then remove it */
-		if(*(ptr-1) == '\'')
+		if(*(ptr-2) == '\'')
 		{
-			*(ptr-1) = '\0';
+			*(ptr-2) = '\0';
+			return filename + 1;
 		}
-		return filename + 1;
 	}
 	return filename;
 #endif
