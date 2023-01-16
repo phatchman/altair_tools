@@ -140,7 +140,7 @@ get files for a single user
 `./altairdsk -p cpm.dsk LADDER.COM`
 
 ### Copy multiple files from the disk (get multiple)
-This command allows wildcards of * or ?. Note on Windows you shouldn't use the quotes around the wildcarded filenames. They are only needed on linux/unix.
+This command allows wildcards of * or ?. Note the use of single quotes to stop the shell/command prompt expanding wildcards
 `./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'`
 
 To get all files from the disk
@@ -186,10 +186,7 @@ Copy the CP/M system tracks
 `altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`
 Copy the files from user 0. The directory entries for user 0 are all valid.
 `cd files`
-On linux/unix
 `altairdsk ../HDSK03.DSK -Gu0 '*'`
-On Windows do not use the quotes
-`altairdsk ../HDSK03.DSK -Gu0 *`
 `altairdsk ../HDSK03_NEW.DSK -P *`
 
 You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
