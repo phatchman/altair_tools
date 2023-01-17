@@ -476,13 +476,14 @@ int main(int argc, char**argv)
 				image_type = optarg;
 				break;
 			case 'u':
-				char* end;
+			{	char *end;
 				user = strtol(optarg, &end, 10);
 				if(*end != '\0' || user < 0 || user > 15)
 				{
 					error_exit(0, "User must be a valid number between 0 and 15\n");
 				}
 				break;
+			}
 			case 'x':
 				do_extractsystem = 1;
 				open_mode = O_RDONLY;
