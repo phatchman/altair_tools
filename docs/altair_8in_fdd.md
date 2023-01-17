@@ -1,19 +1,20 @@
-#Format of the Altair 8" floppy images
+# Format of the Altair 8" floppy images
 
 I've not found any really good documentation on how to read the MITS 8" floppy images and a lot of information had the be reverse-engineered from the CPM source code.
 
 They are an unusual format as the MITS floppy controller hardware was relatively basic, leaving a lot to be done in software.
 
-##Basic Information
+## Basic Information
+TODO..
 Nr Tracks
 Sector Size
 ...
 
-##Sector layout
+## Sector layout
 
 Information on the sector-layout is below. This is different for tracks 0-5 and 6-77.
 
-###Tracks 0 - 5
+### Tracks 0 - 5
 
 | Byte #  | Description   | Notes                                 |
 |---------|---------------|---------------------------------------|
