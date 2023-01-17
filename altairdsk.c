@@ -1109,8 +1109,8 @@ void copy_from_cpm(int cpm_fd, int host_fd, cpm_dir_entry* dir_entry, int text_m
 ssize_t safe_read(int fd, void *buf, size_t count)
 {
 	size_t bytes_left = count;
-	size_t bytes_read = 0;
-	size_t nbytes = 0;
+	ssize_t bytes_read = 0;
+	ssize_t nbytes = 0;
 
 	while ((nbytes = read(fd, buf + bytes_read, bytes_left)) > 0)
 	{
@@ -1132,7 +1132,7 @@ ssize_t safe_write(int fd, const void *buf, size_t count)
 {
 	size_t bytes_left = count;
 	size_t bytes_written = 0;
-	size_t nbytes = 0;
+	ssize_t nbytes = 0;
 
 	while((nbytes = write(fd, buf + bytes_written, bytes_left)) > 0)
 	{
