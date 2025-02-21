@@ -114,7 +114,7 @@ XDIR     COM  11782B  12K 0 W
 20 file(s), occupying 178K of 296K total capacity
 41 directory entries and 118K bytes remain
 ```
-Length is length of the file to nearest 128k sector<br>
+Length is length of the file to nearest 128 byte sector<br>
 Used is the amount of space actually used on the disk (in multiples of 1 block)<br>
 U is the user number<br>
 At is the file attributes. R - Read only, W - Read/write. S - System
