@@ -1,3 +1,6 @@
+# WARNING: THIS IS AN EXPERIMENTAL ZIG REWRITE OF ALTAIR DISK
+# USE AT YOUR OWN RISK
+
 # Altair Tools 
 
 A collection of utilities for the Altair 8800
