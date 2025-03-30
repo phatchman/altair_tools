@@ -1,0 +1,13 @@
+*.dsk
+*.DSK
+*.com
+*.COM
+*.txt
+*.TXT
+.vscode/*
+CMakeFiles/*
+Testing/*
+cmake_install.cmake
+Makefile
+altairdsk
+tst/*
