@@ -84,7 +84,7 @@ test "8in filled" {
     var in_file: [big_file.len]u8 = undefined;
     var in_stream = makeStream(&in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename(filename);
+    const cooked_dir = disk_image.directory.findByFilename(filename, null);
     try std.testing.expect(cooked_dir != null);
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Binary);
     try std.testing.expectEqualSlices(u8, &in_file, &big_file);
@@ -123,7 +123,7 @@ test "8MB filled" {
     defer std.testing.allocator.free(in_file);
     var in_stream = makeStream(in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename(filename);
+    const cooked_dir = disk_image.directory.findByFilename(filename, null);
     try std.testing.expect(cooked_dir != null);
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Binary);
     try std.testing.expectEqualSlices(u8, in_file, big_file);
@@ -193,7 +193,7 @@ test "8 in zero-length file" {
     var in_file: [0]u8 = undefined;
     var in_stream = makeStream(&in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT");
+    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
     try std.testing.expect(cooked_dir != null);
     // Will throw if it tries to write any bytes to the empty buffer;
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Text);
@@ -212,7 +212,7 @@ test "8in Text file" {
     var in_file: [test_file.len]u8 = undefined;
     var in_stream = makeStream(&in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT");
+    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
     try std.testing.expect(cooked_dir != null);
     // Will throw if it tries to write any buytes to the empty buffer;
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Text);
@@ -232,7 +232,7 @@ test "8in Binary file" {
     // Get it back and compare it to the original
     var in_file: [((test_file.len + 127) / 128) * 128]u8 = undefined;
     var in_stream = makeStream(&in_file);
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT");
+    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
     try std.testing.expect(cooked_dir != null);
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Binary);
     var compare_buffer: [in_file.len]u8 = undefined;
@@ -247,41 +247,85 @@ test "8in Auto detect file" {
     // TODO: embed a test file with bin and ascii in it and get both.
 }
 
-test "Find filename with wildcards" {
-    const util = struct {
-        pub fn count(itr: FileNameIterator) usize {
-            var my_itr = itr;
-            var c: usize = 0;
-            while (my_itr.next() != null) {
-                c += 1;
-            }
-            return c;
+const util = struct {
+    pub fn count(itr: FileNameIterator) usize {
+        var my_itr = itr;
+        var c: usize = 0;
+        while (my_itr.next() != null) {
+            c += 1;
         }
-    };
+        return c;
+    }
+};
+
+test "Multiple filenames across users" {
+    const image_file = @embedFile("test_disks/filenames.dsk");
+    var disk_image = try newReadOnlyMemoryDiskImage(image_file, FDD_8IN);
+    defer disk_image.deinit();
+
+    var out_file: [4096]u8 = undefined;
+    var out_stream = makeStream(&out_file);
+
+    // Searching with user should return 1 file.
+    var itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 0);
+    try std.testing.expectEqual(1, util.count(itr));
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 1);
+    try std.testing.expectEqual(1, util.count(itr));
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 2);
+    try std.testing.expectEqual(1, util.count(itr));
+
+    // Searching without user should return 3 files.
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", null);
+    try std.testing.expectEqual(3, util.count(itr));
+
+    // Make sure get works. TODO: Make sure put works.
+    var user: u8 = 0;
+    while (user < 3) : (user += 1) {
+        try disk_image._copyFromImage(itr.next().?, &out_stream, .Auto);
+    }
+
+    // Check normal lookups also work
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 0) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 1) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 2) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", null) != null);
+}
+
+test "Find filename with wildcards" {
+    //     Name     Ext   Length Used U At
+    // FILE     COM     128B   2K 0 W
+    // FILE     TXT     128B   2K 1 W
+    // FILENAME COM     128B   2K 0 W
+    // FILENAME EXE     128B   2K 1 W
+    // FILENAME EXT     128B   2K 1 W
+    // FILENAME TXT     128B   2K 2 W
+    // SOMETHIN EXT     128B   2K 0 W
+    // SOMETHIN EXT     128B   2K 1 W
+    // SOMETHIN EXT     128B   2K 2 W
 
     const image_file = @embedFile("test_disks/filenames.dsk");
     var disk_image = try newReadOnlyMemoryDiskImage(image_file, FDD_8IN);
     defer disk_image.deinit();
 
-    var itr = disk_image.directory.findByFileNameWildcards("F*");
+    var itr = disk_image.directory.findByFileNameWildcards("F*", null);
     try std.testing.expectEqual(6, util.count(itr));
 
-    itr = disk_image.directory.findByFileNameWildcards("F*.EXT");
+    itr = disk_image.directory.findByFileNameWildcards("F*.EXT", null);
     try std.testing.expectEqual(1, util.count(itr));
 
-    itr = disk_image.directory.findByFileNameWildcards("*.EXT");
+    itr = disk_image.directory.findByFileNameWildcards("*.EXT", null);
+    try std.testing.expectEqual(4, util.count(itr));
+
+    itr = disk_image.directory.findByFileNameWildcards("*.E*", null);
+    try std.testing.expectEqual(5, util.count(itr));
+
+    itr = disk_image.directory.findByFileNameWildcards("*.EX*", null);
+    try std.testing.expectEqual(5, util.count(itr));
+
+    itr = disk_image.directory.findByFileNameWildcards("F?LENAME.EX?", null);
     try std.testing.expectEqual(2, util.count(itr));
 
-    itr = disk_image.directory.findByFileNameWildcards("*.E*");
-    try std.testing.expectEqual(3, util.count(itr));
-
-    itr = disk_image.directory.findByFileNameWildcards("*.EX*");
-    try std.testing.expectEqual(3, util.count(itr));
-
-    itr = disk_image.directory.findByFileNameWildcards("F?LENAME.EX?");
-    try std.testing.expectEqual(2, util.count(itr));
-
-    itr = disk_image.directory.findByFileNameWildcards("F*.EX?");
+    itr = disk_image.directory.findByFileNameWildcards("F*.EX?", null);
     try std.testing.expectEqual(2, util.count(itr));
 }
 
@@ -293,11 +337,11 @@ test "erase" {
     var disk_image = try newMemoryDiskImage(&image_buffer, FDD_8IN);
     defer disk_image.deinit();
 
-    const to_erase = disk_image.directory.findByFilename("filename.exe");
+    const to_erase = disk_image.directory.findByFilename("filename.exe", null);
     try std.testing.expect(to_erase != null);
     try disk_image.erase(to_erase.?);
 
-    const erased = disk_image.directory.findByFilename("filename.exe");
+    const erased = disk_image.directory.findByFilename("filename.exe", null);
     try std.testing.expect(erased == null);
 
     const compare_file = @embedFile("test_disks/erase_post.dsk");

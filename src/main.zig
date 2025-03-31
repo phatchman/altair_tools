@@ -371,6 +371,12 @@ pub fn validateOptions() !bool {
             return false;
         }
     }
+    if (options.cpm_user) |user| {
+        if (user > 15) {
+            cli.printError(&app, "User must be between 0 and 15.", .{});
+            return false;
+        }
+    }
     return true;
 }
 

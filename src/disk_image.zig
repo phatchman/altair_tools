@@ -147,7 +147,7 @@ pub const DiskImage = struct {
         const cpm_user = user orelse 0;
 
         const basename = std.fs.path.basename(to_filename);
-        if (self.directory.findByFilename(basename)) |existing_entry| {
+        if (self.directory.findByFilename(basename, user)) |existing_entry| {
             if (force) {
                 try self.erase(existing_entry);
             } else {

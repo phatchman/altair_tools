@@ -217,7 +217,7 @@ pub fn getFile(disk_image: *DiskImage, options: CommandLineOptions, err_ctx: *Co
 pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions, err_ctx: *CommandErrorContext) !void {
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
-        var itr = disk_image.directory.findByFileNameWildcards(file_pattern);
+        var itr = disk_image.directory.findByFileNameWildcards(file_pattern, options.cpm_user);
 
         while (itr.next()) |entry| {
             found_file = true;
@@ -245,7 +245,7 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
     const dir_entry = blk: switch (lookup) {
         .filename => |filename| {
             try err_ctx.pushFilename(filename);
-            const result = directory_table.findByFilename(filename);
+            const result = directory_table.findByFilename(filename, options.cpm_user);
             if (result != null) {
                 _ = err_ctx.popFilename();
                 break :blk result.?;
@@ -305,7 +305,7 @@ pub fn _putFile(disk_image: *DiskImage, filename: []const u8, user: ?u8, err_ctx
 pub fn eraseFile(disk_image: *DiskImage, options: CommandLineOptions, err_ctx: *CommandErrorContext) !void {
     try err_ctx.pushFilename(options.multiple_files[0]);
     err_ctx.operation = "find file";
-    if (disk_image.directory.findByFilename(options.multiple_files[0])) |dir_entry| {
+    if (disk_image.directory.findByFilename(options.multiple_files[0], options.cpm_user)) |dir_entry| {
         try disk_image.erase(dir_entry);
         err_ctx.operation = "erase";
         _ = err_ctx.popFilename();
@@ -318,7 +318,7 @@ pub fn eraseFile(disk_image: *DiskImage, options: CommandLineOptions, err_ctx: *
 pub fn eraseFileMultiple(disk_image: *DiskImage, options: CommandLineOptions, err_ctx: *CommandErrorContext) !void {
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
-        var itr = disk_image.directory.findByFileNameWildcards(file_pattern);
+        var itr = disk_image.directory.findByFileNameWildcards(file_pattern, options.cpm_user);
         err_ctx.operation = "erase";
         while (itr.next()) |entry| {
             found_file = true;

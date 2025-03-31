@@ -437,16 +437,19 @@ pub const DirectoryTable = struct {
 
     /// Performs a wildcard lookup of the directory. * and ? are supported wildcard characters.
     /// Use the returned FileNameIterator to walk through the directory entries
-    pub fn findByFileNameWildcards(self: *const Self, pattern: []const u8) FileNameIterator {
-        return FileNameIterator.init(self.cooked_directories.items, pattern);
+    pub fn findByFileNameWildcards(self: *const Self, pattern: []const u8, user: ?u8) FileNameIterator {
+        return FileNameIterator.init(self.cooked_directories.items, pattern, user);
     }
 
     /// Find by exact match. Case insentitive.
-    pub fn findByFilename(self: *const Self, filename: []const u8) ?*CookedDirEntry {
+    pub fn findByFilename(self: *const Self, filename: []const u8, user: ?u8) ?*CookedDirEntry {
         // Can't use a binary search here as when adding new files, they are added at the end,
         // not in alhpabetical order. So need to walk entire directory. There are 1024 entries
         // at most.
         for (self.cooked_directories.items) |*entry| {
+            if (user) |u| {
+                if (entry.user != u) continue;
+            }
             if (FileNameIterator.filenameEqual(filename, entry.filenameAndExtension(), false)) {
                 return entry;
             }
@@ -562,17 +565,26 @@ pub const DirectoryTable = struct {
 pub const FileNameIterator = struct {
     directory: []CookedDirEntry,
     pattern: []const u8,
+    user: ?u8,
     index: usize,
 
-    pub fn init(directory: []CookedDirEntry, filename_pattern: []const u8) FileNameIterator {
+    pub fn init(directory: []CookedDirEntry, filename_pattern: []const u8, user: ?u8) FileNameIterator {
         return .{
             .directory = directory,
             .pattern = filename_pattern,
+            .user = user,
             .index = 0,
         };
     }
     pub fn next(self: *FileNameIterator) ?*CookedDirEntry {
         for (self.directory[self.index..]) |entry| {
+            if (self.user) |u| {
+                // Skip files not for this user.
+                if (entry.user != u) {
+                    self.index += 1;
+                    continue;
+                }
+            }
             if (FileNameIterator.filenameEqual(self.pattern, entry.filenameAndExtension(), true)) {
                 self.index += 1;
                 return &self.directory[self.index - 1];
@@ -587,6 +599,7 @@ pub const FileNameIterator = struct {
         var lhs_pos: usize = 0;
         var rhs_pos: usize = 0;
         var found_dot: bool = false;
+
         while (lhs_pos < lhs_pattern.len and rhs_pos < rhs.len) {
             if (wildcards and lhs_pattern[lhs_pos] == '*') {
                 if (found_dot)
