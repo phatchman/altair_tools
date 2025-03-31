@@ -34,6 +34,8 @@ pub const DiskImageType = struct {
 
     // Friendly name, used in -T
     type_name: []const u8,
+    // Friendly description
+    description: []const u8,
     // Number of tracks
     tracks: u16,
     // Number of tracks reserved by OS
@@ -191,6 +193,7 @@ pub const DiskImageType_MITS_8IN = struct {
         std.debug.assert(raw_sector.len == sector_size);
         var result = DiskImageType{
             .type_name = "FDD_8IN",
+            .description = "MITS 8\" Floppy Disk ",
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 32,
@@ -300,6 +303,7 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
     pub fn init(raw_sector: []u8) DiskImageType {
         var result = DiskImageType{
             .type_name = "FDD_8IN_8MB",
+            .description = "FDC+ 8MB \"Floppy\" Disk",
             .tracks = 2048,
             .reserved_tracks = 2,
             .sectors_per_track = 32,
@@ -347,6 +351,7 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
     pub fn _init(init_before_return: bool) DiskImageType {
         var result = DiskImageType{
             .type_name = "HDD_5MB",
+            .description = "MITS 5MB Hard Disk",
             .tracks = 406,
             .reserved_tracks = 1,
             .sectors_per_track = 96,
@@ -375,6 +380,7 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
     pub fn init() DiskImageType {
         var result = DiskImageType_MITS_5MB_HDD._init(false);
         result.type_name = "HDD_5MB_1024";
+        result.description = "MITS 5MB, with 1024 directories";
         result.directories = 1024;
         result.detect_conditions = .warn;
         result.init();
@@ -394,6 +400,7 @@ pub const DiskImageType_TARBELL_FDD = struct {
     pub fn init() DiskImageType {
         var result = DiskImageType{
             .type_name = "FDD_TAR",
+            .description = "Tarbell Floppy Disk",
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 26,
@@ -432,6 +439,7 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
     pub fn init() DiskImageType {
         var result = DiskImageType{
             .type_name = "FDD_1.5MB",
+            .description = "FDC+ 1.5MB Floppy Disk",
             .tracks = 149,
             .reserved_tracks = 1,
             .sectors_per_track = 80,

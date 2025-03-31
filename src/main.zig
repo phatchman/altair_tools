@@ -32,6 +32,7 @@ pub const global_allocator = gpa.allocator();
 
 // This arena lasts the lifetime of the application.
 pub var arena = std.heap.ArenaAllocator.init(global_allocator);
+const all_disk_types = @import("disk_types.zig").all_disk_types;
 
 /// Main processing takes place here
 fn do_main() !void {
@@ -263,17 +264,10 @@ pub fn main() !void {
                 },
                 .{
                     .long_name = "type",
-                    .help =
-                    \\Disk image type. Auto-detected if possible. Supported types are:
-                    \\      * FDD_8IN - MITS 8" Floppy Disk (Default)
-                    \\      * HDD_5MB - MITS 5MB Hard Disk
-                    \\      * HDD_5MB_1024 - MITS 5MB, with 1024 directories (!!!)
-                    \\      * FDD_TAR - Tarbell Floppy Disk
-                    \\      * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
-                    \\      * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk 
-                    \\!!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.
-                    \\Otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.
-                    ,
+                    .help = "Disk image type. Auto-detected if possible. Supported types are:\n" ++
+                        comptime generateDiskImageList() ++
+                            "!!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.\n" ++
+                            "Otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.",
                     .short_alias = 'T',
                     .value_ref = r.mkRef(&options.disk_image_type),
                     .value_name = "type",
@@ -305,6 +299,16 @@ pub fn main() !void {
     };
 }
 
+/// Generate help text for all disk image types. The first entry is considered the default.
+fn generateDiskImageList() []const u8 {
+    var image_list: []const u8 = "";
+    inline for (all_disk_types.values, 0..) |image_type, i| {
+        image_list = image_list ++ "      * " ++ image_type.type_name ++ " - " ++ image_type.description ++ if (i == 0) " (Default)\n" else "\n";
+    }
+    const result = image_list;
+    return result;
+}
+
 pub fn validateOptions() !bool {
     if (options.very_verbose)
         options.verbose = true;
@@ -321,7 +325,7 @@ pub fn validateOptions() !bool {
         options.do_cpm_get,   options.do_cpm_put,   options.do_recover,
     };
 
-    var option_count: u32 = 0;
+    var option_count: usize = 0;
     for (single_options) |value| {
         if (value)
             option_count += 1;
@@ -381,6 +385,10 @@ pub const std_options: std.Options = .{
 // Errors are placeds in this collection so they can be priinted after the command finishes and any othe output.
 var error_collection: std.ArrayListUnmanaged([]const u8) = .empty;
 
+/// Custom log function that collects errors to be displayed at the end for:
+/// .altair_disk, .altair_disk_lib scopes
+/// Redirects .debug, .infor and .warn to stdout.
+/// Any errors not for .altair_disk, .altair_disk_lib are logged straight to stderr instead.
 pub fn log(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
@@ -388,7 +396,7 @@ pub fn log(
     args: anytype,
 ) void {
     switch (scope) {
-        .altair_disk, .altair_disk_lib => {}, // Continue on for these 2 scopes.
+        .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
         else => return std.io.getStdErr().writer().print(@tagName(message_level) ++ ": " ++ format, args) catch {},
     }
     switch (message_level) {
