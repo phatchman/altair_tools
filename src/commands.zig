@@ -6,6 +6,7 @@ const all_disk_types = @import("disk_types.zig").all_disk_types;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 
 const global_allocator = @import("main.zig").global_allocator;
+
 const log = std.log.scoped(.altair_disk);
 const Commands = @This();
 
@@ -195,6 +196,7 @@ pub fn getFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
 
 /// Get multiple files from the image.
 pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    var had_error = false;
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
         var itr = disk_image.directory.findByFileNameWildcards(file_pattern, options.cpm_user);
@@ -211,9 +213,13 @@ pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !voi
             log.info("Copied file: {s}", .{entry.filenameAndExtension()});
         } else {
             if (!found_file) {
+                had_error = true;
                 printErrorMessage(current_command, .no_matching_files, .{file_pattern}, error.None);
             }
         }
+    }
+    if (had_error) {
+        return error.CommandFailed;
     }
 }
 
@@ -269,14 +275,19 @@ pub fn putFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
 
 /// Copy multiple files to the image
 pub fn putFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    var had_error = false;
     for (options.multiple_files) |filename| {
         _putFile(disk_image, filename, options.cpm_user) catch |err| {
             if (err == error.CommandFailedCanContinue) {
+                had_error = true;
                 continue;
             } else {
                 return err;
             }
         };
+    }
+    if (had_error) {
+        return error.CommandFailed;
     }
 }
 
@@ -317,23 +328,36 @@ pub fn eraseFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
 
 /// Remove multiple files from the image.
 pub fn eraseFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    var had_error = false;
+    var to_erase: std.ArrayListUnmanaged(CookedDirEntry) = .empty;
+    defer to_erase.deinit(global_allocator);
+
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
         var itr = disk_image.directory.findByFileNameWildcards(file_pattern, options.cpm_user);
 
         while (itr.next()) |entry| {
             found_file = true;
-            disk_image.erase(entry) catch |err| {
-                printErrorMessage(current_command, .file_erase, .{entry.filenameAndExtension()}, err);
-                return error.CommandFailed;
-            };
-            log.info("Erased file {s}", .{entry.filenameAndExtension()});
+            try to_erase.append(global_allocator, entry.*);
         } else {
             if (!found_file) {
                 printErrorMessage(current_command, .no_matching_files, .{file_pattern}, error.None);
-                return error.CommandFailed;
+                had_error = true;
             }
         }
+    }
+    for (to_erase.items) |*entry| {
+        blk: {
+            disk_image.erase(entry) catch |err| {
+                printErrorMessage(current_command, .file_erase, .{entry.filenameAndExtension()}, err);
+                had_error = true;
+                break :blk;
+            };
+            log.info("Erased file {s}", .{entry.filenameAndExtension()});
+        }
+    }
+    if (had_error) {
+        return error.CommandFailed;
     }
 }
 

@@ -308,7 +308,7 @@ pub const DirectoryTable = struct {
             .free_allocations = undefined,
         };
         self.raw_directories = try .initCapacity(self.allocator(), image_type.directories);
-        self.cooked_directories = try .initCapacity(self.allocator(), image_type.directories);
+        self.cooked_directories = .empty;
         self.free_allocations = try .initFull(self.allocator(), image_type.total_allocs);
 
         return self;
@@ -400,7 +400,7 @@ pub const DirectoryTable = struct {
         const entry = &self.raw_directories.items[raw_entry_nr];
         try entry.validate(image_type, raw_entry_nr);
         if (entry.isFirstEntryForFile(image_type)) {
-            self.cooked_directories.appendAssumeCapacity(try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
+            try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
         } else {
             // Note: Requires that we always add in order and we can rely on ther prev entry
             // being the last entry
@@ -577,7 +577,7 @@ pub const FileNameIterator = struct {
         };
     }
     pub fn next(self: *FileNameIterator) ?*CookedDirEntry {
-        for (self.directory[self.index..]) |entry| {
+        for (self.directory[self.index..]) |*entry| {
             if (self.user) |u| {
                 // Skip files not for this user.
                 if (entry.user != u) {

@@ -292,7 +292,7 @@ test "Multiple filenames across users" {
 }
 
 test "Find filename with wildcards" {
-    //     Name     Ext   Length Used U At
+    // Name     Ext   Length Used U At
     // FILE     COM     128B   2K 0 W
     // FILE     TXT     128B   2K 1 W
     // FILENAME COM     128B   2K 0 W
