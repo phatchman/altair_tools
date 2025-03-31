@@ -267,15 +267,15 @@ test "Multiple filenames across users" {
     var out_stream = makeStream(&out_file);
 
     // Searching with user should return 1 file.
-    var itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 0);
+    var itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 0);
     try std.testing.expectEqual(1, util.count(itr));
-    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 1);
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 1);
     try std.testing.expectEqual(1, util.count(itr));
-    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", 2);
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 2);
     try std.testing.expectEqual(1, util.count(itr));
 
     // Searching without user should return 3 files.
-    itr = disk_image.directory.findByFileNameWildcards("SOMETHING.EXT", null);
+    itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", null);
     try std.testing.expectEqual(3, util.count(itr));
 
     // Make sure get works. TODO: Make sure put works.
@@ -285,10 +285,10 @@ test "Multiple filenames across users" {
     }
 
     // Check normal lookups also work
-    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 0) != null);
-    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 1) != null);
-    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", 2) != null);
-    try std.testing.expect(disk_image.directory.findByFilename("SOMETHING.EXT", null) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", 0) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", 1) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", 2) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", null) != null);
 }
 
 test "Find filename with wildcards" {
