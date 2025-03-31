@@ -55,8 +55,8 @@ fn do_main() !void {
         // validate options prints the error.
         return;
     }
-    var err_ctx: CommandErrorContext = .init();
-    defer err_ctx.deinit();
+    //    var err_ctx: CommandErrorContext = .init();
+    //    defer err_ctx.deinit();
 
     // Print out log messages in verbose mode on exit.
     defer {
@@ -72,33 +72,11 @@ fn do_main() !void {
     }
 
     // Start of processing.
-    Commands.dispatch(options, &err_ctx) catch |err| {
-        Console.stderr.print("ERROR: There was an error performing {s} during the {s} command on file {s}. Error details are: ", .{ err_ctx.operation, err_ctx.command, err_ctx.popFilename() }) catch {};
+    Commands.dispatch(options) catch |err| {
         switch (err) {
-            RawDirError.InvalidAllocation,
-            RawDirError.InvalidEntryNumber,
-            RawDirError.InvalidExtent,
-            RawDirError.InvalidRecordNumber,
-            RawDirError.InvalidUser,
-            => {
-                Console.stderr.print(
-                    "The directory entries in this image are invalid with error = {s}.\n",
-                    .{@errorName(err)},
-                ) catch {};
-            },
-            DirectoryError.OutOfAllocs,
-            => {
-                Console.stderr.print("The disk is full\n", .{}) catch {};
-            },
-            DirectoryError.OutOfExtents,
-            => {
-                Console.stderr.print("No more directory entries available\n", .{}) catch {};
-            },
-            else => {
-                Console.stderr.print("{s}\n", .{@errorName(err)}) catch {};
-            },
+            error.CommandFailed, error.CommandFailedCanContinue => return error.ErrorExit,
+            else => return err,
         }
-        return error.ErrorExit;
     };
 }
 
@@ -434,5 +412,4 @@ const Console = @import("console.zig");
 const Commands = @import("commands.zig");
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
-const CommandErrorContext = @import("commands.zig").CommandErrorContext;
 const ImageType = @import("disk_types.zig").DiskImageTypes;
