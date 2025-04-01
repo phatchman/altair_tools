@@ -1,7 +1,6 @@
 //! Implements the user interface between the command line and the user output.
 //! Dispatches command line options to the appropriate command and prints the results
 //! Any errors are reported back via the error context.
-// TODO: Warning for the HDD_5MB_1024 format.
 //
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
@@ -422,7 +421,6 @@ pub fn installCPM(disk_image: *DiskImage, options: CommandLineOptions) !void {
     };
 }
 
-// TODO: Detect if target image exists and if so format it to the type of the exiting image.
 pub fn formatImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Formatting {s} ....", .{options.image_file});
     disk_image.formatImage() catch |err| {

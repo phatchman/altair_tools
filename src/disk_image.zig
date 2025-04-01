@@ -138,7 +138,7 @@ pub const DiskImage = struct {
             }
         }
         return null;
-    } // TODO: Need to handle the 1024 dir entry case that we can't auto-detect on file size.
+    }
 
     pub fn copyToImage(self: *Self, in_file: File, to_filename: []const u8, user: ?u8, force: bool) !void {
         var stream: std.io.StreamSource = .{ .file = in_file };
