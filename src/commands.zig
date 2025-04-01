@@ -210,7 +210,6 @@ pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !voi
                     return error.CommandFail;
                 }
             };
-            log.info("Copied file: {s}", .{entry.filenameAndExtension()});
         } else {
             if (!found_file) {
                 had_error = true;
@@ -248,9 +247,26 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
         .dir_entry => |entry| entry,
     };
 
+    // If this file exists for multiple users, add the _user to the filename.
+    const add_user_extension = extension: {
+        if (options.cpm_user == null) {
+            const result = directory_table.findByFilename(dir_entry.filenameAndExtension(), null);
+            if (result.?.user != dir_entry.user) {
+                break :extension true;
+            }
+        }
+        break :extension false;
+    };
+
     var cwd = std.fs.cwd();
-    var out_file = cwd.createFile(dir_entry.filenameAndExtension(), .{ .read = false }) catch |err| {
-        printErrorMessage(current_command, .file_create, .{dir_entry.filenameAndExtension()}, err);
+    var filename_buf: [dir_entry._filename.len + 3]u8 = undefined; // Underlying filename + _nn for the user.
+    const out_filename = try if (add_user_extension)
+        std.fmt.bufPrint(&filename_buf, "{s}_{d}", .{ dir_entry.filenameAndExtension(), dir_entry.user })
+    else
+        std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()});
+
+    var out_file = cwd.createFile(out_filename, .{ .read = false }) catch |err| {
+        printErrorMessage(current_command, .file_create, .{out_filename}, err);
         return error.CommandFailedCanContinue;
     };
     defer out_file.close();
@@ -263,9 +279,10 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
     }
 
     disk_image.copyFromImage(dir_entry, out_file, text_mode) catch |err| {
-        printErrorMessage(current_command, .file_copy, .{dir_entry.filenameAndExtension()}, err);
+        printErrorMessage(current_command, .file_copy, .{out_filename}, err);
         return error.CommandFailed;
     };
+    log.info("Copied file {s} to {s}", .{ dir_entry.filenameAndExtension(), out_filename });
 }
 
 /// Copy a file to the image
