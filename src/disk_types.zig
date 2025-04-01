@@ -3,6 +3,10 @@
 //! Provides generic routines to skew logical to physical disk sectors and
 //! other various quirks of the raw disk layouts.
 //!
+// To add a new image type:
+// 1) Create a new DiskImageType_XXX struct
+// 2) Add a new entry to the DiskImageTypes enum
+// 3) Add (1) and (2) to all_disk_types.
 
 /// The physical track and sector number after skew
 pub const PhysicalAddress = struct {
@@ -483,11 +487,11 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(&mits_raw_sector),
 });
 // Anyone reading this and from a C background, think about what the above actually does.
-// Zig creates this array at _compilation time_, including setting up all of the dynamic function calls
+// Zig creates this array at _compilation time_, including setting up the dynamic function calls
 // for the different image types, performs all of the calculations in the init functions and
 // initializes the array with these values.
-// Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names
-// again, at _complilation time_.
+// Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names,
+// at _complilation time_.
 
 /// The display names for each image type.
 pub const all_disk_type_names = initDiskTypeNames();

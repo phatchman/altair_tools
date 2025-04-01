@@ -6,6 +6,11 @@
 //!    cpm directory table.
 //! 3) The free allocation table.
 //!
+// A lot of the zig code seems to use the function naming convention nounVerb
+// It has the advantage of grouping functions for similar things together alphabetically.
+// It has the downside that when reading the code it's more natural to read getAbc, rather than abcGet,
+// especially if it is aReallyLongIdentifierGet() vs getAreallyLongIdentifier().
+// I've tried to use the nounVerb convention in this source code, but it's really hard to break old habits.
 
 const log = @import("disk_image.zig").log;
 
