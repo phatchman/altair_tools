@@ -55,8 +55,6 @@ fn do_main() !void {
         // validate options prints the error.
         return;
     }
-    //    var err_ctx: CommandErrorContext = .init();
-    //    defer err_ctx.deinit();
 
     // Print out log messages in verbose mode on exit.
     defer {
