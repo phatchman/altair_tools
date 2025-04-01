@@ -7,6 +7,8 @@
 // 1) Create a new DiskImageType_XXX struct
 // 2) Add a new entry to the DiskImageTypes enum
 // 3) Add (1) and (2) to all_disk_types.
+// 4) Add a freshly formatted version of the image to format to src/test_images
+// 5) Add any tests for the new image to disk_image_tests.zig
 
 /// The physical track and sector number after skew
 pub const PhysicalAddress = struct {
