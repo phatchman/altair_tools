@@ -437,7 +437,7 @@ pub const DirectoryTable = struct {
         }
 
         // Finally removed the deleted CookedDir.
-        _ = self.cooked_directories.orderedRemove(cooked_index);
+        _ = self.cooked_directories.swapRemove(cooked_index);
     }
 
     /// Performs a wildcard lookup of the directory. * and ? are supported wildcard characters.

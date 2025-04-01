@@ -233,6 +233,9 @@ pub const DiskImage = struct {
 
     }
 
+    /// Erase a file.
+    /// Note that this invalidates any pointers to existing CookedDirEntries
+    /// Including any iterators.
     pub fn erase(self: *Self, to_erase: *CookedDirEntry) !void {
         return self.directory.eraseEntry(to_erase, self);
     }
