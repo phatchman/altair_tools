@@ -130,10 +130,12 @@ pub const DiskImage = struct {
     }
 
     /// Try and auto-detect what type of disk image this is
-    pub fn detectImageType(image_file: File) ?*const DiskImageType {
+    pub fn detectImageType(image_file: File, is_unique: *bool) ?*const DiskImageType {
         for (&all_disk_types.values) |*dt| {
-            if (dt.isCorrectFormat(image_file))
+            if (dt.isCorrectFormat(image_file)) {
+                is_unique.* = dt.detect_conditions != .duplicate_size;
                 return dt;
+            }
         }
         return null;
     } // TODO: Need to handle the 1024 dir entry case that we can't auto-detect on file size.

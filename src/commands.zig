@@ -4,6 +4,7 @@
 // TODO: Warning for the HDD_5MB_1024 format.
 //
 const all_disk_types = @import("disk_types.zig").all_disk_types;
+const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 
 const global_allocator = @import("main.zig").global_allocator;
@@ -67,10 +68,21 @@ pub fn dispatch(options: CommandLineOptions) !void {
         if (requested_disk_image_type) |requested_type| {
             trial_image_type = all_disk_types.getPtrConst(requested_type);
         } else {
-            trial_image_type = DiskImage.detectImageType(file) orelse {
+            var unique = false;
+            trial_image_type = DiskImage.detectImageType(file, &unique) orelse {
                 printErrorMessage(current_command, .image_type_detect, .{}, error.CantDetectImage);
                 return error.CommandFailed;
             };
+            if (!unique) {
+                try Console.stderr.print(
+                    "WARNING: {s} and {s} formats cannot be distinuished with autodection. Assuming {s}. Use -T to set correct image type.\n",
+                    .{
+                        all_disk_type_names[@intFromEnum(DiskImageTypes.HDD_5MB)],
+                        all_disk_type_names[@intFromEnum(DiskImageTypes.HDD_5MB_1024)],
+                        trial_image_type.type_name,
+                    },
+                );
+            }
         }
 
         if (!options.do_format and !trial_image_type.isCorrectFormat(file)) {
@@ -570,6 +582,7 @@ const DI = @import("disk_image.zig");
 const DiskImage = DI.DiskImage;
 const DirectoryTable = DI.DirectoryTable;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
+const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
 const RawDirectoryEntry = @import("disk_image.zig").RawDirEntry;
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;

@@ -28,8 +28,8 @@ pub const DiskImageType = struct {
         none,
         // Also accepts images padded to 128 byte boundary
         padded,
-        // Warn that this format can not be auto-detected.
-        warn,
+        // Warn that this format has the same size as another format.
+        duplicate_size,
     };
 
     // Friendly name, used in -T
@@ -360,7 +360,7 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
             .directories = 256,
             .directory_allocs = 2,
             .image_size = 4988928,
-            .detect_conditions = .none,
+            .detect_conditions = .duplicate_size,
             .varying_sector_format = false,
             .skew_fn = DiskImageType._defaultSkewFn,
             .skew_table = &skew_table,
@@ -382,7 +382,6 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
         result.type_name = "HDD_5MB_1024";
         result.description = "MITS 5MB, with 1024 directories";
         result.directories = 1024;
-        result.detect_conditions = .warn;
         result.init();
         return result;
     }
@@ -493,9 +492,9 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
 /// The display names for each image type.
 pub const all_disk_type_names = initDiskTypeNames();
 
-fn initDiskTypeNames() [all_disk_types.len][]const u8 {
-    var result: [all_disk_types.len][]const u8 = undefined;
-    inline for (0..all_disk_types.len) |i| {
+fn initDiskTypeNames() [all_disk_types.values.len][]const u8 {
+    var result: [all_disk_types.values.len][]const u8 = undefined;
+    inline for (0..all_disk_types.values.len) |i| {
         result[i] = all_disk_types.values[i].type_name;
     }
     return result;
