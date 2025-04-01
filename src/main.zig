@@ -33,6 +33,7 @@ pub const global_allocator = gpa.allocator();
 // This arena lasts the lifetime of the application.
 pub var arena = std.heap.ArenaAllocator.init(global_allocator);
 const all_disk_types = @import("disk_types.zig").all_disk_types;
+const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 
 /// Main processing takes place here
 fn do_main() !void {
@@ -158,7 +159,7 @@ pub fn main() !void {
                 },
                 .{
                     .long_name = "info",
-                    .help = "Information - Prints disk layout information",
+                    .help = "Prints disk format information",
                     .short_alias = 'i',
                     .value_ref = r.mkRef(&options.do_information),
                 },
@@ -248,8 +249,8 @@ pub fn main() !void {
                     .long_name = "type",
                     .help = "Disk image type. Auto-detected if possible. Supported types are:\n" ++
                         comptime generateDiskImageList() ++
-                            "!!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.\n" ++
-                            "Otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.",
+                            "!!! The " ++ all_disk_type_names[@intFromEnum(ImageType.HDD_5MB_1024)] ++
+                            " type cannot be auto-detected. Always use -T with this format.",
                     .short_alias = 'T',
                     .value_ref = r.mkRef(&options.disk_image_type),
                     .value_name = "type",

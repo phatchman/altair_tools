@@ -27,6 +27,25 @@ test "HDD 5MB 1024 dirs formatted" {
     try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
 }
 
+test "HDD 5MB 1024 supports 1024 dirs?" {
+    var test_buffer: [HDD_5MB_1024.image_size]u8 = undefined;
+
+    var disk_image = try newFormattedMemoryDiskImage(&test_buffer, HDD_5MB_1024);
+    defer disk_image.deinit();
+
+    var test_file = "Mostly harmless.".*;
+    var test_stream = makeStream(&test_file);
+
+    var filename_buffer: [20]u8 = undefined;
+    // Should handle 1024 entries
+    for (0..1024) |i| {
+        const filename = try std.fmt.bufPrint(&filename_buffer, "{d}.TXT", .{i});
+        try disk_image._copyToImage(&test_stream, filename, 0, false);
+    }
+    // buit not 1025
+    try std.testing.expectError(error.OutOfExtents, disk_image._copyToImage(&test_stream, "STRAW.BAK", 0, false));
+}
+
 test "Tarbell formatted" {
     const compare_image = @embedFile("test_disks/tar_fmt.dsk");
     var test_buffer: [TAR.image_size]u8 = undefined;

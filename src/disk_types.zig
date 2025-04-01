@@ -483,7 +483,7 @@ pub const DiskImageTypes = enum(usize) {
 pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .init(.{
     .FDD_8IN = DiskImageType_MITS_8IN.init(&mits_raw_sector),
     .HDD_5MB = DiskImageType_MITS_5MB_HDD.init(),
-    .HDD_5MB_1024 = DiskImageType_MITS_5MB_HDD.init(),
+    .HDD_5MB_1024 = DiskImageType_MITS_5MB_HDD_1024.init(),
     .FDD_TAR = DiskImageType_TARBELL_FDD.init(),
     .@"FDD_1.5MB" = @"DiskImageType_FDD_1.5MB".init(),
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(&mits_raw_sector),
@@ -498,6 +498,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
 /// The display names for each image type.
 pub const all_disk_type_names = initDiskTypeNames();
 
+/// Return an array of just the image type names
 fn initDiskTypeNames() [all_disk_types.values.len][]const u8 {
     var result: [all_disk_types.values.len][]const u8 = undefined;
     inline for (0..all_disk_types.values.len) |i| {
