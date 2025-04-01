@@ -458,27 +458,34 @@ pub const DirectoryTable = struct {
     }
 
     /// Turn any "host" filename into a valid CPM filename.
+    ///
+    /// Check that the passed in filename can be represented as "8.3"
+    /// CPM Manual says that filenames cannot include:
+    /// < > . , ; : = ? * [ ] % | ( ) / \
+    /// while all alphanumerics and remaining special characters are allowed.
+    /// We'll also enforce that it is at least a "printable" character
+    /// as the 8th bit of the first 2 filename chars are used for attributes
     pub fn translateToCPMFilename(filename: []const u8, buffer: []u8) []u8 {
         var found_dot: bool = false;
         var char_count: usize = 0;
         var ext_count: usize = 0;
         const end_in = filename.ptr + filename.len;
-        var in_char: [*]const u8 = filename.ptr;
-        var out_char: [*]u8 = buffer.ptr;
+        var in_char: [*]const u8 = filename.ptr; // Caution! Not bounds checked
+        var out_char: [*]u8 = buffer.ptr; // Caution! Not bounds checked
         const filename_len = RawDirEntry.filename_len;
         const ext_len = RawDirEntry.filetype_len;
         const full_len = filename_len + ext_len + 1; // + 1 for dot
         while (in_char != end_in) {
-            const invalid_char = switch (in_char[0]) {
+            const valid_char = switch (in_char[0]) {
                 // zig fmt: off
                 '<', '>', ',', ';', ':', 
                 '?', '*', '[', ']', '%', 
-                '|', '(', ')', '/', '\\', => true,
+                '|', '(', ')', '/', '\\', => false,
                 // zig fmt: on
-                else => false,
+                else => true,
             };
 
-            if (std.ascii.isPrint(in_char[0]) and !invalid_char) {
+            if (std.ascii.isPrint(in_char[0]) and valid_char) {
                 if (in_char[0] == '.') {
                     if (found_dot) {
                         in_char += 1;

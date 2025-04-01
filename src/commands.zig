@@ -1,7 +1,8 @@
 //! Implements the user interface between the command line and the user output.
 //! Dispatches command line options to the appropriate command and prints the results
 //! Any errors are reported back via the error context.
-
+// TODO: Warning for the HDD_5MB_1024 format.
+//
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 
@@ -30,6 +31,7 @@ const command_list = [_]Command{
     .{ .option = "do_cpm_put", .name = "install cpm", .write = true, .action = installCPM },
     .{ .option = "do_format", .name = "format", .write = true, .action = formatImage },
     .{ .option = "do_recover", .name = "recover", .write = false, .action = recoverImage },
+    .{ .option = "do_information", .name = "image information", .write = false, .action = printImageInfo },
 };
 
 var current_command: []const u8 = undefined;
@@ -459,6 +461,12 @@ pub fn recoverImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
     };
 }
 
+/// Print image parameters
+pub fn printImageInfo(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    _ = options;
+    disk_image.image_type.dump();
+}
+
 fn openDiskImage(filename: []const u8, writeable: bool, create_file: bool) !std.fs.File {
     const cwd = std.fs.cwd();
     if (create_file) {
@@ -538,8 +546,8 @@ const ErrorMessage = enum {
 
 const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
     .open_image = "Error opening disk image {s}",
-    .image_type_detect = "Can't detect image type. Aborting",
-    .image_type_set = "Image type is not set correctly. Aborting",
+    .image_type_detect = "Can't detect image type. Use -h to see supported types and -T to force a type.",
+    .image_type_set = "Image type is not set correctly. Use -h to see supported types or -v to see the detected type.",
     .image_init = "Initializing disk image {s}",
     .image_load = "Loading directory table",
     .no_matching_files = "No files found matching {s}",

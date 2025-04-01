@@ -90,6 +90,7 @@ pub const CommandLineOptions = struct {
     // included in the dispatch table.
     do_directory: bool = false,
     do_raw_dir: bool = false,
+    do_information: bool = false,
     do_format: bool = false,
     do_get: bool = false,
     do_get_multi: bool = false,
@@ -158,12 +159,17 @@ pub fn main() !void {
                     .value_ref = r.mkRef(&options.do_raw_dir),
                 },
                 .{
+                    .long_name = "info",
+                    .help = "Information - Prints disk layout information",
+                    .short_alias = 'i',
+                    .value_ref = r.mkRef(&options.do_information),
+                },
+                .{
                     .long_name = "format",
                     .help = "Format existing or create new disk image. Defaults to FDD_8IN",
                     .short_alias = 'F',
                     .value_ref = r.mkRef(&options.do_format),
                 },
-
                 .{
                     .long_name = "get",
                     .help = "Copy file from Altair disk image to host",
@@ -252,7 +258,7 @@ pub fn main() !void {
                 },
                 .{
                     .long_name = "verbose",
-                    .help = "Verbose - Prints image type processing information and errors",
+                    .help = "Verbose - Prints information about operations being performed",
                     .short_alias = 'v',
                     .value_ref = r.mkRef(&options.verbose),
                 },
@@ -297,10 +303,11 @@ pub fn validateOptions() !bool {
 
     // Can only by one of directory, get/multi, put/multi, etc
     const single_options = [_]bool{
-        options.do_directory, options.do_erase,     options.do_erase_multi,
-        options.do_format,    options.do_get,       options.do_get_multi,
-        options.do_put,       options.do_put_multi, options.do_raw_dir,
-        options.do_cpm_get,   options.do_cpm_put,   options.do_recover,
+        options.do_directory,   options.do_erase,     options.do_erase_multi,
+        options.do_format,      options.do_get,       options.do_get_multi,
+        options.do_put,         options.do_put_multi, options.do_raw_dir,
+        options.do_cpm_get,     options.do_cpm_put,   options.do_recover,
+        options.do_information,
     };
 
     var option_count: usize = 0;
@@ -317,6 +324,8 @@ pub fn validateOptions() !bool {
         cli.printError(&app,
             \\You may only specify one of:
             \\       --directory, 
+            \\       --raw
+            \\       --info
             \\       --format,
             \\       --get, --get-multiple,
             \\       --put, --put-multiple,
@@ -328,12 +337,13 @@ pub fn validateOptions() !bool {
         return false;
     }
 
-    if (options.do_directory or options.do_raw_dir) {
+    if (options.do_directory or options.do_raw_dir or options.do_information) {
         if (options.multiple_files.len != 0) {
             cli.printError(&app,
                 \\No filenames are allowed for:
                 \\       --directory, 
                 \\       --raw
+                \\       --info
                 \\
             , .{});
             return false;
