@@ -262,7 +262,7 @@ test "8in Binary file" {
     try std.testing.expectEqualSlices(u8, &compare_buffer, &in_file);
 }
 
-test "8in Auto detect file" {
+test "8in Auto detect file type" {
     // TODO: embed a test file with bin and ascii in it and get both.
 }
 
