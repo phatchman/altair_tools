@@ -273,6 +273,10 @@ pub const DiskImage = struct {
         var disk_sector: DiskSector = .init();
         const varying_sector_format = self.image_type.varying_sector_format;
 
+        // Just in case formatting an existing image file from larger to smaller format.
+        if (self.image_file == .file) {
+            try self.image_file.file.setEndPos(0);
+        }
         try self.image_file.seekTo(0);
 
         var write_sector: []u8 = undefined;

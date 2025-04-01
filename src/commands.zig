@@ -54,13 +54,15 @@ pub fn dispatch(options: CommandLineOptions) !void {
         printErrorMessage(current_command, .open_image, .{options.image_file}, err);
         return error.CommandFailed;
     };
+    const existing_file = (file.getEndPos() catch 0) != 0;
 
     // Get or detect this image type.
     const image_type: *const DiskImageType = image_type: {
         errdefer file.close();
         var trial_image_type: *const DiskImageType = undefined;
         var requested_disk_image_type = options.disk_image_type;
-        if (options.do_format and options.disk_image_type == null) {
+        // Default format to FDD_8IN unless it's an existing image file.
+        if (!existing_file and options.do_format and options.disk_image_type == null) {
             requested_disk_image_type = .FDD_8IN;
         }
 
@@ -480,7 +482,7 @@ pub fn printImageInfo(disk_image: *DiskImage, options: CommandLineOptions) !void
 fn openDiskImage(filename: []const u8, writeable: bool, create_file: bool) !std.fs.File {
     const cwd = std.fs.cwd();
     if (create_file) {
-        return cwd.createFile(filename, .{ .read = false });
+        return cwd.createFile(filename, .{ .read = false, .truncate = false });
     } else if (writeable) {
         return cwd.openFile(filename, .{ .mode = .read_write });
     } else {
