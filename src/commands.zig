@@ -335,7 +335,7 @@ pub fn _putFile(disk_image: *DiskImage, filename: []const u8, user: ?u8) !void {
     defer in_file.close();
 
     disk_image.copyToImage(in_file, filename, cpm_user, false) catch |err| {
-        printErrorMessage(current_command, .file_open, .{filename}, err);
+        printErrorMessage(current_command, .file_copy, .{filename}, err);
         switch (err) {
             error.PathAlreadyExists, error.CookedDirEntryNotFound => return error.CommandFailedCanContinue,
             else => return error.CommandFailed,
