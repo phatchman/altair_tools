@@ -144,16 +144,14 @@ pub const RawDirEntry = extern struct {
     }
 
     pub fn filenameAndExtensionSet(self: *RawDirEntry, filename: []const u8) void {
-        const dot_pos = std.mem.indexOfScalar(u8, filename, '.');
-        if (dot_pos) |pos| {
-            self.filename = @splat(' ');
-            self.filetype = @splat(' ');
-            const len = @min(pos, self.filename.len);
-            @memcpy(self.filename[0..len], filename[0..len]);
-            const type_len = @min(self.filetype.len, filename.len - pos - 1);
-            if (pos != filename.len - 1) {
-                @memcpy(self.filetype[0..type_len], filename[pos + 1 .. pos + type_len + 1]);
-            }
+        const dot_pos = std.mem.indexOfScalar(u8, filename, '.') orelse filename.len;
+        self.filename = @splat(' ');
+        self.filetype = @splat(' ');
+        //const len = @min(dot_pos, self.filename.len);
+        @memcpy(self.filename[0..dot_pos], filename[0..dot_pos]);
+        if (dot_pos != filename.len) {
+            const type_len = @min(self.filetype.len + 1, filename.len - dot_pos - 1);
+            @memcpy(self.filetype[0..type_len], filename[dot_pos + 1 .. dot_pos + type_len + 1]);
         }
     }
 
@@ -239,7 +237,7 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn extension(self: *const CookedDirEntry) []const u8 {
-        const pos = std.mem.indexOfScalar(u8, &self._filename, '.') orelse return self.filenameAndExtension();
+        const pos = std.mem.indexOfScalar(u8, &self._filename, '.') orelse return "";
         return rawSlice(self._filename[pos + 1 ..]);
     }
 
@@ -608,12 +606,14 @@ pub const FileNameIterator = struct {
 
         while (lhs_pos < lhs_pattern.len and rhs_pos < rhs.len) {
             if (wildcards and lhs_pattern[lhs_pos] == '*') {
+                // '*' matches to either next '.' or end of string.
+                // If get a '*' and already encountered a '.' return true as must match to rest of string.
+                // Otherwise skip to the first '.' character.
                 if (found_dot)
                     return true;
                 lhs_pos = std.mem.indexOfScalar(u8, lhs_pattern[lhs_pos..], '.') orelse return true;
                 rhs_pos = std.mem.indexOfScalar(u8, rhs[rhs_pos..], '.') orelse {
-                    rhs_pos = rhs.len - 1;
-                    break;
+                    return true;
                 };
             } else if (wildcards and lhs_pattern[lhs_pos] == '?') {
                 lhs_pos += 1;

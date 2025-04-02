@@ -308,6 +308,8 @@ test "Multiple filenames across users" {
     try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", 1) != null);
     try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", 2) != null);
     try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT", null) != null);
+    // Trailing . should also match.
+    try std.testing.expect(disk_image.directory.findByFilename("SOMETHIN.EXT.", null) != null);
 }
 
 test "Find filename with wildcards" {
@@ -346,6 +348,33 @@ test "Find filename with wildcards" {
 
     itr = disk_image.directory.findByFileNameWildcards("F*.EX?", null);
     try std.testing.expectEqual(2, util.count(itr));
+}
+
+test "Find filenames without extensions" {
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
+    var test_stream = makeStream(&test_file);
+
+    var image_file: [FDD_8IN.image_size]u8 = undefined;
+    var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
+    defer disk_image.deinit();
+
+    try disk_image._copyToImage(&test_stream, "FILENAME", null, false);
+    try disk_image._copyToImage(&test_stream, "X.", null, false);
+    try disk_image._copyToImage(&test_stream, ".X", null, false);
+    saveImage(&image_file);
+
+    try std.testing.expect(disk_image.directory.findByFilename("FILENAME", null) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("FILENAME.", null) != null);
+
+    try std.testing.expect(disk_image.directory.findByFilename("X", null) != null);
+    try std.testing.expect(disk_image.directory.findByFilename("X.", null) != null);
+
+    try std.testing.expect(disk_image.directory.findByFilename(".X", null) != null);
+
+    var itr = disk_image.directory.findByFileNameWildcards("F*", null);
+    try std.testing.expectEqual(1, util.count(itr));
+    itr = disk_image.directory.findByFileNameWildcards("F*.*", null);
+    try std.testing.expectEqual(1, util.count(itr));
 }
 
 test "erase" {
