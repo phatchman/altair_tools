@@ -191,12 +191,12 @@ pub const DiskImage = struct {
             // Is this a new record / allocation
             if (record_nr % self.image_type.recs_per_alloc == 0) {
                 // Note alloc_nr is undefined until here on first loop.
-
                 alloc_nr = if (nbytes > 0) self.directory.allocationGetFree() catch |err| {
                     try self.rawEntryWrite(@intCast(extent_nr));
                     try self.directory.buildCookedEntry(extent_nr, self.image_type);
                     return err;
                 } else 0;
+
                 try dir_entry.allocationSet(alloc_count, alloc_nr, self.image_type);
                 alloc_count += 1;
             }
@@ -212,6 +212,7 @@ pub const DiskImage = struct {
                 extent_count += 1;
             }
         }
+
         try self.rawEntryWrite(@intCast(extent_nr));
         try self.directory.buildCookedEntry(extent_nr, self.image_type);
 

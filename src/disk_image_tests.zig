@@ -199,6 +199,28 @@ test "8in duplicate filenames" {
     try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, true);
 }
 
+test "test force overwrite" {
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
+    var test_stream = makeStream(&test_file);
+
+    var image_file: [FDD_8IN.image_size]u8 = undefined;
+    var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
+    defer disk_image.deinit();
+
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    // 2nd time force the overwrite.
+    test_file[0] = 'X';
+    try test_stream.seekTo(0);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, true);
+
+    var in_file: [test_file.len]u8 = undefined;
+    var in_stream = makeStream(&in_file);
+    const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
+    try std.testing.expect(cooked_dir != null);
+    try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Text);
+    try std.testing.expectEqualSlices(u8, &test_file, &in_file);
+}
+
 test "8 in zero-length file" {
     var test_file = "".*;
     var test_stream = makeStream(&test_file);

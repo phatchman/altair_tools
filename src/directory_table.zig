@@ -417,6 +417,7 @@ pub const DirectoryTable = struct {
         };
         // Set the allocs used by this cooked entry as free.
         for (to_erase.allocations.items) |alloc| {
+            if (alloc == 0) break;
             self.free_allocations.set(alloc);
         }
         to_erase.allocations.clearAndFree(self.allocator());
