@@ -171,6 +171,7 @@ pub fn openExistingImage(self: *Self, filename: []const u8) !void {
     const image_file = try cwd.openFile(filename, .{ .mode = .read_write });
     var is_unique = false;
     const image_type = DiskImage.detectImageType(image_file, &is_unique);
+    // TODO: Need ot handle the non-unique with a dialog warning or something?
 
     if (image_type) |valid_type| {
         self.disk_image = DiskImage.init(allocator, image_file, valid_type) catch |err| {
@@ -308,6 +309,22 @@ pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry, dest_dir: []const u8) !
                 try dir.deleteFile(local_entry.full_filename);
             },
         }
+    }
+}
+
+pub fn getSystem(self: *Self, out_filename: []const u8) !void {
+    if (self.disk_image) |*image| {
+        var out_file = try std.fs.cwd().createFile(out_filename, .{});
+        defer out_file.close();
+        try image.extractCPM(out_file);
+    }
+}
+
+pub fn putSystem(self: *Self, in_filename: []const u8) !void {
+    if (self.disk_image) |*image| {
+        var in_file = try std.fs.cwd().openFile(in_filename, .{ .mode = .read_only });
+        defer in_file.close();
+        try image.installCPM(in_file);
     }
 }
 

@@ -420,7 +420,11 @@ fn gui_frame() !bool {
                 try eraseButtonHandler();
             }
         }
-        _ = try statusBarButton(@src(), "GET SYS", .{}, color_to_use, 4, .getsys, image_directories != null);
+        if (try statusBarButton(@src(), "GET SYS", .{}, color_to_use, 4, .getsys, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try getSysButtonHandler();
+            }
+        }
         _ = try statusBarButton(@src(), "PUT SYS", .{}, color_to_use, 5, .putsys, image_directories != null);
         if (try statusBarButton(@src(), "CLOSE", .{}, color_to_use, 0, .close, image_directories != null)) {
             commands.closeImage(); // TODO: This makes some memory invalid?
@@ -463,7 +467,7 @@ fn gui_frame() !bool {
             return false;
         }
 
-        if (current_command != .get and current_command != .erase and current_command != .new and current_command != .put) {
+        if (current_command != .get and current_command != .erase and current_command != .new and current_command != .put and current_command != .getsys) {
             current_command = .none;
         }
         // If there is an operation in progress, show the transfer dialog.
@@ -804,7 +808,7 @@ fn makeGridBody(id: GridType) !void {
                         } else
                         // TODO: This should prob go above in the "scroll grid" part.
                         // Or why don't we get the key events above. we aren't just filtering to the scroll grid?
-                        if (me.action == .motion or me.action == .wheel_x or me.action == .wheel_y) {
+                        if (me.action == .position or me.action == .wheel_x or me.action == .wheel_y) {
                             dvui.focusWidget(null, scroll.data().id, e.num);
                             setMouseSelectionIndex(id, i);
                             setKbSelectionIndex(id, i);
@@ -1552,6 +1556,7 @@ const CommandState = struct {
         yes_all: bool = false,
         no_all: bool = false,
         cancel: bool = false,
+        image_selector: bool = false,
         file_selector: bool = false,
         type_selector: bool = false,
 
@@ -1710,20 +1715,32 @@ pub fn makeTransferDialog() !void {
             var button_box = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
             defer button_box.deinit();
 
-            if (CommandState.buttons.file_selector) {
+            if (CommandState.buttons.image_selector or CommandState.buttons.file_selector) {
                 var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                 defer hbox.deinit();
-                try dvui.labelNoFmt(@src(), "Image name:", .{ .gravity_y = 0.5 });
+                if (CommandState.buttons.image_selector) {
+                    try dvui.labelNoFmt(@src(), "Image name:", .{ .gravity_y = 0.5 });
+                } else {
+                    try dvui.labelNoFmt(@src(), "File name:", .{ .gravity_y = 0.5 });
+                }
 
                 var entry = try dvui.textEntry(@src(), .{}, .{});
                 errdefer entry.deinit();
                 if (CommandState.file_selector_buffer == null) {
-                    if (image_path_selection) |image_path| {
-                        const dir_path = std.fs.path.dirname(image_path) orelse ".";
-                        const image_name = try findNewImageName(dir_path);
-                        try CommandState.setFileSelectorBuffer(image_name);
+                    if (CommandState.buttons.image_selector) {
+                        if (image_path_selection) |image_path| {
+                            const dir_path = std.fs.path.dirname(image_path) orelse ".";
+                            const image_name = try findNewImageName(dir_path);
+                            try CommandState.setFileSelectorBuffer(image_name);
+                            entry.textLayout.selection.selectAll();
+                            entry.textTyped(image_name, false);
+                            dvui.refresh(null, @src(), null);
+                        }
+                    } else {
+                        const filename = "cpm.bin";
+                        try CommandState.setFileSelectorBuffer(filename);
                         entry.textLayout.selection.selectAll();
-                        entry.textTyped(image_name, false);
+                        entry.textTyped(filename, false);
                         dvui.refresh(null, @src(), null);
                     }
                 }
@@ -1733,12 +1750,29 @@ pub fn makeTransferDialog() !void {
                 empty_file_selector = entry.getText().len == 0;
                 entry.deinit();
                 if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{})) {
-                    if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
-                        .title = "Save image as",
-                        .filters = &.{ "*.DSK", "*.IMG" },
-                        .filter_description = "Disk Images",
-                    })) |filename| {
-                        try CommandState.setFileSelectorBuffer(filename);
+                    if (CommandState.buttons.image_selector) {
+                        if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
+                            .title = "Save image as",
+                            .filters = &.{ "*.DSK", "*.IMG" },
+                            .filter_description = "Altair Disk Images *.DSK;*.IMG",
+                        })) |filename| {
+                            try CommandState.setFileSelectorBuffer(filename);
+                            entry.textLayout.selection.selectAll();
+                            entry.textTyped(filename, false);
+                            dvui.refresh(null, @src(), null);
+                        }
+                    } else {
+                        try CommandState.setFileSelectorBuffer("cpm.bin");
+                        if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
+                            .title = "Save file as",
+                            .filters = &.{ "*.bin", "*.cpm" },
+                            .filter_description = "System Images *.bin;*.cpm",
+                        })) |filename| {
+                            try CommandState.setFileSelectorBuffer(filename);
+                            entry.textLayout.selection.selectAll();
+                            entry.textTyped(filename, false);
+                            dvui.refresh(null, @src(), null);
+                        }
                     }
                 }
                 if (CommandState.buttons.type_selector) {
@@ -1812,7 +1846,7 @@ pub fn makeTransferDialog() !void {
         if (current_command != .none) {
             _ = try dvui.button(@src(), "Working...", .{}, .{});
         } else {
-            if (key_state == .enter or try dvui.button(@src(), "Close", .{}, .{})) {
+            if (key_state == .enter or try buttonFocussed(@src(), "Close", .{}, .{})) {
                 CommandState.finishCommand();
                 CommandState.freeResources();
                 // TODO: Need to clear the selection as well. prod add an EndCommand() that does the cleanup.
@@ -2085,7 +2119,7 @@ fn newButtonHandler() !void {
         .processing => {
             CommandState.prompt = "Create new image?";
             CommandState.state = .waiting_for_input;
-            CommandState.buttons = .{ .file_selector = true, .type_selector = true, .yes = true, .no = true };
+            CommandState.buttons = .{ .image_selector = true, .type_selector = true, .yes = true, .no = true };
         },
         .confirm => {
             // TODO: Need the try / force option here.
@@ -2099,6 +2133,46 @@ fn newButtonHandler() !void {
                 };
                 current.message = "Created.";
                 try setImagePath(image_path);
+            }
+            CommandState.finishCommand();
+        },
+        .cancel => {
+            // TODO: We need to free resources here because the dialog closes immediately due to
+            // there being no files in the process_files collection.
+            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
+            CommandState.finishCommand();
+            CommandState.freeResources();
+        },
+        else => unreachable,
+    }
+}
+
+fn getSysButtonHandler() !void {
+    std.debug.print("Get Sys handler\n", .{});
+    current_command = .getsys;
+    dvui.refresh(dvui.currentWindow(), @src(), null);
+
+    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
+    // Or something like that. Are there any commands that don't need to show that window?
+
+    // TODO:?? Is this local path selection needed?
+    // And how do we know what we are doing and erase on? Only the image dir?
+    switch (CommandState.state) {
+        .processing => {
+            CommandState.prompt = "Extract system image to?";
+            CommandState.state = .waiting_for_input;
+            CommandState.buttons = .{ .file_selector = true, .yes = true, .no = true };
+        },
+        .confirm => {
+            // TODO: Need the try / force option here.
+            if (CommandState.file_selector_buffer) |sys_path| {
+                var current = FileStatus.init(sys_path, "Creating...");
+                try CommandState.processed_files.append(gpa, current);
+                commands.getSystem(sys_path) catch |err| {
+                    current.message = formatErrorMessage(err);
+                };
+                CommandState.currentFile().?.message = "Done.";
+                current.message = "Extracted.";
             }
             CommandState.finishCommand();
         },
