@@ -147,7 +147,6 @@ pub const RawDirEntry = extern struct {
         const dot_pos = std.mem.indexOfScalar(u8, filename, '.') orelse filename.len;
         self.filename = @splat(' ');
         self.filetype = @splat(' ');
-        //const len = @min(dot_pos, self.filename.len);
         @memcpy(self.filename[0..dot_pos], filename[0..dot_pos]);
         if (dot_pos != filename.len) {
             const type_len = @min(self.filetype.len + 1, filename.len - dot_pos - 1);
