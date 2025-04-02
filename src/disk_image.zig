@@ -107,9 +107,9 @@ pub const DiskImage = struct {
             var data_len = sector.data.len;
             const check_for_text = text_mode != .Binary;
 
-            // CPM doesn't actually know how long a file is. So if it is a text file
-            // looks for ^Z anywhere in the last sector and use that to mark the EOF.
-            // For binary files it doesn;t matter if they are too long.
+            // CPM doesn't actually know how long a file is, except in multiples of 128 bytes.
+            // So if it is a text file looks for ^Z anywhere in the last sector and use that
+            // to mark the EOF. For binary files it doesn't matter if they are too long.
             if (check_for_text and total_rec_nr == num_records - 1) {
                 for (sector.data, 0..) |b, i| {
                     if (text_mode == .Auto) {

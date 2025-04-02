@@ -448,6 +448,7 @@ pub fn recoverImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
         var read_buf: [4096]u8 = undefined;
         var eof = false;
         // Copy the corrupt image to a new file.
+        // Could user std.fs.Dir.copyFile here, but we already have the files open.
         while (!eof) {
             const nbytes = try disk_image.image_file.reader().readAll(&read_buf);
             out_image.writeAll(read_buf[0..nbytes]) catch |err| {

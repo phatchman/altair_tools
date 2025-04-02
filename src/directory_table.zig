@@ -269,20 +269,12 @@ pub const CookedDirEntry = struct {
 
     /// Return the length of a space terminated string.
     fn rawStrlen(str: []const u8) usize {
-        // Space-terminated strings. What an invention!
-        var len: usize = 0;
-        for (str) |c| {
-            if (c == ' ' or c == 0) break;
-            len += 1;
-        }
-        return len;
+        return std.mem.indexOfScalar(u8, str, ' ') orelse str.len;
     }
 
     /// Return a slice representing the value of a space-termianted string.
     fn rawSlice(str: []const u8) []const u8 {
-        const len = rawStrlen(str);
-        const slice = str[0..len];
-        return slice;
+        return str[0..rawStrlen(str)];
     }
 };
 
@@ -300,9 +292,11 @@ pub const DirectoryTable = struct {
     /// one entry per file containing all records and allocations
     /// Initially sorted in alphabetical order, but new files will
     /// always be added to the end of the list.
+    /// Note that erase can invalidate any pointers into this array
+    /// and will change the sorting order.
     cooked_directories: std.ArrayListUnmanaged(CookedDirEntry),
 
-    /// A records of which disk allocations aren't used by any file.
+    /// A record of the disk allocations _not_ used by any file.
     free_allocations: std.DynamicBitSetUnmanaged,
 
     pub fn init(gpa: std.mem.Allocator, image_type: *const DiskImageType) std.mem.Allocator.Error!DirectoryTable {
