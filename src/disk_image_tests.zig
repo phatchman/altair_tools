@@ -165,7 +165,7 @@ test "8in overfilled disk" {
 }
 
 test "8in overfill directory" {
-    var test_file = "Mary had a little lamb, it's father was the ram.".*;
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream = makeStream(&test_file);
 
     var image_file: [FDD_8IN.image_size]u8 = undefined;
@@ -183,20 +183,20 @@ test "8in overfill directory" {
 }
 
 test "8in duplicate filenames" {
-    var test_file = "Mary had a little lamb, it's father was the ram.".*;
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream = makeStream(&test_file);
 
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image._copyToImage(&test_stream, "MARY.TXT", 0, false);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false);
     try std.testing.expectError(
         std.fs.File.OpenError.PathAlreadyExists,
-        disk_image._copyToImage(&test_stream, "MARY.TXT", 0, false),
+        disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false),
     );
     // 2nd time force the overwrite.
-    try disk_image._copyToImage(&test_stream, "MARY.TXT", 0, true);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, true);
 }
 
 test "8 in zero-length file" {
@@ -206,32 +206,32 @@ test "8 in zero-length file" {
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
-    try disk_image._copyToImage(&test_stream, "MARY.TXT", 0, false);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false);
 
     // Get it back and compare it to the original
     var in_file: [0]u8 = undefined;
     var in_stream = makeStream(&in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
+    const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
     try std.testing.expect(cooked_dir != null);
     // Will throw if it tries to write any bytes to the empty buffer;
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Text);
 }
 
 test "8in Text file" {
-    var test_file = "Mary had a little lamb, it's father was the ram.".*;
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream = makeStream(&test_file);
 
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
-    try disk_image._copyToImage(&test_stream, "MARY.TXT", 0, false);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false);
 
     // Get it back and compare it to the original
     var in_file: [test_file.len]u8 = undefined;
     var in_stream = makeStream(&in_file);
 
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
+    const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
     try std.testing.expect(cooked_dir != null);
     // Will throw if it tries to write any buytes to the empty buffer;
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Text);
@@ -239,19 +239,19 @@ test "8in Text file" {
 }
 
 test "8in Binary file" {
-    var test_file = "Mary had a little lamb, it's father was the ram.".*;
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream = makeStream(&test_file);
 
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image._copyToImage(&test_stream, "MARY.TXT", 0, false);
+    try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, false);
 
     // Get it back and compare it to the original
     var in_file: [((test_file.len + 127) / 128) * 128]u8 = undefined;
     var in_stream = makeStream(&in_file);
-    const cooked_dir = disk_image.directory.findByFilename("MARY.TXT", null);
+    const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
     try std.testing.expect(cooked_dir != null);
     try disk_image._copyFromImage(cooked_dir.?, &in_stream, .Binary);
     var compare_buffer: [in_file.len]u8 = undefined;
@@ -361,7 +361,6 @@ test "Find filenames without extensions" {
     try disk_image._copyToImage(&test_stream, "FILENAME", null, false);
     try disk_image._copyToImage(&test_stream, "X.", null, false);
     try disk_image._copyToImage(&test_stream, ".X", null, false);
-    saveImage(&image_file);
 
     try std.testing.expect(disk_image.directory.findByFilename("FILENAME", null) != null);
     try std.testing.expect(disk_image.directory.findByFilename("FILENAME.", null) != null);
