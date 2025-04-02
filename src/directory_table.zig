@@ -144,7 +144,7 @@ pub const RawDirEntry = extern struct {
     }
 
     pub fn filenameAndExtensionSet(self: *RawDirEntry, filename: []const u8) void {
-        const dot_pos = std.mem.indexOf(u8, filename, ".");
+        const dot_pos = std.mem.indexOfScalar(u8, filename, '.');
         if (dot_pos) |pos| {
             self.filename = @splat(' ');
             self.filetype = @splat(' ');
@@ -234,12 +234,12 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn filenameOnly(self: *const CookedDirEntry) []const u8 {
-        const pos = std.mem.indexOf(u8, &self._filename, ".") orelse return self.filenameAndExtension();
+        const pos = std.mem.indexOfScalar(u8, &self._filename, '.') orelse return self.filenameAndExtension();
         return self._filename[0..pos];
     }
 
     pub fn extension(self: *const CookedDirEntry) []const u8 {
-        const pos = std.mem.indexOf(u8, &self._filename, ".") orelse return self.filenameAndExtension();
+        const pos = std.mem.indexOfScalar(u8, &self._filename, '.') orelse return self.filenameAndExtension();
         return rawSlice(self._filename[pos + 1 ..]);
     }
 
@@ -610,8 +610,8 @@ pub const FileNameIterator = struct {
             if (wildcards and lhs_pattern[lhs_pos] == '*') {
                 if (found_dot)
                     return true;
-                lhs_pos = std.mem.indexOf(u8, lhs_pattern[lhs_pos..], ".") orelse return true;
-                rhs_pos = std.mem.indexOf(u8, rhs[rhs_pos..], ".") orelse {
+                lhs_pos = std.mem.indexOfScalar(u8, lhs_pattern[lhs_pos..], '.') orelse return true;
+                rhs_pos = std.mem.indexOfScalar(u8, rhs[rhs_pos..], '.') orelse {
                     rhs_pos = rhs.len - 1;
                     break;
                 };
