@@ -66,6 +66,8 @@ var shift_held = false;
 var enter_pressed = false;
 var pgdn_pressed: bool = false;
 var pgup_pressed: bool = false;
+var down_pressed: bool = false;
+var up_pressed: bool = false;
 var current_command: CommandList = .none;
 var current_user: usize = 16; // all users
 var paned_collapsed_width: f32 = 400;
@@ -794,7 +796,6 @@ fn makeGridBody(id: GridType) !void {
 
     // TODO: Make this highlight part of the theme?
     //    const highlight_color: Options.ColorOrName = .{ .color = try dvui.Color.fromHex("#08380e".*) };
-    var rel_mouse_index: ?usize = 0;
     var background: ?dvui.Options.ColorOrName = null;
 
     // TODO: Issue with this is that the row can be filtered :( So the index of the row on screen is no the same as
@@ -819,10 +820,9 @@ fn makeGridBody(id: GridType) !void {
         };
         getScrollInfo(id).scrollPageDown(.vertical);
         const new_index = @min(rel_index + nr_displayed, to_display.items.len - 1);
+
         setMouseSelectionIndex(id, to_display.items[new_index].index);
         setKbSelectionIndex(id, to_display.items[new_index].index);
-
-        rel_mouse_index = rel_index;
     } else if (pgup_pressed and id == focussed_grid) {
         const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / 25);
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
@@ -838,8 +838,35 @@ fn makeGridBody(id: GridType) !void {
         const new_index: usize = @max(rel_index, nr_displayed) - nr_displayed;
         setMouseSelectionIndex(id, to_display.items[new_index].index);
         setKbSelectionIndex(id, to_display.items[new_index].index);
-        rel_mouse_index = rel_index;
+    } else if (id == focussed_grid and down_pressed) {
+        var rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
+            if (item.index == getKbSelectionIndex(id)) {
+                break :idx idx;
+            }
+        } else {
+            break :idx 0;
+        };
+
+        const dir_len = to_display.items.len;
+        if (dir_len > 0 and rel_index < dir_len - 1) {
+            rel_index += 1;
+            setKbSelectionIndex(focussed_grid, to_display.items[rel_index].index);
+        }
+    } else if (id == focussed_grid and up_pressed) {
+        var rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
+            if (item.index == getKbSelectionIndex(id)) {
+                break :idx idx;
+            }
+        } else {
+            break :idx 0;
+        };
+        if (rel_index > 0) {
+            rel_index -= 1;
+            setKbSelectionIndex(focussed_grid, to_display.items[rel_index].index);
+        }
     } else {
+        var rel_mouse_index: usize = 0;
+
         const evts = dvui.events();
         for (evts) |*e| {
             if (!dvui.eventMatchSimple(e, scroll.data())) {
@@ -853,8 +880,8 @@ fn makeGridBody(id: GridType) !void {
                     const first_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.y / 25);
 
                     rel_mouse_index = @intFromFloat(@max(me.p.y + offset_magic, 0) / 25);
-                    rel_mouse_index.? += first_displayed;
-                    const abs_mouse_index = to_display.items[rel_mouse_index.?].index;
+                    rel_mouse_index += first_displayed;
+                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
                     if (me.action == .press and me.button.pointer()) {
                         e.handled = true;
@@ -885,8 +912,6 @@ fn makeGridBody(id: GridType) !void {
             }
         }
     }
-
-    var row_number: usize = 0;
 
     for (to_display.items, 0..) |entry, rel_idx| {
         // TODO: Make this nicer
@@ -935,19 +960,21 @@ fn makeGridBody(id: GridType) !void {
         try makeGridDataRow(6, id_extra, text, true);
 
         // TODO: Hardcoded 25's. should jsut be row height?
-        const nr_displayed = getScrollInfo(id).viewport.h / 25 - 2;
-        if (selection_mode == .kb and getKbSelectionIndex(id) == rel_idx) {
-            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * 25;
-            const viewport_btm = getScrollInfo(id).viewport.y + getScrollInfo(id).viewport.h - 40;
-            if (viewport_btm < my_pos) {
-                const scroll_pos: f32 = my_pos - (nr_displayed * 25);
-                getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
-            } else if (my_pos < getScrollInfo(id).viewport.y + 40) {
-                const scroll_pos: f32 = my_pos - 25;
-                getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
+
+        if (true) {
+            const nr_displayed = getScrollInfo(id).viewport.h / 25 - 2;
+            if (id == focussed_grid and selection_mode == .kb and getKbSelectionIndex(id) == abs_index) {
+                const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * 25; // relative pos
+                const viewport_btm = getScrollInfo(id).viewport.y + getScrollInfo(id).viewport.h - 40;
+                if (viewport_btm < my_pos) {
+                    const scroll_pos: f32 = my_pos - (nr_displayed * 25);
+                    getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
+                } else if (my_pos < getScrollInfo(id).viewport.y + 40) {
+                    const scroll_pos: f32 = my_pos - 25;
+                    getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
+                }
             }
         }
-        row_number += 1;
     }
 }
 
@@ -1346,6 +1373,8 @@ pub fn processEvents() void {
     const evts = dvui.events();
     pgdn_pressed = false;
     pgup_pressed = false;
+    up_pressed = false;
+    down_pressed = false;
 
     for (evts) |*e| {
         // This doesn't return events, even when the scrollbar is focused.
@@ -1374,12 +1403,7 @@ pub fn processEvents() void {
                 dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
                 switch (ke.action) {
                     .down, .repeat => {
-                        var current_selection = getKbSelectionIndex(focussed_grid);
-                        const dir_len = getDirectoryById(focussed_grid).len;
-                        if (dir_len > 0 and getKbSelectionIndex(focussed_grid) < dir_len - 1) {
-                            current_selection += 1;
-                            setKbSelectionIndex(focussed_grid, current_selection);
-                        }
+                        down_pressed = true;
                     },
                     else => {},
                 }
@@ -1390,11 +1414,7 @@ pub fn processEvents() void {
                 dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
                 switch (ke.action) {
                     .down, .repeat => {
-                        var current_selection = getKbSelectionIndex(focussed_grid);
-                        if (getKbSelectionIndex(focussed_grid) > 0) {
-                            current_selection -= 1;
-                            setKbSelectionIndex(focussed_grid, current_selection);
-                        }
+                        up_pressed = true;
                     },
                     else => {},
                 }
@@ -1541,7 +1561,7 @@ pub fn processEvents() void {
                 if (ke.action == .down) {
                     pgdn_pressed = true;
                     selection_mode = .kb;
-                    getScrollInfo(focussed_grid).scrollPageDown(.vertical);
+                    //                    getScrollInfo(focussed_grid).scrollPageDown(.vertical);
                     //   selection_mode = .mouse; // TODO: This is temp workaround
                 }
             },
@@ -1550,7 +1570,7 @@ pub fn processEvents() void {
                 if (ke.action == .down) {
                     pgup_pressed = true;
                     selection_mode = .kb;
-                    getScrollInfo(focussed_grid).scrollPageUp(.vertical);
+                    //getScrollInfo(focussed_grid).scrollPageUp(.vertical);
                     // selection_mode = .mouse;
                 }
             },
@@ -1795,7 +1815,6 @@ pub fn makeTransferDialog() !void {
         {
             var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
             defer vbox.deinit();
-            //            std.debug.print("Here is command state {}\n", .{CommandState.processed_files.items.len});
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
                 try dvui.label(@src(), "{s:<12} --> {s}", .{ basename, file.message }, .{ .id_extra = i });
@@ -2067,13 +2086,11 @@ fn putButtonHandler() !void {
                 CommandState.prompt = null;
                 const dir_entry = if (CommandState.state == .confirm) CommandState.itr.?.peek() else CommandState.itr.?.next();
                 if (dir_entry) |file| {
-                    std.debug.print("{s}.{s}\n", .{ file.filename(), file.extension() });
                     if (CommandState.state != .confirm) {
                         try CommandState.processed_files.append(gpa, .init(file.filenameAndExtension(), "Copying..."));
                     }
                     var success: bool = true;
                     // TODO: Get user
-                    std.debug.print("Local path = {s}, file = {s}\n", .{ local_path, file.filenameAndExtension() });
                     commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm or CommandState.confirm_all == .yes_to_all) catch |err| {
                         var current = CommandState.currentFile().?;
                         std.debug.print("error is {s}\n", .{@errorName(err)});
