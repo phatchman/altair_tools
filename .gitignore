@@ -12,3 +12,4 @@ zig-out/
 tmp/
 legacy/
 release/
+adgui/disks
