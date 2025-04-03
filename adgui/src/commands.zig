@@ -285,14 +285,14 @@ pub fn getFile(self: *Self, src: *const DirectoryEntry, dest_dir: []const u8, co
 }
 
 pub fn putFile(self: *Self, filename: []const u8, dirname: []const u8, user: usize, force: bool) !void {
+    const cpm_user = if (user < 16) @as(u8, @intCast(user)) else null;
     if (self.disk_image) |*image| {
         var cwd = try std.fs.cwd().openDir(dirname, .{});
         defer cwd.close();
         var in_file = try cwd.openFile(filename, .{ .mode = .read_only });
         defer in_file.close();
 
-        const u = @as(u8, @intCast(user));
-        try image.copyToImage(in_file, filename, u, force);
+        try image.copyToImage(in_file, filename, cpm_user, force);
     }
 }
 

@@ -65,7 +65,7 @@ var alt_held = false;
 var shift_held = false;
 var enter_pressed = false;
 var current_command: CommandList = .none;
-var current_user: usize = 0;
+var current_user: usize = 16; // all users
 var paned_collapsed_width: f32 = 400;
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
@@ -425,24 +425,32 @@ fn gui_frame() !bool {
                 try getSysButtonHandler();
             }
         }
-        _ = try statusBarButton(@src(), "PUT SYS", .{}, color_to_use, 5, .putsys, image_directories != null);
+        if (try statusBarButton(@src(), "PUT SYS", .{}, color_to_use, 5, .putsys, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try putSysButtonHandler();
+            }
+        }
         if (try statusBarButton(@src(), "CLOSE", .{}, color_to_use, 0, .close, image_directories != null)) {
             commands.closeImage(); // TODO: This makes some memory invalid?
             image_directories = null;
             CommandState.finishCommand();
         }
 
-        var buf: [20]u8 = undefined;
-        var label = try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
         if (try statusBarButton(@src(), "INFO", .{}, color_to_use, 2, .info, image_directories != null)) {
             if (CommandState.shouldProcessCommand()) {
                 try infoButtonHandler();
             }
         }
 
+        var buf: [20]u8 = undefined;
+        var label = if (current_user == 16)
+            try std.fmt.bufPrint(&buf, "USER *", .{})
+        else
+            try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
+
         if (try statusBarButton(@src(), label, .{}, color_to_use, 0, .user, true)) {
             current_user += 1;
-            current_user %= 16;
+            current_user %= 17;
         }
         if (try statusBarButton(@src(), "NEW", .{}, color_to_use, 0, .new, true)) {
             if (CommandState.shouldProcessCommand()) {
@@ -736,7 +744,7 @@ fn makeGridBody(id: GridType) !void {
             .local => {}, // Always display local entires if there are some
             .image => { // Check if there are any files ot display for the current user.
                 for (directory_list) |dir| {
-                    if (dir.user() == current_user) {
+                    if (current_user == 16 or current_user == dir.user()) {
                         should_display = true;
                         break;
                     }
@@ -764,7 +772,7 @@ fn makeGridBody(id: GridType) !void {
 
     for (directory_list, 0..) |entry, i| {
         // Onlt display entries for the right user.
-        if (entry.deleted or (id == .image and entry.user() != current_user))
+        if (entry.deleted or (id == .image and (entry.user() != current_user and current_user != 16)))
             continue;
         // TODO: Check if this *1000000 is really needed? If the create is called from
         // different parts of the source code.
@@ -1983,7 +1991,7 @@ fn putButtonHandler() !void {
                     var success: bool = true;
                     // TODO: Get user
                     std.debug.print("Local path = {s}, file = {s}\n", .{ local_path, file.filenameAndExtension() });
-                    commands.putFile(file.filenameAndExtension(), local_path, 0, CommandState.state == .confirm or CommandState.confirm_all == .yes_to_all) catch |err| {
+                    commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm or CommandState.confirm_all == .yes_to_all) catch |err| {
                         var current = CommandState.currentFile().?;
                         std.debug.print("error is {s}\n", .{@errorName(err)});
                         switch (err) {
@@ -2186,6 +2194,46 @@ fn getSysButtonHandler() !void {
                 };
                 CommandState.currentFile().?.message = "Done.";
                 current.message = "Extracted.";
+            }
+            CommandState.finishCommand();
+        },
+        .cancel => {
+            // TODO: We need to free resources here because the dialog closes immediately due to
+            // there being no files in the process_files collection.
+            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
+            CommandState.finishCommand();
+            CommandState.freeResources();
+        },
+        else => unreachable,
+    }
+}
+
+fn putSysButtonHandler() !void {
+    std.debug.print("Get Sys handler\n", .{});
+    current_command = .getsys;
+    dvui.refresh(dvui.currentWindow(), @src(), null);
+
+    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
+    // Or something like that. Are there any commands that don't need to show that window?
+
+    // TODO:?? Is this local path selection needed?
+    // And how do we know what we are doing and erase on? Only the image dir?
+    switch (CommandState.state) {
+        .processing => {
+            CommandState.prompt = "Install system image from? ";
+            CommandState.state = .waiting_for_input;
+            CommandState.buttons = .{ .open_file_selector = true, .yes = true, .no = true };
+        },
+        .confirm => {
+            // TODO: Need the try / force option here. ?? Not sure whta this comment means?
+            if (CommandState.file_selector_buffer) |sys_path| {
+                var current = FileStatus.init(sys_path, "Installing...");
+                try CommandState.processed_files.append(gpa, current);
+                commands.putSystem(sys_path) catch |err| {
+                    current.message = formatErrorMessage(err);
+                };
+                CommandState.currentFile().?.message = "Done.";
+                current.message = "Installed.";
             }
             CommandState.finishCommand();
         },
