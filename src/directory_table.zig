@@ -304,7 +304,7 @@ pub const DirectoryTable = struct {
             .free_allocations = undefined,
         };
         self.raw_directories = try .initCapacity(self.allocator(), image_type.directories);
-        self.cooked_directories = .empty;
+        self.cooked_directories = try .initCapacity(self.allocator(), image_type.directories);
         self.free_allocations = try .initFull(self.allocator(), image_type.total_allocs);
 
         return self;
