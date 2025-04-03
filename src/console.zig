@@ -1,11 +1,14 @@
 //! Provide a global, buffered stdin and stdout
 //! and non-buffered stderr.
+//! Console.stdin - AnyReader for a buffered stdin
+//! Console.stdout - AnyWriter for a buffered stdout.
+//! Console.stderr - AnyWriter for an _un_buffered stderr.
 
 pub var stdin: *const std.io.AnyReader = undefined;
 pub var stdout: *const std.io.AnyWriter = undefined;
 pub var stderr: *const std.io.AnyWriter = undefined;
 
-var internal: Internal = undefined;
+var _internal: Internal = undefined;
 
 pub fn init(
     stdin_buffered: *std.io.BufferedReader(4096, std.fs.File.Reader),
@@ -17,27 +20,31 @@ pub fn init(
     stdin = stdin_reader;
     stdout = stdout_writer;
     stderr = stderr_writer;
-    internal = .{
+    _internal = .{
         .stdin_buffered = stdin_buffered,
         .stdout_buffered = stdout_buffered,
     };
 }
 
+/// Flushes output
 pub fn deinit() void {
     flushOut() catch {};
 }
 
+/// Flush stdin
 pub fn flushIn() !void {
-    try internal.stdin_buffered.flush();
+    try _internal.stdin_buffered.flush();
 }
 
+/// Flush stdout
 pub fn flushOut() !void {
-    try internal.stdout_buffered.flush();
+    try _internal.stdout_buffered.flush();
 }
 
+// Store pointers to the buffered writers as "private" variables.
 const Internal = struct {
-    stdin_buffered: *std.io.BufferedReader(4096, std.fs.File.Reader) = undefined,
-    stdout_buffered: *std.io.BufferedWriter(4096, std.fs.File.Writer) = undefined,
+    stdin_buffered: *std.io.BufferedReader(4096, std.fs.File.Reader),
+    stdout_buffered: *std.io.BufferedWriter(4096, std.fs.File.Writer),
 };
 
 const std = @import("std");
