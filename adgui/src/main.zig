@@ -64,6 +64,8 @@ const vsync = true;
 var alt_held = false;
 var shift_held = false;
 var enter_pressed = false;
+var pgdn_pressed: bool = false;
+var pgup_pressed: bool = false;
 var current_command: CommandList = .none;
 var current_user: usize = 16; // all users
 var paned_collapsed_width: f32 = 400;
@@ -451,6 +453,15 @@ fn gui_frame() !bool {
         if (try statusBarButton(@src(), label, .{}, color_to_use, 0, .user, true)) {
             current_user += 1;
             current_user %= 17;
+            if (current_user != 16) {
+                if (image_directories) |directories| {
+                    for (directories) |*entry| {
+                        if (entry.user() != current_user) {
+                            entry.checked = false;
+                        }
+                    }
+                }
+            }
         }
         if (try statusBarButton(@src(), "NEW", .{}, color_to_use, 0, .new, true)) {
             if (CommandState.shouldProcessCommand()) {
@@ -767,73 +778,138 @@ fn makeGridBody(id: GridType) !void {
     });
     defer scroll.deinit();
 
+    // Filter out any files that shouldn't be displayed.
+    const DisplayedFile = struct {
+        entry: *DirectoryEntry,
+        index: usize,
+    };
+    var to_display = try std.ArrayListUnmanaged(DisplayedFile).initCapacity(dvui.currentWindow().arena(), directory_list.len);
+    defer to_display.deinit(dvui.currentWindow().arena());
+
+    for (directory_list, 0..) |*entry, i| {
+        if (entry.deleted) continue;
+        if (id == .image and current_user != 16 and current_user != entry.user()) continue;
+        to_display.appendAssumeCapacity(.{ .entry = entry, .index = i });
+    }
+
     // TODO: Make this highlight part of the theme?
     //    const highlight_color: Options.ColorOrName = .{ .color = try dvui.Color.fromHex("#08380e".*) };
+    var rel_mouse_index: ?usize = 0;
+    var background: ?dvui.Options.ColorOrName = null;
 
-    for (directory_list, 0..) |entry, i| {
-        // Onlt display entries for the right user.
-        if (entry.deleted or (id == .image and (entry.user() != current_user and current_user != 16)))
-            continue;
+    // TODO: Issue with this is that the row can be filtered :( So the index of the row on screen is no the same as
+    // the index of a row in the grid.
+    // So need to filter out the list to be displayed first in like an array of pointers to the underlying and then
+    // run the routine... or something like that?ASD?
+    // Work out which row is being highlighted.
+    // previously this was within each individual row, but if the mouse went through multiple rows in a frame,
+    // they would all end up getting highlighted on that frame and if the mouse was in an "inconvenient" location,
+    // two rows could get highlighted at once.
+    // Weird issues during scrolling etc. This way the highlighted row is calculated in adcance.
+    if (pgdn_pressed and id == focussed_grid) {
+        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / 25);
+        const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
+            if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
+                break :idx idx;
+            } else if (selection_mode == .kb and item.index == getKbSelectionIndex(id)) {
+                break :idx idx;
+            }
+        } else {
+            break :idx 0;
+        };
+        getScrollInfo(id).scrollPageDown(.vertical);
+        const new_index = @min(rel_index + nr_displayed, to_display.items.len - 1);
+        setMouseSelectionIndex(id, to_display.items[new_index].index);
+        setKbSelectionIndex(id, to_display.items[new_index].index);
+
+        rel_mouse_index = rel_index;
+    } else if (pgup_pressed and id == focussed_grid) {
+        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / 25);
+        const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
+            if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
+                break :idx idx;
+            } else if (selection_mode == .kb and item.index == getKbSelectionIndex(id)) {
+                break :idx idx;
+            }
+        } else {
+            break :idx 0;
+        };
+        getScrollInfo(id).scrollPageUp(.vertical);
+        const new_index: usize = @max(rel_index, nr_displayed) - nr_displayed;
+        setMouseSelectionIndex(id, to_display.items[new_index].index);
+        setKbSelectionIndex(id, to_display.items[new_index].index);
+        rel_mouse_index = rel_index;
+    } else {
+        const evts = dvui.events();
+        for (evts) |*e| {
+            if (!dvui.eventMatchSimple(e, scroll.data())) {
+                continue;
+            }
+
+            switch (e.evt) {
+                .mouse => |me| {
+                    // TODO: Hardcoded 25's. should just be row height?
+                    const offset_magic = -103; // Not sure why this magic is required?
+                    const first_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.y / 25);
+
+                    rel_mouse_index = @intFromFloat(@max(me.p.y + offset_magic, 0) / 25);
+                    rel_mouse_index.? += first_displayed;
+                    const abs_mouse_index = to_display.items[rel_mouse_index.?].index;
+
+                    if (me.action == .press and me.button.pointer()) {
+                        e.handled = true;
+                        var dirs = getDirectoryById(id);
+                        if (!shift_held) {
+                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
+                            setLastMouseSelectedIndex(id, abs_mouse_index);
+                        } else {
+                            const prev_index = getLastMouseSelectedIndex(id);
+                            const prev_checked = dirs[prev_index].checked;
+                            const first_idx = @min(prev_index, abs_mouse_index);
+                            const last_idx = @max(prev_index, abs_mouse_index);
+                            for (first_idx..last_idx + 1) |idx| {
+                                dirs[idx].checked = prev_checked;
+                            }
+                        }
+                    } else if (selection_mode == .mouse and me.action == .position) {
+                        dvui.focusWidget(null, scroll.data().id, e.num);
+                        setMouseSelectionIndex(id, abs_mouse_index);
+                        setKbSelectionIndex(id, abs_mouse_index);
+                        focussed_grid = id;
+                        selection_mode = .mouse;
+                    } else if (me.action == .motion) {
+                        selection_mode = .mouse;
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    var row_number: usize = 0;
+
+    for (to_display.items, 0..) |entry, rel_idx| {
+        // TODO: Make this nicer
+        const abs_index = to_display.items[rel_idx].index;
+
+        if ((selection_mode == .kb and abs_index == getKbSelectionIndex(id) and id == focussed_grid) or
+            (selection_mode == .mouse and abs_index == getMouseSelectionIndex(id) and id == focussed_grid))
+        {
+            background = .{ .name = .fill_press };
+        } else {
+            background = null;
+        }
         // TODO: Check if this *1000000 is really needed? If the create is called from
         // different parts of the source code.
-        const id_extra = @intFromEnum(id) * 1000000 + i;
-        // This hbox lets us know if this row is being hovered by the mouse.
-        var row_hover = try dvui.box(@src(), .horizontal, .{
+        const id_extra = @intFromEnum(id) * 1000000 + abs_index;
+
+        // TODO: I don;t think this is needed any more . USed ot be used for hover
+        var row_box = try dvui.box(@src(), .horizontal, .{
             .id_extra = id_extra,
             .expand = .horizontal,
         });
-        defer row_hover.deinit();
+        defer row_box.deinit();
 
-        var background: ?dvui.Options.ColorOrName = null;
-        if (true) {
-            const evts = dvui.events();
-            for (evts) |*e| {
-                // TODO: Check if a more appropraite rect?
-                // Actuall can just make it use the simple event matych now!!
-                if (!dvui.eventMatch(e, .{ .id = row_hover.wd.id, .r = row_hover.wd.backgroundRectScale().r })) {
-                    //                    if (!dvui.eventMatchSimple(e, row_hover.data())) {
-                    continue;
-                }
-
-                const mouse_index = getMouseSelectionIndex(id);
-                switch (e.evt) {
-                    .mouse => |me| {
-                        if (me.action == .press and me.button.pointer()) {
-                            e.handled = true;
-                            var dirs = getDirectoryById(id);
-                            if (!shift_held) {
-                                dirs[mouse_index].checked = !dirs[mouse_index].checked;
-                                setLastMouseSelectedIndex(id, mouse_index);
-                            } else {
-                                const prev_index = getLastMouseSelectedIndex(id);
-                                const prev_checked = dirs[prev_index].checked;
-                                const first_idx = @min(prev_index, mouse_index);
-                                const last_idx = @max(prev_index, mouse_index);
-                                for (first_idx..last_idx + 1) |idx| {
-                                    dirs[idx].checked = prev_checked;
-                                }
-                            }
-                        } else
-                        // TODO: This should prob go above in the "scroll grid" part.
-                        // Or why don't we get the key events above. we aren't just filtering to the scroll grid?
-                        if (me.action == .position or me.action == .wheel_x or me.action == .wheel_y) {
-                            dvui.focusWidget(null, scroll.data().id, e.num);
-                            setMouseSelectionIndex(id, i);
-                            setKbSelectionIndex(id, i);
-                            focussed_grid = id;
-                            selection_mode = .mouse;
-                            dvui.refresh(null, @src(), null);
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            // TODO: Make this nicer
-            if ((selection_mode == .kb and i == getKbSelectionIndex(id) and id == focussed_grid) or (selection_mode == .mouse and i == getMouseSelectionIndex(id) and id == focussed_grid)) {
-                background = .{ .name = .err };
-            }
-        }
         var row = try dvui.box(@src(), .horizontal, .{
             .id_extra = id_extra,
             .expand = .horizontal,
@@ -843,25 +919,25 @@ fn makeGridBody(id: GridType) !void {
 
         defer row.deinit();
         var buf = std.mem.zeroes([256]u8);
-        const checked_value = if (getDirectoryById(id)[i].checked) "[X]" else "[ ]";
+        const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
         try makeGridDataRow(0, id_extra, checked_value, false);
-        try makeGridDataRow(1, id_extra, entry.filename(), false);
-        try makeGridDataRow(2, id_extra, entry.extension(), false);
-        try makeGridDataRow(3, id_extra, entry.attribs(), false);
+        try makeGridDataRow(1, id_extra, entry.entry.filename(), false);
+        try makeGridDataRow(2, id_extra, entry.entry.extension(), false);
+        try makeGridDataRow(3, id_extra, entry.entry.attribs(), false);
 
-        var text = try formatNumber(&buf, "{}B", entry.fileSizeInB());
+        var text = try formatNumber(&buf, "{}B", entry.entry.fileSizeInB());
         try makeGridDataRow(4, id_extra, text, true);
 
-        text = try formatNumber(&buf, "{}K", entry.fileUsedInKB());
+        text = try formatNumber(&buf, "{}K", entry.entry.fileUsedInKB());
         try makeGridDataRow(5, id_extra, text, true);
 
-        text = try std.fmt.bufPrint(&buf, "{}", .{entry.user()});
+        text = try std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()});
         try makeGridDataRow(6, id_extra, text, true);
 
         // TODO: Hardcoded 25's. should jsut be row height?
         const nr_displayed = getScrollInfo(id).viewport.h / 25 - 2;
-        if (selection_mode == .kb and getKbSelectionIndex(id) == i) {
-            const my_pos: f32 = @as(f32, @floatFromInt(i)) * 25;
+        if (selection_mode == .kb and getKbSelectionIndex(id) == rel_idx) {
+            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * 25;
             const viewport_btm = getScrollInfo(id).viewport.y + getScrollInfo(id).viewport.h - 40;
             if (viewport_btm < my_pos) {
                 const scroll_pos: f32 = my_pos - (nr_displayed * 25);
@@ -871,6 +947,7 @@ fn makeGridBody(id: GridType) !void {
                 getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
             }
         }
+        row_number += 1;
     }
 }
 
@@ -1267,6 +1344,8 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
 
 pub fn processEvents() void {
     const evts = dvui.events();
+    pgdn_pressed = false;
+    pgup_pressed = false;
 
     for (evts) |*e| {
         // This doesn't return events, even when the scrollbar is focused.
@@ -1460,15 +1539,19 @@ pub fn processEvents() void {
             .page_down => {
                 e.handled = true;
                 if (ke.action == .down) {
+                    pgdn_pressed = true;
+                    selection_mode = .kb;
                     getScrollInfo(focussed_grid).scrollPageDown(.vertical);
-                    selection_mode = .mouse; // TODO: This is temp workaround
+                    //   selection_mode = .mouse; // TODO: This is temp workaround
                 }
             },
             .page_up => {
                 e.handled = true;
                 if (ke.action == .down) {
+                    pgup_pressed = true;
+                    selection_mode = .kb;
                     getScrollInfo(focussed_grid).scrollPageUp(.vertical);
-                    selection_mode = .mouse;
+                    // selection_mode = .mouse;
                 }
             },
             else => {},
