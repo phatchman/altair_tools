@@ -881,6 +881,7 @@ fn makeGridBody(id: GridType) !void {
 
                     rel_mouse_index = @intFromFloat(@max(me.p.y + offset_magic, 0) / 25);
                     rel_mouse_index += first_displayed;
+                    rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
                     if (me.action == .press and me.button.pointer()) {
