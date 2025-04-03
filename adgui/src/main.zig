@@ -1557,7 +1557,8 @@ const CommandState = struct {
         no_all: bool = false,
         cancel: bool = false,
         image_selector: bool = false,
-        file_selector: bool = false,
+        save_file_selector: bool = false,
+        open_file_selector: bool = false,
         type_selector: bool = false,
 
         const yes_no_all: Buttons = .{ .yes = true, .no = true, .yes_all = true, .no_all = true };
@@ -1715,7 +1716,7 @@ pub fn makeTransferDialog() !void {
             var button_box = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
             defer button_box.deinit();
 
-            if (CommandState.buttons.image_selector or CommandState.buttons.file_selector) {
+            if (CommandState.buttons.image_selector or CommandState.buttons.save_file_selector or CommandState.buttons.open_file_selector) {
                 var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                 defer hbox.deinit();
                 if (CommandState.buttons.image_selector) {
@@ -1761,9 +1762,21 @@ pub fn makeTransferDialog() !void {
                             entry.textTyped(filename, false);
                             dvui.refresh(null, @src(), null);
                         }
-                    } else {
+                    } else if (CommandState.buttons.save_file_selector) {
                         try CommandState.setFileSelectorBuffer("cpm.bin");
                         if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
+                            .title = "Save file as",
+                            .filters = &.{ "*.bin", "*.cpm" },
+                            .filter_description = "System Images *.bin;*.cpm",
+                        })) |filename| {
+                            try CommandState.setFileSelectorBuffer(filename);
+                            entry.textLayout.selection.selectAll();
+                            entry.textTyped(filename, false);
+                            dvui.refresh(null, @src(), null);
+                        }
+                    } else {
+                        try CommandState.setFileSelectorBuffer("cpm.bin");
+                        if (try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
                             .title = "Save file as",
                             .filters = &.{ "*.bin", "*.cpm" },
                             .filter_description = "System Images *.bin;*.cpm",
@@ -2161,7 +2174,7 @@ fn getSysButtonHandler() !void {
         .processing => {
             CommandState.prompt = "Extract system image to?";
             CommandState.state = .waiting_for_input;
-            CommandState.buttons = .{ .file_selector = true, .yes = true, .no = true };
+            CommandState.buttons = .{ .save_file_selector = true, .yes = true, .no = true };
         },
         .confirm => {
             // TODO: Need the try / force option here.
