@@ -1717,7 +1717,7 @@ const CommandState = struct {
     }
 
     pub fn addProcessedFile(status: FileStatus) !void {
-        try processed_files.append(arena.allocator(), status);
+        try processed_files.append(allocator, status);
     }
 
     pub fn currentFile() ?*FileStatus {
@@ -2022,74 +2022,90 @@ pub fn makeTransferDialog() !void {
 /// Should be called each frame until current_command != .get
 /// Handles at most 1 file per frame.
 fn getButtonHandler() !void {
-    if (image_directories == null) {
-        current_command = .none;
+    if (image_directories == null or local_path_selection == null) {
+        CommandState.finishCommand();
+        CommandState.freeResources();
+        _ = 5;
         return;
     }
-    current_command = .get;
-    if (local_path_selection) |local_path| {
-        if (CommandState.itr == null) {
-            // There shouldn't be any processed files when a new command is started.
-            std.debug.assert(CommandState.processed_files.items.len == 0);
-            // Create an iterator that returns the selected directories.
-            CommandState.itr = Commands.DirectoryIterator(image_directories.?, DirectoryEntry.isSelected);
-        }
 
-        switch (CommandState.state) {
-            .confirm, .processing => {
-                CommandState.prompt = null; // TODO: fix all of this state handling stuff.
-                const dir_entry = if (CommandState.state == .confirm) CommandState.itr.?.peek() else CommandState.itr.?.next();
-                if (dir_entry) |file| {
-                    if (CommandState.state != .confirm) {
-                        try CommandState.processed_files.append(allocator, .init(file.filenameAndExtension(), "Copying..."));
-                    }
-                    var success: bool = true;
-                    commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm) catch |err| {
-                        success = false;
-                        var current = CommandState.currentFile().?;
-                        if (CommandState.confirm_all == .yes_to_all) {
-                            current.message = formatErrorMessage(err);
-                        } else if (CommandState.confirm_all == .no_to_all) {
-                            current.message = "Skipped.";
-                        } else {
-                            switch (err) {
-                                error.PathAlreadyExists => {
-                                    current.message = "Overwrite existing file?";
-                                    CommandState.buttons = .yes_no_all;
-                                    CommandState.state = .waiting_for_input;
-                                },
-                                else => {
-                                    CommandState.prompt = "Retry?";
-                                    current.message = formatErrorMessage(err);
-                                    CommandState.buttons = .yes_no_all;
-                                    CommandState.state = .waiting_for_input;
-                                },
-                            }
-                        }
-                    };
-                    if (success) {
+    const local_path = local_path_selection.?;
+
+    var dir_itr = CommandState.directoryEntryIterator(image_directories.?);
+
+    blk: switch (CommandState.state) {
+        .processing => {
+            CommandState.prompt = null; // TODO: fix all of this state handling stuff.
+            if (dir_itr.next()) |file| {
+                try CommandState.addProcessedFile(.init(file.filenameAndExtension(), "Erase?"));
+                if (CommandState.confirm_all == .yes_to_all) {
+                    CommandState.state = .confirm;
+                    // Continue to the .confirm case.
+                    continue :blk .confirm;
+                } else if (CommandState.confirm_all == .no_to_all) {
+                    CommandState.currentFile().?.message = "Skipped.";
+                } else {
+                    CommandState.buttons = .yes_no_all;
+                    CommandState.state = .waiting_for_input;
+                }
+            } else {
+                std.debug.print("else 1\n", .{});
+                CommandState.finishCommand();
+            }
+        },
+        .confirm => {
+            if (dir_itr.peek()) |file| {
+                var success: bool = true;
+
+                commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm) catch |err| {
+                    success = false;
+                    var current = CommandState.currentFile().?;
+                    if (CommandState.confirm_all == .yes_to_all) {
+                        current.message = formatErrorMessage(err);
                         CommandState.state = .processing;
-                        CommandState.currentFile().?.message = "Copied.";
+                    } else if (CommandState.confirm_all == .no_to_all) {
+                        current.message = "Skipped.";
+                    } else {
+                        switch (err) {
+                            error.PathAlreadyExists => {
+                                current.message = "Overwrite existing file?";
+                                CommandState.buttons = .yes_no_all;
+                                CommandState.state = .waiting_for_input;
+                            },
+                            else => {
+                                CommandState.prompt = "Retry?";
+                                current.message = formatErrorMessage(err);
+                                CommandState.buttons = .yes_no_all;
+                                CommandState.state = .waiting_for_input;
+                            },
+                        }
                     }
-                } else {
-                    std.debug.print("setting current command = .none\n", .{});
-                    CommandState.finishCommand();
-                    // reload the directories when done so user can see.
-                    //local_directories = try commands.localDirectoryListing(gpa);
-                }
-            },
-            .cancel => {
-                if (CommandState.currentFile()) |current| {
-                    current.message = "Skipped.";
+                };
+                if (success) {
                     CommandState.state = .processing;
-                } else {
-                    CommandState.finishCommand();
+                    CommandState.currentFile().?.message = "Copied.";
                 }
-            },
-            else => unreachable,
-        }
-    } else {
-        // TODO: pop-up an error here.
+            } else {
+                std.debug.print("else\n", .{});
+                CommandState.finishCommand();
+            }
+        },
+        // TODO: This is live code.
+        //            else {
+        //                std.debug.print("setting current command = .none\n", .{});
+        //                CommandState.finishCommand();
+        //                // reload the directories when done so user can see.
+        //                //local_directories = try commands.localDirectoryListing(gpa);
+        //            }
+        .cancel => {
+            if (CommandState.currentFile()) |current| {
+                current.message = "Skipped.";
+                CommandState.state = .processing;
+            } else {
+                CommandState.finishCommand();
+            }
+        },
+        else => unreachable,
     }
 }
 
