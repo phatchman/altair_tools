@@ -45,7 +45,7 @@ const Backend = dvui.backend;
 const window_icon_png = @embedFile("altair.png");
 
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
-pub const gpa = gpa_instance.allocator();
+pub const allocator = gpa_instance.allocator();
 
 const CommandList = enum {
     none,
@@ -107,23 +107,23 @@ var local_path_initialized = false;
 var local_path_selection: ?[]const u8 = null;
 fn setLocalPath(path: []const u8) !void {
     if (local_path_selection) |local_path| {
-        gpa.free(local_path);
+        allocator.free(local_path);
     }
-    local_path_selection = try gpa.dupe(u8, path);
+    local_path_selection = try allocator.dupe(u8, path);
     local_path_initialized = false;
 }
 
 fn setImagePath(path: []const u8) !void {
     if (image_path_selection) |image_path| {
-        gpa.free(image_path);
+        allocator.free(image_path);
     }
-    image_path_selection = try gpa.dupe(u8, path);
+    image_path_selection = try allocator.dupe(u8, path);
     image_path_initialized = false;
 }
 var image_path_initialized = false;
 var image_path_selection: ?[]const u8 = null;
 var copy_mode = CopyMode.AUTO;
-
+var changed_orientation = false;
 const empty_directory_list: [0]DirectoryEntry = .{};
 
 pub fn main() !void {
@@ -134,12 +134,12 @@ pub fn main() !void {
     std.log.info("SDL version: {}", .{Backend.getSDLVersion()});
 
     defer if (gpa_instance.deinit() != .ok) @panic("Memory leak on exit!");
-    defer commands.deinit(gpa);
-    defer CommandState.processed_files.clearAndFree(gpa);
+    defer commands.deinit(allocator);
+    defer CommandState.processed_files.clearAndFree(allocator);
 
     // init SDL backend (creates and owns OS window)
     var backend = try Backend.initWindow(.{
-        .allocator = gpa,
+        .allocator = allocator,
         .size = .{ .w = 900.0, .h = 600.0 },
         .min_size = .{ .w = 250.0, .h = 350.0 },
         .vsync = vsync,
@@ -149,24 +149,24 @@ pub fn main() !void {
     defer backend.deinit();
 
     try setImagePath(".");
-    defer gpa.free(image_path_selection.?); // TODO: Either make thes undefined and free here or options nad check the optional.
+    defer allocator.free(image_path_selection.?); // TODO: Either make thes undefined and free here or options nad check the optional.
     try setLocalPath(".\\disks");
-    defer gpa.free(local_path_selection.?);
+    defer allocator.free(local_path_selection.?);
 
     // init dvui Window (maps onto a single OS window)
-    var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{});
+    var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
     defer {
         std.debug.print("DEINITY\n", .{});
         win.deinit();
     }
     defer {
         if (theme_set)
-            global_theme.deinit(gpa);
+            global_theme.deinit(allocator);
     }
 
     std.debug.print("Local path = {s}\n", .{local_path_selection.?});
     try commands.openLocalDirectory(local_path_selection.?);
-    local_directories = try commands.localDirectoryListing(gpa);
+    local_directories = try commands.localDirectoryListing(allocator);
     main_loop: while (true) {
         // beginWait coordinates with waitTime below to run frames only when needed
         const nstime = win.beginWait(backend.hasEvent());
@@ -234,11 +234,11 @@ fn set_theme() !void {
         \\  "color_border": "#60827d"
         \\}
     ;
-    const parsed = try dvui.Theme.QuickTheme.fromString(gpa, terminal_theme);
+    const parsed = try dvui.Theme.QuickTheme.fromString(allocator, terminal_theme);
     defer parsed.deinit();
 
     const quick_theme = parsed.value;
-    global_theme = try quick_theme.toTheme(gpa);
+    global_theme = try quick_theme.toTheme(allocator);
     // TODO: Is there a better colout to use for the grid selector than err?
     global_theme.color_err = try dvui.Color.fromHex("#08380e".*);
     //    global_theme.font_caption = .{ .size = global_theme.font_body.size, .name = global_theme.font_caption.name };
@@ -490,7 +490,8 @@ fn gui_frame() !bool {
                 pane_orientation = .vertical;
             } else {
                 pane_orientation = .horizontal;
-                dvui.refresh(dvui.currentWindow(), @src(), null);
+                changed_orientation = true;
+                dvui.refresh(null, @src(), null);
             }
         }
         if (try statusBarButton(@src(), "EXIT", .{}, color_to_use, 1, .exit, true)) {
@@ -692,7 +693,7 @@ fn createFileSelector(id: GridType) !void {
         // TODO: Repeated code from the icon click.
         image_directories = null;
         try commands.openExistingImage(entry.getText());
-        image_directories = try commands.directoryListing(gpa);
+        image_directories = try commands.directoryListing(allocator);
         std.debug.print("Enter\n", .{});
         dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
     }
@@ -705,7 +706,7 @@ fn createFileSelector(id: GridType) !void {
                 std.debug.print("New file: {s}\n", .{f});
                 image_directories = null;
                 try commands.openExistingImage(f);
-                image_directories = try commands.directoryListing(gpa);
+                image_directories = try commands.directoryListing(allocator);
                 try setImagePath(f);
                 is_initialised.* = false;
             }
@@ -713,7 +714,7 @@ fn createFileSelector(id: GridType) !void {
             // TODO: prob just init this to undefined. it's not really an optional.
             if (local_path_selection.?.len == 1 and local_path_selection.?[0] == '.') {
                 var cwd = std.fs.cwd();
-                const full_path = try cwd.realpathAlloc(gpa, ".");
+                const full_path = try cwd.realpathAlloc(allocator, ".");
                 try setLocalPath(full_path);
             }
 
@@ -721,7 +722,7 @@ fn createFileSelector(id: GridType) !void {
                 try dvui.dialogNativeFolderSelect(dvui.currentWindow().arena(), .{ .title = "Select a Folder", .path = local_path_selection });
             if (dirname) |dir| {
                 try commands.openLocalDirectory(dir);
-                local_directories = try commands.localDirectoryListing(gpa);
+                local_directories = try commands.localDirectoryListing(allocator);
                 try setLocalPath(dir);
             }
         }
@@ -1689,6 +1690,10 @@ const CommandState = struct {
         const yes_no_all: Buttons = .{ .yes = true, .no = true, .yes_all = true, .no_all = true };
         const yes_no = .{ .yes = true, .no = true };
         const none: Buttons = .{};
+
+        pub fn isNone(self: Buttons) bool {
+            return std.meta.eql(self, .none);
+        }
     };
     pub const ConfirmAllState = enum { none, yes_to_all, no_to_all };
     // Remember the itr for next time!
@@ -1702,7 +1707,18 @@ const CommandState = struct {
     var prompt: ?[]const u8 = null;
     var err_message: ?[]const u8 = null;
     var initialized = false;
-    var arena = std.heap.ArenaAllocator.init(gpa);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+
+    pub fn directoryEntryIterator(entries: []DirectoryEntry) *Commands.DirIterator {
+        if (itr == null) {
+            itr = Commands.DirectoryIterator(entries, DirectoryEntry.isSelected);
+        }
+        return &itr.?;
+    }
+
+    pub fn addProcessedFile(status: FileStatus) !void {
+        try processed_files.append(arena.allocator(), status);
+    }
 
     pub fn currentFile() ?*FileStatus {
         if (processed_files.items.len > 0) {
@@ -1714,9 +1730,9 @@ const CommandState = struct {
 
     pub fn setFileSelectorBuffer(buf: []const u8) !void {
         if (file_selector_buffer) |buffer| {
-            gpa.free(buffer);
+            allocator.free(buffer);
         }
-        file_selector_buffer = try gpa.dupe(u8, buf);
+        file_selector_buffer = try allocator.dupe(u8, buf);
     }
 
     pub fn shouldProcessCommand() bool {
@@ -1735,7 +1751,7 @@ const CommandState = struct {
         // TODO: Move this to using the arena?
         processed_files.clearRetainingCapacity();
         if (file_selector_buffer) |buffer| {
-            gpa.free(buffer);
+            allocator.free(buffer);
             file_selector_buffer = null;
         }
         image_type = null;
@@ -1967,7 +1983,7 @@ pub fn makeTransferDialog() !void {
         }
         // Scroll to end if list is bigger
         const nr_messages = CommandState.processed_files.items.len;
-        if (nr_messages > static.last_nr_messages) {
+        if (nr_messages > static.last_nr_messages or !CommandState.buttons.isNone()) {
             static.scroll_info.scrollToOffset(.vertical, 99999);
         }
         static.last_nr_messages = nr_messages;
@@ -1992,10 +2008,10 @@ pub fn makeTransferDialog() !void {
                 // Refresh everything to the newset state.
                 // TODO: This needs to be moved so it is always called on closeing of the window. i.e. by checking the closing variable?
                 if (local_directories != null) {
-                    local_directories = try commands.localDirectoryListing(gpa);
+                    local_directories = try commands.localDirectoryListing(allocator);
                 }
                 if (image_directories != null) {
-                    image_directories = try commands.directoryListing(gpa);
+                    image_directories = try commands.directoryListing(allocator);
                 }
             }
         }
@@ -2007,7 +2023,6 @@ pub fn makeTransferDialog() !void {
 /// Handles at most 1 file per frame.
 fn getButtonHandler() !void {
     if (image_directories == null) {
-        // TODO: Potentially show a no files dialog box.
         current_command = .none;
         return;
     }
@@ -2026,7 +2041,7 @@ fn getButtonHandler() !void {
                 const dir_entry = if (CommandState.state == .confirm) CommandState.itr.?.peek() else CommandState.itr.?.next();
                 if (dir_entry) |file| {
                     if (CommandState.state != .confirm) {
-                        try CommandState.processed_files.append(gpa, .init(file.filenameAndExtension(), "Copying..."));
+                        try CommandState.processed_files.append(allocator, .init(file.filenameAndExtension(), "Copying..."));
                     }
                     var success: bool = true;
                     commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm) catch |err| {
@@ -2100,7 +2115,7 @@ fn putButtonHandler() !void {
                 const dir_entry = if (CommandState.state == .confirm) CommandState.itr.?.peek() else CommandState.itr.?.next();
                 if (dir_entry) |file| {
                     if (CommandState.state != .confirm) {
-                        try CommandState.processed_files.append(gpa, .init(file.filenameAndExtension(), "Copying..."));
+                        try CommandState.processed_files.append(allocator, .init(file.filenameAndExtension(), "Copying..."));
                     }
                     var success: bool = true;
                     // TODO: Get user
@@ -2172,74 +2187,71 @@ fn putButtonHandler() !void {
 
 fn eraseButtonHandler() !void {
     std.debug.print("Erase handler\n", .{});
-    current_command = .erase;
 
-    // TODO:?? Is this local path selection needed?
-    // And how do we know what we are doing and erase on? Only the image dir?
-    if (local_path_selection) |local_path| {
-        if (CommandState.itr == null) {
-            // There shouldn't be any processed files when a new command is started.
-            std.debug.assert(CommandState.processed_files.items.len == 0);
-            // Create an iterator that returns the selected directories.
-            CommandState.itr = Commands.DirectoryIterator(image_directories.?, DirectoryEntry.isSelected);
-        }
+    //const local = struct {};
 
-        blk: switch (CommandState.state) {
-            .processing => {
-                if (CommandState.itr.?.next()) |file| {
-                    std.debug.print("{s}.{s}\n", .{ file.filename(), file.extension() });
-                    try CommandState.processed_files.append(gpa, .init(file.filenameAndExtension(), "Erase?"));
-                    if (CommandState.confirm_all == .yes_to_all) {
-                        CommandState.state = .confirm;
-                        continue :blk .confirm; // Continue to the .confirm case.
-                    } else if (CommandState.confirm_all == .no_to_all) {
-                        CommandState.currentFile().?.message = "Skipped.";
-                    } else {
-                        CommandState.buttons = .yes_no_all;
-                        CommandState.state = .waiting_for_input;
-                    }
+    if (image_path_selection == null)
+        return;
+    var dir_itr = CommandState.directoryEntryIterator(image_directories.?);
+
+    blk: switch (CommandState.state) {
+        .processing => {
+            std.debug.print(".processing\n", .{});
+            if (dir_itr.next()) |file| {
+                std.debug.print("{s}.{s}\n", .{ file.filename(), file.extension() });
+                try CommandState.addProcessedFile(.init(file.filenameAndExtension(), "Erase?"));
+                if (CommandState.confirm_all == .yes_to_all) {
+                    CommandState.state = .confirm;
+                    // Continue to the .confirm case.
+                    continue :blk .confirm;
+                } else if (CommandState.confirm_all == .no_to_all) {
+                    CommandState.currentFile().?.message = "Skipped.";
                 } else {
-                    CommandState.finishCommand();
+                    CommandState.buttons = .yes_no_all;
+                    CommandState.state = .waiting_for_input;
                 }
-            },
-            .confirm => {
-                if (CommandState.itr.?.peek()) |file| {
-                    std.debug.print(".confirm\n", .{});
-                    var success: bool = true;
-                    commands.eraseFile(file, local_path) catch |err| {
-                        std.debug.print("err\n", .{});
-                        var current = CommandState.currentFile().?;
-                        if (CommandState.confirm_all == .yes_to_all) {
-                            current.message = formatErrorMessage(err);
-                        } else {
-                            success = false;
-                            switch (err) {
-                                else => {
-                                    current.message = formatErrorMessage(err);
-                                    CommandState.state = .processing;
-                                },
-                            }
-                        }
-                    };
-                    if (success) {
-                        std.debug.print("success\n", .{});
+            } else {
+                CommandState.finishCommand();
+            }
+        },
+        .confirm => {
+            std.debug.print(".confirm\n", .{});
+            if (dir_itr.peek()) |file| {
+                var success: bool = true;
+                commands.eraseFile(file) catch |err| {
+                    std.debug.print("err\n", .{});
+                    var current = CommandState.currentFile().?;
+                    if (CommandState.confirm_all == .yes_to_all) {
+                        current.message = formatErrorMessage(err);
+                        success = false;
                         CommandState.state = .processing;
-                        CommandState.currentFile().?.message = "ERASED";
-                        file.deleted = true;
+                    } else {
+                        success = false;
+                        switch (err) {
+                            else => {
+                                current.message = formatErrorMessage(err);
+                                CommandState.state = .processing;
+                            },
+                        }
                     }
+                };
+                if (success) {
+                    std.debug.print("success\n", .{});
+                    CommandState.state = .processing;
+                    CommandState.currentFile().?.message = "ERASED";
+                    file.deleted = true;
                 }
-            },
-            .cancel => {
-                var current = CommandState.currentFile().?;
-                current.message = "Skipped.";
-                CommandState.state = .processing;
-            },
-            else => unreachable,
-        }
-
-        //        dvui.refresh(dvui.currentWindow(), @src(), null);
-    } else {
-        // TODO: pop-up an error here.
+            } else {
+                std.debug.print("else\n", .{});
+                CommandState.finishCommand();
+            }
+        },
+        .cancel => {
+            var current = CommandState.currentFile().?;
+            current.message = "Skipped.";
+            CommandState.state = .processing;
+        },
+        else => unreachable,
     }
 }
 
@@ -2262,7 +2274,7 @@ fn newButtonHandler() !void {
             // TODO: Need the try / force option here.
             if (CommandState.file_selector_buffer) |image_path| {
                 var current = FileStatus.init(image_path, "Creating...");
-                try CommandState.processed_files.append(gpa, current);
+                try CommandState.processed_files.append(allocator, current);
                 const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
                 commands.createNewImage(image_path, image_type) catch |err| {
                     // TODO: Should be some way to set this to error.
@@ -2303,7 +2315,7 @@ fn getSysButtonHandler() !void {
             // TODO: Need the try / force option here.
             if (CommandState.file_selector_buffer) |sys_path| {
                 var current = FileStatus.init(sys_path, "Creating...");
-                try CommandState.processed_files.append(gpa, current);
+                try CommandState.processed_files.append(allocator, current);
                 commands.getSystem(sys_path) catch |err| {
                     current.message = formatErrorMessage(err);
                 };
@@ -2342,7 +2354,7 @@ fn putSysButtonHandler() !void {
             // TODO: Need the try / force option here. ?? Not sure whta this comment means?
             if (CommandState.file_selector_buffer) |sys_path| {
                 var current = FileStatus.init(sys_path, "Installing...");
-                try CommandState.processed_files.append(gpa, current);
+                try CommandState.processed_files.append(allocator, current);
                 commands.putSystem(sys_path) catch |err| {
                     current.message = formatErrorMessage(err);
                 };
@@ -2376,15 +2388,15 @@ fn infoButtonHandler() !void {
             if (commands.disk_image) |disk_image| {
                 const image_type = disk_image.image_type;
                 const message_list = &CommandState.processed_files;
-                const allocator = CommandState.arena.allocator();
-                try message_list.append(gpa, .init("Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.tracks})));
-                try message_list.append(gpa, .init("Track Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.track_size})));
-                try message_list.append(gpa, .init("Res Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.reserved_tracks})));
-                try message_list.append(gpa, .init("Sect/Track", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sectors_per_track})));
-                try message_list.append(gpa, .init("Sect Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sector_size})));
-                try message_list.append(gpa, .init("Block Size", try std.fmt.allocPrint(allocator, "{d}", .{image_type.block_size})));
-                try message_list.append(gpa, .init("Directories", try std.fmt.allocPrint(allocator, "{d}", .{image_type.directories})));
-                try message_list.append(gpa, .init("Allocations", try std.fmt.allocPrint(allocator, "{d}", .{image_type.total_allocs})));
+                const arena = CommandState.arena.allocator();
+                try message_list.append(arena, .init("Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.tracks})));
+                try message_list.append(arena, .init("Track Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.track_size})));
+                try message_list.append(arena, .init("Res Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.reserved_tracks})));
+                try message_list.append(arena, .init("Sect/Track", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sectors_per_track})));
+                try message_list.append(arena, .init("Sect Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sector_size})));
+                try message_list.append(arena, .init("Block Size", try std.fmt.allocPrint(allocator, "{d}", .{image_type.block_size})));
+                try message_list.append(arena, .init("Directories", try std.fmt.allocPrint(allocator, "{d}", .{image_type.directories})));
+                try message_list.append(arena, .init("Allocations", try std.fmt.allocPrint(allocator, "{d}", .{image_type.total_allocs})));
                 CommandState.state = .waiting_for_input;
             } else {
                 CommandState.finishCommand();
