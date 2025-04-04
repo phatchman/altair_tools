@@ -1,18 +1,19 @@
 //
-// TODO: [_] Not to all should only no errors, not working. e.g. no to all overwriting should still copy the files it can copy.
+// TODO: [X] Not to all should only no errors, not working. e.g. no to all overwriting should still copy the files it can copy.
 //       [_] Fix up the size of the "transfer window"
 //       [X] Fix up the "yes" / "no" on the transfer window
-//       [_] Implement get/put sys
+//       [X] Implement get/put sys
 //       [_] Ask to do a recovery if the disk image is corrupted
 //       [_] Handle errors properly so app doesn't exit unexpectedly
 //       [_] Keep a backup image of any file opened? OR at least make that an option.
-//       [_] Add a help screen with keyboard shortcuts
+//       [X] Add a help screen with keyboard shortcuts
 //       [X] Keyboard shortcuts for the open image and open local directory
 //       [X] Something better to display if no image has been opened yet
 //       [_] Title bars on transfer window
 //       [X] Ctrl-A - select all
+//       [X] Fix issue with pgup / pgdown not moving selection in keyboard selection mode.
 //       [_] Fix issue with new images being created in local dir, not same as the dir used for open file.
-//       [_] Disable menu buttons that aren't valid for the current selection / action.
+//       [X] Disable menu buttons that aren't valid for the current selection / action.
 //       [_] Handle errors when invalid filesnames types into the text box
 //       [X] Change shortcuts.  Alt I - manually enter an image name.
 //                              Alt M - opens an image browser.
@@ -21,6 +22,8 @@
 //                              Alt F - info.
 //                              Alt R - orient.
 //       [_] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
+//       [_] Grids lose sort order when refreshed.
+//       [_]
 //       [_]
 //
 
@@ -400,6 +403,8 @@ fn gui_frame() !bool {
         const reversed = dvui.Options{
             .color_text = .{ .name = .fill_window },
             .color_fill = .{ .name = .text },
+            .color_fill_hover = .{ .name = .fill_press }, // Added.
+            .color_fill_press = .{ .name = .fill_hover }, // Added.
             .expand = .horizontal,
             .margin = Rect{ .x = 2, .w = 2, .y = 2, .h = 0 },
             .corner_radius = Rect.all(0),
@@ -793,6 +798,7 @@ fn makeGridBody(id: GridType) !void {
         if (id == .image and current_user != 16 and current_user != entry.user()) continue;
         to_display.appendAssumeCapacity(.{ .entry = entry, .index = i });
     }
+    if (to_display.items.len == 0) return;
 
     // TODO: Make this highlight part of the theme?
     //    const highlight_color: Options.ColorOrName = .{ .color = try dvui.Color.fromHex("#08380e".*) };
@@ -876,11 +882,10 @@ fn makeGridBody(id: GridType) !void {
             switch (e.evt) {
                 .mouse => |me| {
                     // TODO: Hardcoded 25's. should just be row height?
-                    const offset_magic = -103; // Not sure why this magic is required?
-                    const first_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.y / 25);
-
-                    rel_mouse_index = @intFromFloat(@max(me.p.y + offset_magic, 0) / 25);
-                    rel_mouse_index += first_displayed;
+                    const offset_magic = -103; // Not sure why this magic number is required?
+                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / 25;
+                    const rel_mouse_index_f = @max(me.p.y + offset_magic, 0) / 25 + first_displayed_f;
+                    rel_mouse_index = @intFromFloat(rel_mouse_index_f);
                     rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
@@ -1222,7 +1227,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     if (selected) {
         options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_press) } });
     } else if (!enabled) {
-        options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_hover) } });
+        options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_press) } });
     }
     var bw = dvui.ButtonWidget.init(src, init_opts, options2);
 
@@ -1253,7 +1258,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     const label_rect = try labelNoFmtRect(src, label_str, options);
     const fill_color = color: {
         if (!enabled or bw.hover) {
-            break :color opts.color(.fill_hover);
+            break :color opts.color(.fill_press);
         } else if (alt_held) {
             break :color opts.color(.text);
         } else {
@@ -1455,19 +1460,19 @@ pub fn processEvents() void {
                 }
             },
             .g => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .get;
                 }
             },
             .p => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .put;
                 }
             },
             .a => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .mode;
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
@@ -1488,55 +1493,55 @@ pub fn processEvents() void {
                 }
             },
             .u => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .user;
                 }
             },
             .e => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .erase;
                 }
             },
             .c => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .close;
                 }
             },
             .r => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .orient;
                 }
             },
             .x => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .exit;
                 }
             },
             .s => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .getsys;
                 }
             },
             .y => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .putsys;
                 }
             },
             .n => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .new;
                 }
             },
             .f => {
-                if (ke.action == .up and alt_held) {
+                if (ke.action == .down and alt_held) {
                     e.handled = true;
                     current_command = .info;
                 }
@@ -1714,6 +1719,7 @@ const CommandState = struct {
         itr = null;
         state = .processing;
         confirm_all = .none;
+        buttons = .none;
         current_command = .none;
     }
 
@@ -2094,17 +2100,22 @@ fn putButtonHandler() !void {
                     // TODO: Get user
                     commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm or CommandState.confirm_all == .yes_to_all) catch |err| {
                         var current = CommandState.currentFile().?;
-                        std.debug.print("error is {s}\n", .{@errorName(err)});
+                        std.debug.print("put error is {s}\n", .{@errorName(err)});
                         switch (err) {
                             // These are errors that need to be handled regardless of "confirm all"
-                            error.OutOfAllocs => {
+                            error.OutOfExtents,
+                            error.OutOfAllocs,
+                            => {
                                 success = false;
                                 current.message = "Disk Full";
                                 CommandState.finishCommand();
                             },
                             else => {
                                 if (CommandState.confirm_all == .yes_to_all) {
+                                    std.debug.print("fmt error\n", .{});
                                     current.message = formatErrorMessage(err);
+                                    success = false; // That damn success flag again. really need to refactor this.
+                                    CommandState.state = .processing; // And this is tricky to spot as well. otherwise can loop on same error.
                                 } else if (CommandState.confirm_all == .no_to_all) {
                                     current.message = "Skipped";
                                     success = false;
