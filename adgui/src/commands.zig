@@ -1,7 +1,7 @@
 const std = @import("std");
 const ad = @import("altair_disk");
 const DiskImage = ad.DiskImage;
-const allocator = @import("main.zig").gpa;
+const allocator = @import("main.zig").allocator;
 
 disk_image: ?ad.DiskImage = null,
 current_dir: ?std.fs.Dir = null,
@@ -297,17 +297,13 @@ pub fn putFile(self: *Self, filename: []const u8, dirname: []const u8, user: usi
 }
 
 // TODO: Check constnesses.
-pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry, dest_dir: []const u8) !void {
+pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry) !void {
     if (self.disk_image) |*image| {
         switch (to_erase.entry) {
             .image => |*cooked_entry| {
                 try image.erase(cooked_entry);
             },
-            .local => |local_entry| {
-                var dir = try std.fs.cwd().openDir(dest_dir, .{});
-                defer dir.close();
-                try dir.deleteFile(local_entry.full_filename);
-            },
+            .local => return error.NotSupported,
         }
     }
 }
