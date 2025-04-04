@@ -13,3 +13,5 @@ tmp/
 legacy/
 release/
 adgui/disks
+.vscode
+adgui/.vscode

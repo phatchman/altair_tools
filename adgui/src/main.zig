@@ -1657,7 +1657,7 @@ pub fn nextCopyMode(mode: CopyMode) CopyMode {
 // In fact the buttons can move into Command right? They don't need to be set on the current file? Eve nthough the message does need ot be set per file.
 // So move the button state to the CommandState and add a "context" to the command object so that can pass ocmmand-specific context between the button handler
 // the the "transferDialog".
-const FileStatus = struct {
+pub const FileStatus = struct {
     filename: []const u8,
     message: []const u8 = "",
     completed: bool = false,
@@ -1673,7 +1673,7 @@ const FileStatus = struct {
 // TODO: pull command state into here and any
 // Help clean up state management like with a BeginCommand / EndCommand
 // Prob add some more helpers so that users aren't always setting multiple raw CommandState fields.
-const CommandState = struct {
+pub const CommandState = struct {
     const State = enum { processing, waiting_for_input, confirm, cancel };
 
     pub const Buttons = struct {
@@ -1687,27 +1687,28 @@ const CommandState = struct {
         open_file_selector: bool = false,
         type_selector: bool = false,
 
-        const yes_no_all: Buttons = .{ .yes = true, .no = true, .yes_all = true, .no_all = true };
-        const yes_no = .{ .yes = true, .no = true };
-        const none: Buttons = .{};
+        pub const yes_no_all: Buttons = .{ .yes = true, .no = true, .yes_all = true, .no_all = true };
+        pub const yes_no = .{ .yes = true, .no = true };
+        pub const none: Buttons = .{};
 
         pub fn isNone(self: Buttons) bool {
             return std.meta.eql(self, .none);
         }
     };
+    // TODO: What should be pub or not?
     pub const ConfirmAllState = enum { none, yes_to_all, no_to_all };
     // Remember the itr for next time!
-    var state: State = .processing;
-    var confirm_all: ConfirmAllState = .none;
+    pub var state: State = .processing;
+    pub var confirm_all: ConfirmAllState = .none;
     var itr: ?Commands.DirIterator = null;
-    var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
-    var buttons: Buttons = .{};
-    var file_selector_buffer: ?[]const u8 = null;
-    var image_type: ?*const ad.DiskImageType = null;
-    var prompt: ?[]const u8 = null;
-    var err_message: ?[]const u8 = null;
-    var initialized = false;
-    var arena = std.heap.ArenaAllocator.init(allocator);
+    pub var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
+    pub var buttons: Buttons = .{};
+    pub var file_selector_buffer: ?[]const u8 = null;
+    pub var image_type: ?*const ad.DiskImageType = null;
+    pub var prompt: ?[]const u8 = null;
+    pub var err_message: ?[]const u8 = null;
+    pub var initialized = false;
+    pub var arena = std.heap.ArenaAllocator.init(allocator);
 
     pub fn directoryEntryIterator(entries: []DirectoryEntry) *Commands.DirIterator {
         if (itr == null) {
@@ -2025,88 +2026,24 @@ fn getButtonHandler() !void {
     if (image_directories == null or local_path_selection == null) {
         CommandState.finishCommand();
         CommandState.freeResources();
-        _ = 5;
         return;
     }
 
-    const local_path = local_path_selection.?;
-
-    var dir_itr = CommandState.directoryEntryIterator(image_directories.?);
-
-    blk: switch (CommandState.state) {
-        .processing => {
-            CommandState.prompt = null; // TODO: fix all of this state handling stuff.
-            if (dir_itr.next()) |file| {
-                try CommandState.addProcessedFile(.init(file.filenameAndExtension(), "Erase?"));
-                if (CommandState.confirm_all == .yes_to_all) {
-                    CommandState.state = .confirm;
-                    // Continue to the .confirm case.
-                    continue :blk .confirm;
-                } else if (CommandState.confirm_all == .no_to_all) {
-                    CommandState.currentFile().?.message = "Skipped.";
-                } else {
-                    CommandState.buttons = .yes_no_all;
-                    CommandState.state = .waiting_for_input;
-                }
-            } else {
-                std.debug.print("else 1\n", .{});
-                CommandState.finishCommand();
+    const handler = ButtonHandler.newHandler(
+        struct {
+            pub fn getFile(file: *DirectoryEntry) !void {
+                const local_path = local_path_selection.?;
+                try commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm);
             }
-        },
-        .confirm => {
-            if (dir_itr.peek()) |file| {
-                var success: bool = true;
-
-                commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm) catch |err| {
-                    success = false;
-                    var current = CommandState.currentFile().?;
-                    if (CommandState.confirm_all == .yes_to_all) {
-                        current.message = formatErrorMessage(err);
-                        CommandState.state = .processing;
-                    } else if (CommandState.confirm_all == .no_to_all) {
-                        current.message = "Skipped.";
-                    } else {
-                        switch (err) {
-                            error.PathAlreadyExists => {
-                                current.message = "Overwrite existing file?";
-                                CommandState.buttons = .yes_no_all;
-                                CommandState.state = .waiting_for_input;
-                            },
-                            else => {
-                                CommandState.prompt = "Retry?";
-                                current.message = formatErrorMessage(err);
-                                CommandState.buttons = .yes_no_all;
-                                CommandState.state = .waiting_for_input;
-                            },
-                        }
-                    }
-                };
-                if (success) {
-                    CommandState.state = .processing;
-                    CommandState.currentFile().?.message = "Copied.";
-                }
-            } else {
-                std.debug.print("else\n", .{});
-                CommandState.finishCommand();
+        }.getFile,
+        struct {
+            pub fn handleError(_: *FileStatus, _: anyerror) void {
+                return;
             }
-        },
-        // TODO: This is live code.
-        //            else {
-        //                std.debug.print("setting current command = .none\n", .{});
-        //                CommandState.finishCommand();
-        //                // reload the directories when done so user can see.
-        //                //local_directories = try commands.localDirectoryListing(gpa);
-        //            }
-        .cancel => {
-            if (CommandState.currentFile()) |current| {
-                current.message = "Skipped.";
-                CommandState.state = .processing;
-            } else {
-                CommandState.finishCommand();
-            }
-        },
-        else => unreachable,
-    }
+        }.handleError,
+        .{},
+    );
+    try handler.process(image_directories.?);
 }
 
 fn putButtonHandler() !void {
@@ -2450,7 +2387,8 @@ pub fn findNewImageName(directory: []const u8) ![]const u8 {
     return &static.filename;
 }
 
-fn formatErrorMessage(err: anyerror) []const u8 {
+// TODO: Move this into the handler and make not pub.
+pub fn formatErrorMessage(err: anyerror) []const u8 {
     const static = struct {
         var buffer: [1024]u8 = undefined;
     };
@@ -2469,3 +2407,5 @@ pub const std_options: std.Options = .{
     // Set the log level to info
     .log_level = .err,
 };
+
+const ButtonHandler = @import("ButtonHandler.zig");
