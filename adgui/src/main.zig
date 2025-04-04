@@ -63,7 +63,7 @@ const CommandList = enum {
     exit,
 };
 
-const vsync = true;
+const vsync = false;
 var alt_held = false;
 var shift_held = false;
 var enter_pressed = false;
@@ -253,6 +253,10 @@ fn gui_frame() !bool {
         try set_theme();
     frame_count += 1;
     text_box_focussed = false;
+    //    if (frame_count % 10 == 0) {
+    //        std.debug.print("FPS = {d}\n", .{dvui.FPS()});
+    //        std.debug.print("Start time = {}\n", .{std.time.microTimestamp()});
+    //    }
 
     if (!try createMenu()) return false;
 
@@ -499,6 +503,10 @@ fn gui_frame() !bool {
         // If there is an operation in progress, show the transfer dialog.
         try makeTransferDialog();
     }
+    //    if (frame_count % 10 == 0) {
+    //        std.debug.print("End time = {}\n", .{std.time.microTimestamp()});
+    //    }
+
     return true;
 }
 
@@ -2004,7 +2012,6 @@ fn getButtonHandler() !void {
         return;
     }
     current_command = .get;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
     if (local_path_selection) |local_path| {
         if (CommandState.itr == null) {
             // There shouldn't be any processed files when a new command is started.
@@ -2078,7 +2085,6 @@ fn putButtonHandler() !void {
         return;
     }
     current_command = .put;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
     //    if (local_path_selection) |local_path| {
     if (local_path_selection) |local_path| {
         if (CommandState.itr == null) {
@@ -2167,7 +2173,6 @@ fn putButtonHandler() !void {
 fn eraseButtonHandler() !void {
     std.debug.print("Erase handler\n", .{});
     current_command = .erase;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
 
     // TODO:?? Is this local path selection needed?
     // And how do we know what we are doing and erase on? Only the image dir?
@@ -2241,7 +2246,6 @@ fn eraseButtonHandler() !void {
 fn newButtonHandler() !void {
     std.debug.print("New handler\n", .{});
     current_command = .new;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
 
     // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
     // Or something like that. Are there any commands that don't need to show that window?
@@ -2283,7 +2287,6 @@ fn newButtonHandler() !void {
 fn getSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
     current_command = .getsys;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
 
     // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
     // Or something like that. Are there any commands that don't need to show that window?
@@ -2323,7 +2326,6 @@ fn getSysButtonHandler() !void {
 fn putSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
     current_command = .getsys;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
 
     // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
     // Or something like that. Are there any commands that don't need to show that window?
@@ -2363,7 +2365,6 @@ fn putSysButtonHandler() !void {
 fn infoButtonHandler() !void {
     std.debug.print("Info handler\n", .{});
     current_command = .info;
-    dvui.refresh(dvui.currentWindow(), @src(), null);
 
     // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
     // Or something like that. Are there any commands that don't need to show that window?
