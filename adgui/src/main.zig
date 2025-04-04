@@ -2145,67 +2145,25 @@ fn eraseButtonHandler() !void {
 
     if (image_path_selection == null)
         return;
-    var dir_itr = CommandState.directoryEntryIterator(image_directories.?);
 
-    blk: switch (CommandState.state) {
-        .processing => {
-            std.debug.print(".processing\n", .{});
-            if (dir_itr.next()) |file| {
-                std.debug.print("{s}.{s}\n", .{ file.filename(), file.extension() });
-                try CommandState.addProcessedFile(.init(file.filenameAndExtension(), "Erase?"));
-                if (CommandState.confirm_all == .yes_to_all) {
-                    CommandState.state = .confirm;
-                    // Continue to the .confirm case.
-                    continue :blk .confirm;
-                } else if (CommandState.confirm_all == .no_to_all) {
-                    CommandState.currentFile().?.message = "Skipped.";
-                } else {
-                    CommandState.buttons = .yes_no_all;
-                    CommandState.state = .waiting_for_input;
-                }
-            } else {
-                CommandState.finishCommand();
+    const handler = ButtonHandler.newHandler(
+        struct {
+            pub fn eraseFile(file: *DirectoryEntry) !void {
+                try commands.eraseFile(file);
             }
-        },
-        .confirm => {
-            std.debug.print(".confirm\n", .{});
-            if (dir_itr.peek()) |file| {
-                var success: bool = true;
-                commands.eraseFile(file) catch |err| {
-                    std.debug.print("err\n", .{});
-                    var current = CommandState.currentFile().?;
-                    if (CommandState.confirm_all == .yes_to_all) {
-                        current.message = formatErrorMessage(err);
-                        success = false;
-                        CommandState.state = .processing;
-                    } else {
-                        success = false;
-                        switch (err) {
-                            else => {
-                                current.message = formatErrorMessage(err);
-                                CommandState.state = .processing;
-                            },
-                        }
-                    }
-                };
-                if (success) {
-                    std.debug.print("success\n", .{});
-                    CommandState.state = .processing;
-                    CommandState.currentFile().?.message = "ERASED";
-                    file.deleted = true;
-                }
-            } else {
-                std.debug.print("else\n", .{});
-                CommandState.finishCommand();
+        }.eraseFile,
+        struct {
+            pub fn handleError(_: *FileStatus, _: anyerror) void {
+                return;
             }
+        }.handleError,
+        .{
+            .default_to_confirm = true,
+            .prompt_file = "Erase?",
+            .prompt_success = "Erased.",
         },
-        .cancel => {
-            var current = CommandState.currentFile().?;
-            current.message = "Skipped.";
-            CommandState.state = .processing;
-        },
-        else => unreachable,
-    }
+    );
+    try handler.process(image_directories.?);
 }
 
 fn newButtonHandler() !void {

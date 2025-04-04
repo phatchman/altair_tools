@@ -1,4 +1,5 @@
 const Options = struct {
+    default_to_confirm: bool = false,
     prompt_file: ?[]const u8 = null,
     prompt_error: ?[]const u8 = null,
     prompt_success: ?[]const u8 = null,
@@ -15,7 +16,6 @@ pub fn newHandler(
         pub fn process(
             directories: []DirectoryEntry,
         ) !void {
-            std.debug.print("PROCESS!!\n", .{});
             var dir_itr = CommandState.directoryEntryIterator(directories);
 
             blk: switch (CommandState.state) {
@@ -28,10 +28,19 @@ pub fn newHandler(
                             // Continue to the .confirm case.
                             continue :blk .confirm;
                         } else if (CommandState.confirm_all == .no_to_all) {
-                            CommandState.currentFile().?.message = options.prompt_skip orelse "Skip";
+                            CommandState.currentFile().?.message = options.prompt_skip orelse "Skipped.";
                         } else {
-                            CommandState.state = .processing;
-                            continue :blk .confirm;
+                            if (options.default_to_confirm) {
+                                CommandState.buttons = .yes_no_all;
+                                CommandState.state = .waiting_for_input;
+                                CommandState.currentFile().?.message = options.prompt_file orelse "Skip?";
+                            } else {
+                                CommandState.state = .processing;
+                                // Continue to the .confirm case.
+                                // Note that state stays as processing so that "action handlers" can
+                                // tell if it is a new file or a file being confirmed.
+                                continue :blk .confirm;
+                            }
                         }
                     } else {
                         // No more files. Done.
@@ -39,7 +48,6 @@ pub fn newHandler(
                     }
                 },
                 .confirm => {
-                    std.debug.print(".confirm\n", .{});
                     if (dir_itr.peek()) |file| {
                         var success: bool = true;
                         action_function(file) catch |err| {
@@ -53,8 +61,6 @@ pub fn newHandler(
                             } else if (CommandState.confirm_all == .no_to_all) {
                                 current.message = options.prompt_skip orelse "Skipped.";
                             } else {
-                                std.debug.print("here\n", .{});
-
                                 switch (err) {
                                     error.PathAlreadyExists => {
                                         current.message = "Overwrite existing file?";
@@ -75,7 +81,6 @@ pub fn newHandler(
                             CommandState.currentFile().?.message = options.prompt_success orelse "OK";
                         }
                     } else {
-                        std.debug.print("else\n", .{});
                         CommandState.finishCommand();
                     }
                 },
