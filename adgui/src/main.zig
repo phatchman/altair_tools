@@ -71,7 +71,6 @@ var pgdn_pressed: bool = false;
 var pgup_pressed: bool = false;
 var down_pressed: bool = false;
 var up_pressed: bool = false;
-var current_command: CommandList = .none;
 var current_user: usize = 16; // all users
 var paned_collapsed_width: f32 = 400;
 var pane_orientation = dvui.enums.Direction.horizontal;
@@ -427,7 +426,7 @@ fn gui_frame() !bool {
             }
         }
         if (try statusBarButton(@src(), "ERASE", .{}, color_to_use, 0, .erase, image_directories != null) or
-            current_command == .erase)
+            CommandState.current_command == .erase)
         {
             if (CommandState.shouldProcessCommand()) {
                 try eraseButtonHandler();
@@ -444,7 +443,7 @@ fn gui_frame() !bool {
             }
         }
         if (try statusBarButton(@src(), "CLOSE", .{}, color_to_use, 0, .close, image_directories != null)) {
-            commands.closeImage(); // TODO: This makes some memory invalid?
+            commands.closeImage();
             image_directories = null;
             CommandState.finishCommand();
         }
@@ -462,7 +461,6 @@ fn gui_frame() !bool {
             try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
 
         if (try statusBarButton(@src(), label, .{}, color_to_use, 0, .user, true)) {
-            current_command = .none;
             current_user += 1;
             current_user %= 17;
             if (current_user != 16) {
@@ -474,6 +472,7 @@ fn gui_frame() !bool {
                     }
                 }
             }
+            CommandState.finishCommand();
         }
         if (try statusBarButton(@src(), "NEW", .{}, color_to_use, 0, .new, true)) {
             if (CommandState.shouldProcessCommand()) {
@@ -483,12 +482,10 @@ fn gui_frame() !bool {
         label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
         const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
         if (try statusBarButton(@src(), label, .{}, color_to_use, underline_pos, .mode, true)) {
-            current_command = .none;
             copy_mode = nextCopyMode(copy_mode);
         }
 
         if (try statusBarButton(@src(), "ORIENT", .{}, color_to_use, 1, .orient, true)) {
-            current_command = .none;
             if (pane_orientation == .horizontal) {
                 pane_orientation = .vertical;
             } else {
@@ -496,6 +493,7 @@ fn gui_frame() !bool {
                 changed_orientation = true;
                 dvui.refresh(null, @src(), null);
             }
+            CommandState.finishCommand();
         }
         if (try statusBarButton(@src(), "EXIT", .{}, color_to_use, 1, .exit, true)) {
             return false;
@@ -1234,7 +1232,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     const init_opts: dvui.ButtonWidget.InitOptions = .{ .draw_focus = false };
     // If running another command, just show the label.
 
-    const selected = current_command == cmd;
+    const selected = CommandState.current_command == cmd;
     var options2 = opts;
     if (selected) {
         options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_press) } });
@@ -1249,7 +1247,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     try bw.install();
 
     // process events (mouse and keyboard) unless another operation is in progress.
-    if (current_command == .none and !enter_pressed and enabled) {
+    if (CommandState.current_command == .none and !enter_pressed and enabled) {
         bw.processEvents();
     }
 
@@ -1474,19 +1472,19 @@ pub fn processEvents() void {
             .g => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .get;
+                    CommandState.current_command = .get;
                 }
             },
             .p => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .put;
+                    CommandState.current_command = .put;
                 }
             },
             .a => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .mode;
+                    CommandState.current_command = .mode;
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
                     // select all TODO: Should really be in the grid.
 
@@ -1507,55 +1505,55 @@ pub fn processEvents() void {
             .u => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .user;
+                    CommandState.current_command = .user;
                 }
             },
             .e => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .erase;
+                    CommandState.current_command = .erase;
                 }
             },
             .c => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .close;
+                    CommandState.current_command = .close;
                 }
             },
             .r => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .orient;
+                    CommandState.current_command = .orient;
                 }
             },
             .x => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .exit;
+                    CommandState.current_command = .exit;
                 }
             },
             .s => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .getsys;
+                    CommandState.current_command = .getsys;
                 }
             },
             .y => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .putsys;
+                    CommandState.current_command = .putsys;
                 }
             },
             .n => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .new;
+                    CommandState.current_command = .new;
                 }
             },
             .f => {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
-                    current_command = .info;
+                    CommandState.current_command = .info;
                 }
             },
             .tab => {
@@ -1702,6 +1700,7 @@ pub const CommandState = struct {
     pub const ConfirmAllState = enum { none, yes_to_all, no_to_all };
     // Remember the itr for next time!
     pub var state: State = .processing;
+    pub var current_command: CommandList = .none;
     pub var confirm_all: ConfirmAllState = .none;
     var itr: ?Commands.DirIterator = null;
     pub var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
@@ -2001,7 +2000,7 @@ pub fn makeTransferDialog() !void {
         var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5 });
         defer hbox.deinit();
 
-        if (current_command != .none) {
+        if (CommandState.current_command != .none) {
             _ = try dvui.button(@src(), "Working...", .{}, .{});
         } else {
             if (key_state == .enter or try buttonFocussed(@src(), "Close", .{}, .{})) {
@@ -2024,7 +2023,7 @@ pub fn makeTransferDialog() !void {
 }
 
 /// Get selected files from image to local
-/// Should be called each frame until current_command != .get
+/// Should be called each frame until CommandState.current_command != .get
 /// Handles at most 1 file per frame.
 fn getButtonHandler() !void {
     if (image_directories == null or local_path_selection == null) {
@@ -2032,7 +2031,7 @@ fn getButtonHandler() !void {
         CommandState.freeResources();
         return;
     }
-    current_command = .get;
+    CommandState.current_command = .get;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
@@ -2057,7 +2056,7 @@ fn putButtonHandler() !void {
         CommandState.freeResources();
         return;
     }
-    current_command = .put;
+    CommandState.current_command = .put;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
@@ -2095,7 +2094,7 @@ fn eraseButtonHandler() !void {
         CommandState.freeResources();
         return;
     }
-    current_command = .erase;
+    CommandState.current_command = .erase;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
@@ -2119,7 +2118,7 @@ fn eraseButtonHandler() !void {
 
 fn newButtonHandler() !void {
     std.debug.print("New handler\n", .{});
-    current_command = .new;
+    CommandState.current_command = .new;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn createNewImage(image_path: []const u8, _: ButtonHandler.Options) !void {
@@ -2142,7 +2141,7 @@ fn newButtonHandler() !void {
 
 fn getSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
-    current_command = .getsys;
+    CommandState.current_command = .getsys;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn getSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
@@ -2163,7 +2162,7 @@ fn getSysButtonHandler() !void {
 
 fn putSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
-    current_command = .putsys;
+    CommandState.current_command = .putsys;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn putSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
@@ -2185,7 +2184,7 @@ fn putSysButtonHandler() !void {
 // TODO: Make this a nicer screen. Prob don't use the hack of process_files list to display.
 fn infoButtonHandler() !void {
     std.debug.print("Info handler\n", .{});
-    current_command = .info;
+    CommandState.current_command = .info;
 
     switch (CommandState.state) {
         .processing => {
