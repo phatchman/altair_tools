@@ -258,8 +258,13 @@ pub const DiskImage = struct {
     }
 
     pub fn installCPM(self: *Self, in_file: File) !void {
-        var sector: DiskSector = .init();
+        const in_size = try in_file.getEndPos();
+        const expected_size = self.image_type.reserved_tracks * self.image_type.track_size;
+        if (in_size != expected_size) {
+            return error.InvalidImageFile;
+        }
 
+        var sector: DiskSector = .init();
         try self.image_file.seekTo(0);
 
         for (0..self.image_type.reserved_tracks) |_| {
