@@ -1,11 +1,10 @@
 pub const Options = struct {
     default_to_confirm: bool = false,
-    prompt_file: ?[]const u8 = null,
-    prompt_error: ?[]const u8 = null,
-    prompt_success: ?[]const u8 = null,
-    prompt_skip: ?[]const u8 = null,
-    prompt_retry: ?[]const u8 = null,
-    input_buttons: ?CommandState.Buttons = null,
+    prompt_file: []const u8 = "",
+    prompt_success: []const u8 = "OK",
+    prompt_skip: []const u8 = "Skipped",
+    prompt_retry: []const u8 = "Retry",
+    input_buttons: CommandState.Buttons = .none,
 };
 
 pub fn newDirectoryListHandler(
@@ -23,18 +22,18 @@ pub fn newDirectoryListHandler(
                 .processing => {
                     CommandState.prompt = null;
                     if (dir_itr.next()) |file| {
-                        try CommandState.addProcessedFile(.init(file.filenameAndExtension(), options.prompt_file orelse ""));
+                        try CommandState.addProcessedFile(.init(file.filenameAndExtension(), options.prompt_file));
                         if (CommandState.confirm_all == .yes_to_all) {
                             CommandState.state = .confirm;
                             // Continue to the .confirm case.
                             continue :blk .confirm;
                         } else if (CommandState.confirm_all == .no_to_all) {
-                            CommandState.currentFile().?.message = options.prompt_skip orelse "Skipped.";
+                            CommandState.currentFile().?.message = options.prompt_skip;
                         } else {
                             if (options.default_to_confirm) {
                                 CommandState.buttons = .yes_no_all;
                                 CommandState.state = .waiting_for_input;
-                                CommandState.currentFile().?.message = options.prompt_file orelse "Skip?";
+                                CommandState.currentFile().?.message = options.prompt_file;
                             } else {
                                 CommandState.state = .processing;
                                 // Continue to the .confirm case.
@@ -62,7 +61,7 @@ pub fn newDirectoryListHandler(
                                 current.message = formatErrorMessage(err);
                                 CommandState.state = .processing;
                             } else if (CommandState.confirm_all == .no_to_all) {
-                                current.message = options.prompt_skip orelse "Skipped.";
+                                current.message = options.prompt_skip;
                             } else {
                                 switch (err) {
                                     error.PathAlreadyExists => {
@@ -71,7 +70,7 @@ pub fn newDirectoryListHandler(
                                         CommandState.state = .waiting_for_input;
                                     },
                                     else => {
-                                        CommandState.prompt = options.prompt_retry orelse "Retry?";
+                                        CommandState.prompt = options.prompt_retry;
                                         current.message = formatErrorMessage(err);
                                         CommandState.buttons = .yes_no_all;
                                         CommandState.state = .waiting_for_input;
@@ -81,7 +80,7 @@ pub fn newDirectoryListHandler(
                         };
                         if (success) {
                             CommandState.state = .processing;
-                            CommandState.currentFile().?.message = options.prompt_success orelse "OK";
+                            CommandState.currentFile().?.message = options.prompt_success;
                         }
                     } else {
                         CommandState.finishCommand();
@@ -89,7 +88,7 @@ pub fn newDirectoryListHandler(
                 },
                 .cancel => {
                     if (CommandState.currentFile()) |current| {
-                        current.message = options.prompt_skip orelse "Skipped.";
+                        current.message = options.prompt_skip;
                         CommandState.state = .processing;
                     } else {
                         CommandState.finishCommand();
@@ -112,7 +111,7 @@ pub fn newPromptForFileHandler(
                 .processing => {
                     CommandState.prompt = options.prompt_file;
                     CommandState.state = .waiting_for_input;
-                    CommandState.buttons = options.input_buttons orelse .none;
+                    CommandState.buttons = options.input_buttons;
                 },
                 .confirm => {
                     if (CommandState.file_selector_buffer) |path| {
@@ -126,7 +125,7 @@ pub fn newPromptForFileHandler(
                                 }
                                 break :main;
                             };
-                            current.message = options.prompt_success orelse "OK";
+                            current.message = options.prompt_success;
                             CommandState.finishCommand();
                         }
                     }

@@ -462,6 +462,7 @@ fn gui_frame() !bool {
             try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
 
         if (try statusBarButton(@src(), label, .{}, color_to_use, 0, .user, true)) {
+            current_command = .none;
             current_user += 1;
             current_user %= 17;
             if (current_user != 16) {
@@ -478,15 +479,16 @@ fn gui_frame() !bool {
             if (CommandState.shouldProcessCommand()) {
                 try newButtonHandler();
             }
-            std.debug.print("After new: {}\n", .{current_command});
         }
         label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
         const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
         if (try statusBarButton(@src(), label, .{}, color_to_use, underline_pos, .mode, true)) {
+            current_command = .none;
             copy_mode = nextCopyMode(copy_mode);
         }
 
         if (try statusBarButton(@src(), "ORIENT", .{}, color_to_use, 1, .orient, true)) {
+            current_command = .none;
             if (pane_orientation == .horizontal) {
                 pane_orientation = .vertical;
             } else {
@@ -1765,8 +1767,6 @@ pub const CommandState = struct {
 };
 
 pub fn makeTransferDialog() !void {
-    std.debug.print("State at start of transfer window is {}:{}\n", .{ CommandState.state, current_command });
-
     const static = struct {
         var open_flag: bool = false;
         var scroll_info: dvui.ScrollInfo = .{};
@@ -2021,7 +2021,6 @@ pub fn makeTransferDialog() !void {
         }
     }
     // TODO: Move currentcommand into commandstate.
-    std.debug.print("State at end of transfer window is {}:{}\n", .{ CommandState.state, current_command });
 }
 
 /// Get selected files from image to local
@@ -2033,6 +2032,7 @@ fn getButtonHandler() !void {
         CommandState.freeResources();
         return;
     }
+    current_command = .get;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
@@ -2042,8 +2042,8 @@ fn getButtonHandler() !void {
             }
         }.getFile,
         struct {
-            pub fn handleError(_: *FileStatus, _: anyerror) void {
-                return;
+            pub fn handleError(_: *FileStatus, _: anyerror) bool {
+                return false;
             }
         }.handleError,
         .{},
@@ -2052,104 +2052,50 @@ fn getButtonHandler() !void {
 }
 
 fn putButtonHandler() !void {
-    if (local_directories == null) {
-        // TODO: Potentially show a no files dialog box.
-        current_command = .none;
+    if (local_path_selection == null or local_directories == null) {
+        CommandState.finishCommand();
+        CommandState.freeResources();
         return;
     }
     current_command = .put;
-    //    if (local_path_selection) |local_path| {
-    if (local_path_selection) |local_path| {
-        if (CommandState.itr == null) {
-            // There shouldn't be any processed files when a new command is started.
-            std.debug.assert(CommandState.processed_files.items.len == 0);
-            // Create an iterator that returns the selected directories.
-            CommandState.itr = Commands.DirectoryIterator(local_directories.?, DirectoryEntry.isSelected);
-        }
 
-        switch (CommandState.state) {
-            .confirm, .processing => {
-                CommandState.prompt = null;
-                const dir_entry = if (CommandState.state == .confirm) CommandState.itr.?.peek() else CommandState.itr.?.next();
-                if (dir_entry) |file| {
-                    if (CommandState.state != .confirm) {
-                        try CommandState.processed_files.append(allocator, .init(file.filenameAndExtension(), "Copying..."));
-                    }
-                    var success: bool = true;
-                    // TODO: Get user
-                    commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm or CommandState.confirm_all == .yes_to_all) catch |err| {
-                        var current = CommandState.currentFile().?;
-                        std.debug.print("put error is {s}\n", .{@errorName(err)});
-                        switch (err) {
-                            // These are errors that need to be handled regardless of "confirm all"
-                            error.OutOfExtents,
-                            error.OutOfAllocs,
-                            => {
-                                success = false;
-                                current.message = "Disk Full";
-                                CommandState.finishCommand();
-                            },
-                            else => {
-                                if (CommandState.confirm_all == .yes_to_all) {
-                                    std.debug.print("fmt error\n", .{});
-                                    current.message = formatErrorMessage(err);
-                                    success = false; // That damn success flag again. really need to refactor this.
-                                    CommandState.state = .processing; // And this is tricky to spot as well. otherwise can loop on same error.
-                                } else if (CommandState.confirm_all == .no_to_all) {
-                                    current.message = "Skipped";
-                                    success = false;
-                                } else {
-                                    // These are errors which ignore "confirm all"
-                                    success = false;
-                                    switch (err) {
-                                        error.PathAlreadyExists => {
-                                            current.message = "Overwrite existing file?";
-                                            CommandState.buttons = .yes_no_all;
-                                            CommandState.state = .waiting_for_input;
-                                        },
-                                        else => {
-                                            CommandState.prompt = "Retry?";
-                                            current.message = formatErrorMessage(err);
-                                            CommandState.buttons = .yes_no_all;
-                                            CommandState.state = .waiting_for_input;
-                                        },
-                                    }
-                                }
-                            },
-                        }
-                    };
-                    if (success) {
-                        CommandState.state = .processing;
-                        CommandState.currentFile().?.message = "OK";
-                    }
-                } else {
-                    std.debug.print("setting current command = .none\n", .{});
-                    CommandState.finishCommand();
-                    // reload the directories when done so user can see.
-                    //local_directories = try commands.localDirectoryListing(gpa);
+    const handler = ButtonHandler.newDirectoryListHandler(
+        struct {
+            pub fn putFile(file: *DirectoryEntry) !void {
+                const local_path = local_path_selection.?;
+                try commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm);
+            }
+        }.putFile,
+        struct {
+            pub fn handleError(current: *FileStatus, err: anyerror) bool {
+                switch (err) {
+                    // Ignore the confirm state for disk full"
+                    error.OutOfExtents,
+                    error.OutOfAllocs,
+                    => {
+                        current.message = "Disk Full";
+                        CommandState.finishCommand();
+                        return true;
+                    },
+                    else => return false,
                 }
-            },
-            .cancel => {
-                var current = CommandState.currentFile().?;
-                current.message = "Skipped.";
-                CommandState.state = .processing;
-            },
-            else => unreachable,
-        }
-
-        //        dvui.refresh(dvui.currentWindow(), @src(), null);
-    } else {
-        // TODO: pop-up an error here.
-    }
+            }
+        }.handleError,
+        .{},
+    );
+    try handler.process(local_directories.?);
 }
 
 fn eraseButtonHandler() !void {
     std.debug.print("Erase handler\n", .{});
-
     //const local = struct {};
 
-    if (image_path_selection == null)
+    if (image_path_selection == null) {
+        CommandState.finishCommand();
+        CommandState.freeResources();
         return;
+    }
+    current_command = .erase;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
@@ -2158,8 +2104,8 @@ fn eraseButtonHandler() !void {
             }
         }.eraseFile,
         struct {
-            pub fn handleError(_: *FileStatus, _: anyerror) void {
-                return;
+            pub fn handleError(_: *FileStatus, _: anyerror) bool {
+                return false;
             }
         }.handleError,
         .{
@@ -2192,126 +2138,55 @@ fn newButtonHandler() !void {
     });
 
     try handler.process();
-
-    //    switch (CommandState.state) {
-    //        .processing => {
-    //            CommandState.prompt = "Create new image?";
-    //            CommandState.state = .waiting_for_input;
-    //            CommandState.buttons = .{ .image_selector = true, .type_selector = true, .yes = true, .no = true };
-    //        },
-    //        .confirm => {
-    //            // TODO: Need the try / force option here.
-    //            if (CommandState.file_selector_buffer) |image_path| {
-    //                var current = FileStatus.init(image_path, "Creating...");
-    //                try CommandState.processed_files.append(allocator, current);
-    //                const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
-    //                commands.createNewImage(image_path, image_type) catch |err| {
-    //                    // TODO: Should be some way to set this to error.
-    //                    current.message = formatErrorMessage(err);
-    //                };
-    //                current.message = "Created.";
-    //                try setImagePath(image_path);
-    //            }
-    //            CommandState.finishCommand();
-    //        },
-    //        .cancel => {
-    //            // TODO: We need to free resources here because the dialog closes immediately due to
-    //            // there being no files in the process_files collection.
-    //            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
-    //            CommandState.finishCommand();
-    //            CommandState.freeResources();
-    //        },
-    //        else => unreachable,
-    //    }
 }
 
 fn getSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
     current_command = .getsys;
 
-    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
-    // Or something like that. Are there any commands that don't need to show that window?
+    const handler = ButtonHandler.newPromptForFileHandler(struct {
+        pub fn getSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
+            try commands.getSystem(sys_path);
+        }
+    }.getSystem, struct {
+        pub fn errorHandler(_: *FileStatus, _: anyerror) bool {
+            return false;
+        }
+    }.errorHandler, .{
+        .prompt_file = "Extract system image to?",
+        .prompt_success = "Done.",
+        .input_buttons = .{ .save_file_selector = true, .yes = true, .no = true },
+    });
 
-    // TODO:?? Is this local path selection needed?
-    // And how do we know what we are doing and erase on? Only the image dir?
-    switch (CommandState.state) {
-        .processing => {
-            CommandState.prompt = "Extract system image to?";
-            CommandState.state = .waiting_for_input;
-            CommandState.buttons = .{ .save_file_selector = true, .yes = true, .no = true };
-        },
-        .confirm => {
-            // TODO: Need the try / force option here.
-            if (CommandState.file_selector_buffer) |sys_path| {
-                var current = FileStatus.init(sys_path, "Creating...");
-                try CommandState.processed_files.append(allocator, current);
-                commands.getSystem(sys_path) catch |err| {
-                    current.message = formatErrorMessage(err);
-                };
-                CommandState.currentFile().?.message = "Done.";
-                current.message = "Extracted.";
-            }
-            CommandState.finishCommand();
-        },
-        .cancel => {
-            // TODO: We need to free resources here because the dialog closes immediately due to
-            // there being no files in the process_files collection.
-            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
-            CommandState.finishCommand();
-            CommandState.freeResources();
-        },
-        else => unreachable,
-    }
+    try handler.process();
 }
 
 fn putSysButtonHandler() !void {
     std.debug.print("Get Sys handler\n", .{});
-    current_command = .getsys;
+    current_command = .putsys;
 
-    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
-    // Or something like that. Are there any commands that don't need to show that window?
+    const handler = ButtonHandler.newPromptForFileHandler(struct {
+        pub fn putSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
+            try commands.putSystem(sys_path);
+        }
+    }.putSystem, struct {
+        pub fn errorHandler(_: *FileStatus, _: anyerror) bool {
+            return false;
+        }
+    }.errorHandler, .{
+        .prompt_file = "Install system image from?",
+        .prompt_success = "Done.",
+        .input_buttons = .{ .open_file_selector = true, .yes = true, .no = true },
+    });
 
-    // TODO:?? Is this local path selection needed?
-    // And how do we know what we are doing and erase on? Only the image dir?
-    switch (CommandState.state) {
-        .processing => {
-            CommandState.prompt = "Install system image from? ";
-            CommandState.state = .waiting_for_input;
-            CommandState.buttons = .{ .open_file_selector = true, .yes = true, .no = true };
-        },
-        .confirm => {
-            // TODO: Need the try / force option here. ?? Not sure whta this comment means?
-            if (CommandState.file_selector_buffer) |sys_path| {
-                var current = FileStatus.init(sys_path, "Installing...");
-                try CommandState.processed_files.append(allocator, current);
-                commands.putSystem(sys_path) catch |err| {
-                    current.message = formatErrorMessage(err);
-                };
-                CommandState.currentFile().?.message = "Done.";
-                current.message = "Installed.";
-            }
-            CommandState.finishCommand();
-        },
-        .cancel => {
-            // TODO: We need to free resources here because the dialog closes immediately due to
-            // there being no files in the process_files collection.
-            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
-            CommandState.finishCommand();
-            CommandState.freeResources();
-        },
-        else => unreachable,
-    }
+    try handler.process();
 }
 
+// TODO: Make this a nicer screen. Prob don't use the hack of process_files list to display.
 fn infoButtonHandler() !void {
     std.debug.print("Info handler\n", .{});
     current_command = .info;
 
-    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
-    // Or something like that. Are there any commands that don't need to show that window?
-
-    // TODO:?? Is this local path selection needed?
-    // And how do we know what we are doing and erase on? Only the image dir?
     switch (CommandState.state) {
         .processing => {
             if (commands.disk_image) |disk_image| {
