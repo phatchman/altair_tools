@@ -478,6 +478,7 @@ fn gui_frame() !bool {
             if (CommandState.shouldProcessCommand()) {
                 try newButtonHandler();
             }
+            std.debug.print("After new: {}\n", .{current_command});
         }
         label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
         const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
@@ -498,9 +499,9 @@ fn gui_frame() !bool {
             return false;
         }
 
-        if (current_command != .get and current_command != .erase and current_command != .new and current_command != .put and current_command != .getsys) {
-            current_command = .none;
-        }
+        //if (current_command != .get and current_command != .erase and current_command != .new and current_command != .put and current_command != .getsys) {
+        //            current_command = .none;
+        //        }
         // If there is an operation in progress, show the transfer dialog.
         try makeTransferDialog();
     }
@@ -1764,6 +1765,8 @@ pub const CommandState = struct {
 };
 
 pub fn makeTransferDialog() !void {
+    std.debug.print("State at start of transfer window is {}:{}\n", .{ CommandState.state, current_command });
+
     const static = struct {
         var open_flag: bool = false;
         var scroll_info: dvui.ScrollInfo = .{};
@@ -2017,6 +2020,8 @@ pub fn makeTransferDialog() !void {
             }
         }
     }
+    // TODO: Move currentcommand into commandstate.
+    std.debug.print("State at end of transfer window is {}:{}\n", .{ CommandState.state, current_command });
 }
 
 /// Get selected files from image to local
@@ -2029,7 +2034,7 @@ fn getButtonHandler() !void {
         return;
     }
 
-    const handler = ButtonHandler.newHandler(
+    const handler = ButtonHandler.newDirectoryListHandler(
         struct {
             pub fn getFile(file: *DirectoryEntry) !void {
                 const local_path = local_path_selection.?;
@@ -2146,7 +2151,7 @@ fn eraseButtonHandler() !void {
     if (image_path_selection == null)
         return;
 
-    const handler = ButtonHandler.newHandler(
+    const handler = ButtonHandler.newDirectoryListHandler(
         struct {
             pub fn eraseFile(file: *DirectoryEntry) !void {
                 try commands.eraseFile(file);
@@ -2170,41 +2175,54 @@ fn newButtonHandler() !void {
     std.debug.print("New handler\n", .{});
     current_command = .new;
 
-    // TODO: Add a "begin command" to command state that basically makes sure the transfer window is shown.
-    // Or something like that. Are there any commands that don't need to show that window?
+    const handler = ButtonHandler.newPromptForFileHandler(struct {
+        pub fn createNewImage(image_path: []const u8, _: ButtonHandler.Options) !void {
+            const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
+            try commands.createNewImage(image_path, image_type);
+            try setImagePath(image_path);
+        }
+    }.createNewImage, struct {
+        pub fn errorHandler(_: *FileStatus, _: anyerror) bool {
+            return false;
+        }
+    }.errorHandler, .{
+        .prompt_file = "Create new image?",
+        .prompt_success = "Created",
+        .input_buttons = .{ .image_selector = true, .type_selector = true, .yes = true, .no = true },
+    });
 
-    // TODO:?? Is this local path selection needed?
-    // And how do we know what we are doing and erase on? Only the image dir?
-    switch (CommandState.state) {
-        .processing => {
-            CommandState.prompt = "Create new image?";
-            CommandState.state = .waiting_for_input;
-            CommandState.buttons = .{ .image_selector = true, .type_selector = true, .yes = true, .no = true };
-        },
-        .confirm => {
-            // TODO: Need the try / force option here.
-            if (CommandState.file_selector_buffer) |image_path| {
-                var current = FileStatus.init(image_path, "Creating...");
-                try CommandState.processed_files.append(allocator, current);
-                const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
-                commands.createNewImage(image_path, image_type) catch |err| {
-                    // TODO: Should be some way to set this to error.
-                    current.message = formatErrorMessage(err);
-                };
-                current.message = "Created.";
-                try setImagePath(image_path);
-            }
-            CommandState.finishCommand();
-        },
-        .cancel => {
-            // TODO: We need to free resources here because the dialog closes immediately due to
-            // there being no files in the process_files collection.
-            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
-            CommandState.finishCommand();
-            CommandState.freeResources();
-        },
-        else => unreachable,
-    }
+    try handler.process();
+
+    //    switch (CommandState.state) {
+    //        .processing => {
+    //            CommandState.prompt = "Create new image?";
+    //            CommandState.state = .waiting_for_input;
+    //            CommandState.buttons = .{ .image_selector = true, .type_selector = true, .yes = true, .no = true };
+    //        },
+    //        .confirm => {
+    //            // TODO: Need the try / force option here.
+    //            if (CommandState.file_selector_buffer) |image_path| {
+    //                var current = FileStatus.init(image_path, "Creating...");
+    //                try CommandState.processed_files.append(allocator, current);
+    //                const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
+    //                commands.createNewImage(image_path, image_type) catch |err| {
+    //                    // TODO: Should be some way to set this to error.
+    //                    current.message = formatErrorMessage(err);
+    //                };
+    //                current.message = "Created.";
+    //                try setImagePath(image_path);
+    //            }
+    //            CommandState.finishCommand();
+    //        },
+    //        .cancel => {
+    //            // TODO: We need to free resources here because the dialog closes immediately due to
+    //            // there being no files in the process_files collection.
+    //            // This is a wierd way to manage the state of whether the window is open or not. Needs a re-think
+    //            CommandState.finishCommand();
+    //            CommandState.freeResources();
+    //        },
+    //        else => unreachable,
+    //    }
 }
 
 fn getSysButtonHandler() !void {

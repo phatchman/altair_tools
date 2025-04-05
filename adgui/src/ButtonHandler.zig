@@ -1,15 +1,16 @@
-const Options = struct {
+pub const Options = struct {
     default_to_confirm: bool = false,
     prompt_file: ?[]const u8 = null,
     prompt_error: ?[]const u8 = null,
     prompt_success: ?[]const u8 = null,
     prompt_skip: ?[]const u8 = null,
     prompt_retry: ?[]const u8 = null,
+    input_buttons: ?CommandState.Buttons = null,
 };
 
-pub fn newHandler(
+pub fn newDirectoryListHandler(
     action_function: fn (file: *DirectoryEntry) anyerror!void,
-    custom_error_handler: fn (current: *FileStatus, err: anyerror) void,
+    error_function: fn (current: *FileStatus, err: anyerror) bool,
     options: Options,
 ) type {
     return struct {
@@ -54,7 +55,9 @@ pub fn newHandler(
                             std.debug.print("err = {}\n", .{err});
                             success = false;
                             var current = CommandState.currentFile().?;
-                            custom_error_handler(current, err);
+                            if (error_function(current, err)) {
+                                return;
+                            }
                             if (CommandState.confirm_all == .yes_to_all) {
                                 current.message = formatErrorMessage(err);
                                 CommandState.state = .processing;
@@ -91,6 +94,48 @@ pub fn newHandler(
                     } else {
                         CommandState.finishCommand();
                     }
+                },
+                else => unreachable,
+            }
+        }
+    };
+}
+
+pub fn newPromptForFileHandler(
+    action_function: fn (filename: []const u8, options: Options) anyerror!void,
+    error_function: fn (current: *FileStatus, err: anyerror) bool,
+    options: Options,
+) type {
+    return struct {
+        pub fn process() !void {
+            switch (CommandState.state) {
+                .processing => {
+                    CommandState.prompt = options.prompt_file;
+                    CommandState.state = .waiting_for_input;
+                    CommandState.buttons = options.input_buttons orelse .none;
+                },
+                .confirm => {
+                    if (CommandState.file_selector_buffer) |path| {
+                        try CommandState.addProcessedFile(.init(path, ""));
+                        main: {
+                            const current = CommandState.currentFile().?;
+
+                            action_function(path, options) catch |err| {
+                                if (!error_function(current, err)) {
+                                    current.message = formatErrorMessage(err);
+                                }
+                                break :main;
+                            };
+                            current.message = options.prompt_success orelse "OK";
+                            CommandState.finishCommand();
+                        }
+                    }
+                },
+                .cancel => {
+                    // Free resources here because a "No" doesn't
+                    // got through the "Close" button cleanup.
+                    CommandState.finishCommand();
+                    CommandState.freeResources();
                 },
                 else => unreachable,
             }
