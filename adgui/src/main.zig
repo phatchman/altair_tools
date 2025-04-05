@@ -44,26 +44,14 @@ const Backend = dvui.backend;
 
 const window_icon_png = @embedFile("altair.png");
 
-var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa_instance: std.heap.DebugAllocator(.{}) = .init;
 pub const allocator = gpa_instance.allocator();
 
-const CommandList = enum {
-    none,
-    get,
-    put,
-    mode,
-    close,
-    erase,
-    user,
-    new,
-    info,
-    getsys,
-    putsys,
-    orient,
-    exit,
-};
+const CommandList = enum { none, get, put, mode, close, erase, user, new, info, getsys, putsys, orient, exit };
 
 const vsync = false;
+
+// Global key state.
 var alt_held = false;
 var shift_held = false;
 var enter_pressed = false;
@@ -71,39 +59,58 @@ var pgdn_pressed: bool = false;
 var pgup_pressed: bool = false;
 var down_pressed: bool = false;
 var up_pressed: bool = false;
-var current_user: usize = 16; // all users
-var paned_collapsed_width: f32 = 400;
+
+var paned_collapsed_width: f32 = 600;
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
-var selection_mode = SelectionMode.mouse;
 
-// TODO: make everything based on grid type and add a state / model class that holds the globasl state
+// Image grid for disk image or local for local filesystem.
 const GridType = enum(usize) {
     image = 0,
     local,
 };
+const num_grids = std.meta.fields(GridType).len;
 
-var commands = Commands{};
-// TODO: The entries themselves should be const.
+// Which grid has keyboard or mouse focus.
+var focussed_grid: GridType = .image;
+// Whether user is currently selecting by keyboard or mouse.
+var selection_mode = SelectionMode.mouse;
+
+var current_user: usize = 16; // 16 = all users. 0-15 = individual user.
+var copy_mode = CopyMode.AUTO;
+
+// The list of directory entries for the image and local filesystems
 var image_directories: ?[]DirectoryEntry = null;
 var local_directories: ?[]DirectoryEntry = null;
-var kb_dir_index: [2]usize = @splat(0); // Selection index for keyboard
-var mouse_dir_index: [2]usize = @splat(0); // Selection index for mouse
-var last_mouse_index: [2]usize = @splat(0);
-var scroll_info: [2]dvui.ScrollInfo = @splat(.{});
-var sort_column: [2][]const u8 = @splat("Name");
-var sort_asc: [2]bool = @splat(true);
-var focussed_grid: GridType = .image;
+
+// Selection indexes. For mouse and keyboard selection.
+// Kept separately for each grid.
+var kb_dir_index: [num_grids]usize = @splat(0);
+var mouse_dir_index: [num_grids]usize = @splat(0);
+var last_mouse_index: [num_grids]usize = @splat(0);
+
+var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
+var sort_column: [num_grids][]const u8 = @splat("Name");
+var sort_asc: [num_grids]bool = @splat(true);
 var text_box_focussed = false;
+
 var frame_count: u64 = 0;
-const min_sizes = [_]f32{ 10, 80, 30, 20, 60, 40, 10 };
-var header_rects: [7]dvui.Rect = @splat(dvui.Rect.all(0)); // Used for column widths. Note is shared by both grids as used sequentially.
+
+// Layout information for each column.
+const num_columns = 7;
+const min_sizes = [num_columns]f32{ 10, 80, 30, 20, 60, 40, 10 };
+// Used for column widths. Note is shared by both grids as used sequentially.
+var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 15.0;
 const status_bar_height = 35 * 2; // TODO: Calculate?
-const border_width = dvui.Rect.all(0);
+const border_width = dvui.Rect.all(0); // TODO: Can be removed.
+
+var image_path_initialized = false;
+var image_path_selection: ?[]const u8 = null;
 
 var local_path_initialized = false;
 var local_path_selection: ?[]const u8 = null;
+
 fn setLocalPath(path: []const u8) !void {
     if (local_path_selection) |local_path| {
         allocator.free(local_path);
@@ -119,11 +126,9 @@ fn setImagePath(path: []const u8) !void {
     image_path_selection = try allocator.dupe(u8, path);
     image_path_initialized = false;
 }
-var image_path_initialized = false;
-var image_path_selection: ?[]const u8 = null;
-var copy_mode = CopyMode.AUTO;
-var changed_orientation = false;
 const empty_directory_list: [0]DirectoryEntry = .{};
+
+var commands = Commands{};
 
 pub fn main() !void {
     if (@import("builtin").os.tag == .windows) { // optional
@@ -147,7 +152,7 @@ pub fn main() !void {
     });
     defer backend.deinit();
 
-    try setImagePath(".");
+    try setImagePath("");
     defer allocator.free(image_path_selection.?); // TODO: Either make thes undefined and free here or options nad check the optional.
     try setLocalPath(".\\disks");
     defer allocator.free(local_path_selection.?);
@@ -303,6 +308,10 @@ fn gui_frame() !bool {
                 .corner_radius = dvui.Rect.all(5),
                 .background = true, // remove
             });
+            if (top_half.wd.rect.w < 400) {
+                paned.animateSplit(0);
+            }
+
             defer top_half.deinit();
             if (true) {
                 try createFileSelector(.image);
@@ -341,6 +350,10 @@ fn gui_frame() !bool {
                 .background = true, // remove
             });
             defer bottom_half.deinit();
+            if (bottom_half.wd.rect.w < 400) {
+                paned.animateSplit(1);
+            }
+
             {
                 if (true) {
                     try createFileSelector(.local);
@@ -490,7 +503,6 @@ fn gui_frame() !bool {
                 pane_orientation = .vertical;
             } else {
                 pane_orientation = .horizontal;
-                changed_orientation = true;
                 dvui.refresh(null, @src(), null);
             }
             CommandState.finishCommand();
@@ -2161,11 +2173,12 @@ fn getSysButtonHandler() !void {
 }
 
 fn putSysButtonHandler() !void {
-    std.debug.print("Get Sys handler\n", .{});
+    std.debug.print("Put Sys handler\n", .{});
     CommandState.current_command = .putsys;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn putSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
+            std.debug.print("Path = {s}\n", .{sys_path});
             try commands.putSystem(sys_path);
         }
     }.putSystem, struct {

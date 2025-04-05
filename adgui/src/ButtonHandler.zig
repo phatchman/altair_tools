@@ -126,8 +126,8 @@ pub fn newPromptForFileHandler(
                                 break :main;
                             };
                             current.message = options.prompt_success;
-                            CommandState.finishCommand();
                         }
+                        CommandState.finishCommand();
                     }
                 },
                 .cancel => {
