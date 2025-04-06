@@ -297,17 +297,13 @@ pub const DirectoryTable = struct {
     free_allocations: std.DynamicBitSetUnmanaged,
 
     pub fn init(gpa: std.mem.Allocator, image_type: *const DiskImageType) std.mem.Allocator.Error!DirectoryTable {
-        var self = Self{
-            .arena = .init(gpa),
-            .raw_directories = undefined,
-            .cooked_directories = undefined,
-            .free_allocations = undefined,
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        return .{
+            .raw_directories = try .initCapacity(arena.allocator(), image_type.directories),
+            .cooked_directories = try .initCapacity(arena.allocator(), image_type.directories),
+            .free_allocations = try .initFull(arena.allocator(), image_type.total_allocs),
+            .arena = arena,
         };
-        self.raw_directories = try .initCapacity(self.allocator(), image_type.directories);
-        self.cooked_directories = try .initCapacity(self.allocator(), image_type.directories);
-        self.free_allocations = try .initFull(self.allocator(), image_type.total_allocs);
-
-        return self;
     }
 
     pub fn deinit(self: *Self) void {
