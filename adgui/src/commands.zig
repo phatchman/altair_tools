@@ -1,6 +1,7 @@
 const std = @import("std");
 const ad = @import("altair_disk");
 const DiskImage = ad.DiskImage;
+const DiskImageTypes = ad.DiskImageTypes;
 const allocator = @import("main.zig").allocator;
 
 disk_image: ?ad.DiskImage = null,
@@ -162,26 +163,30 @@ pub const DirIterator = struct {
     }
 };
 
-pub fn openExistingImage(self: *Self, filename: []const u8) !void {
+pub fn detectImageType(_: *Self, filename: []const u8) !?DiskImageTypes {
+    var image_file = try std.fs.cwd().openFile(filename, .{ .mode = .read_only });
+    defer image_file.close();
+    var is_unique = true;
+    if (DiskImage.detectImageType(image_file, &is_unique)) |image_type| {
+        return image_type.type_id;
+    } else {
+        return null;
+    }
+}
+
+pub fn openExistingImage(self: *Self, filename: []const u8, img_type: DiskImageTypes) !void {
     var cwd = std.fs.cwd();
 
     if (self.disk_image) |*existing| {
         existing.deinit();
     }
     const image_file = try cwd.openFile(filename, .{ .mode = .read_write });
-    var is_unique = false;
-    const image_type = DiskImage.detectImageType(image_file, &is_unique);
-    // TODO: Need ot handle the non-unique with a dialog warning or something?
-
-    if (image_type) |valid_type| {
-        self.disk_image = DiskImage.init(allocator, image_file, valid_type) catch |err| {
-            image_file.close();
-            return err;
-        };
-        try self.disk_image.?.loadDirectories(false);
-    } else {
-        std.debug.print("Invalid image\n", .{});
-    }
+    const image_type = ad.all_disk_types.getPtrConst(img_type);
+    self.disk_image = DiskImage.init(allocator, image_file, image_type) catch |err| {
+        image_file.close();
+        return err;
+    };
+    try self.disk_image.?.loadDirectories(false);
 }
 
 pub fn closeImage(self: *Self) void {

@@ -707,9 +707,7 @@ fn createFileSelector(id: GridType) !void {
     if (entry.enter_pressed) {
         // TODO: Repeated code from the icon click.
         image_directories = null;
-        try commands.openExistingImage(entry.getText());
-        image_directories = try commands.directoryListing(allocator);
-        std.debug.print("Enter\n", .{});
+        openImageFile(entry.getText());
         dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
     }
     entry.deinit();
@@ -720,8 +718,7 @@ fn createFileSelector(id: GridType) !void {
             if (filename) |f| {
                 std.debug.print("New file: {s}\n", .{f});
                 image_directories = null;
-                try commands.openExistingImage(f);
-                image_directories = try commands.directoryListing(allocator);
+                openImageFile(f);
                 try setImagePath(f);
                 is_initialised.* = false;
             }
@@ -2250,6 +2247,92 @@ pub fn findNewImageName(directory: []const u8) ![]const u8 {
         };
     }
     return &static.filename;
+}
+
+pub fn openImageFile(filename: []const u8) void {
+    std.debug.print("Open image file {s}\n", .{filename});
+    var success = false;
+
+    // TODO: Would rather just call openImageFile with an image type once it is known.
+    // But need to keep the duplicated filename somewhere, so may as well store the image
+    // type as well.
+    const dialogFollowup = struct {
+        var img_type: ?ad.DiskImageTypes = null;
+        var selected_filename: ?[]const u8 = null;
+        fn handleResponse(_: u32, response: dvui.enums.DialogResponse) dvui.Error!void {
+            switch (response) {
+                .ok => img_type = .HDD_5MB_1024,
+                .cancel => img_type = .HDD_5MB,
+                else => unreachable,
+            }
+            openImageFile(selected_filename.?);
+        }
+
+        fn deinit() void {
+            if (selected_filename) |f| {
+                allocator.free(f);
+                selected_filename = null;
+            }
+            img_type = null;
+        }
+    };
+
+    main: {
+        var image_type = image_type: {
+            const img_type = commands.detectImageType(filename) catch |err| {
+                std.debug.print("Error is {}\n", .{err});
+                dvui.dialog(@src(), .{
+                    .title = "Error opening image",
+                    .message = "Could not detect image type",
+                    .modal = true,
+                }) catch {};
+                break :main;
+            };
+            if (img_type == null) {
+                dvui.dialog(@src(), .{
+                    .title = "Error opening image",
+                    .message = "Not a supported Altair disk image format",
+                    .modal = true,
+                }) catch {};
+                break :main;
+            }
+            break :image_type img_type.?;
+        };
+
+        if (dialogFollowup.img_type == null and image_type == .HDD_5MB) {
+            dialogFollowup.selected_filename = allocator.dupe(u8, filename) catch unreachable;
+            dvui.dialog(@src(), .{
+                .title = "Select image type",
+                .message = "The HDD_5MB and HDD_5MB_1024 formats cannot be distinguished.\n\nPlease select the correct format.",
+                .ok_label = "HDD_5MB_1024",
+                .cancel_label = "HDD_5MB",
+                .modal = true,
+                .callafterFn = dialogFollowup.handleResponse,
+            }) catch {};
+            return;
+        } else if (image_type == .HDD_5MB) {
+            image_type = dialogFollowup.img_type.?;
+        }
+        // TODO: print out the error number. Needs some sort of "formatError"
+        image_directories = null;
+        commands.openExistingImage(filename, image_type) catch |err| {
+            std.debug.print("Error is {}\n", .{err});
+            dvui.dialog(@src(), .{
+                .title = "Error opening image",
+                .message = "Could not open image",
+                .modal = true,
+            }) catch {};
+            break :main;
+        };
+        // TODO: This should be dialog as well if it fails.
+        image_directories = commands.directoryListing(allocator) catch null;
+        success = true;
+    }
+    if (!success) {
+        commands.closeImage();
+        image_directories = null;
+    }
+    dialogFollowup.deinit();
 }
 
 // TODO: Move this into the handler and make not pub.
