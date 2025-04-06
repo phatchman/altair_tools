@@ -336,13 +336,14 @@ pub fn validateOptions() !bool {
         return false;
     }
 
-    if (options.do_directory or options.do_raw_dir or options.do_information) {
+    if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
         if (options.multiple_files.len != 0) {
             cli.printError(&app,
                 \\No filenames are allowed for:
                 \\       --directory, 
                 \\       --raw
                 \\       --info
+                \\       --format
                 \\
             , .{});
             return false;
