@@ -23,7 +23,9 @@
 //                              Alt R - orient.
 //       [_] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
 //       [_] Grids lose sort order when refreshed.
-//       [_]
+//       [_] Drag and Drop???
+//              1) From windows into app
+//              2) Between application grids?
 //       [_]
 //
 

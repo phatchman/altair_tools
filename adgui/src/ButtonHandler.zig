@@ -17,7 +17,6 @@ pub fn newDirectoryListHandler(
             directories: []DirectoryEntry,
         ) !void {
             var dir_itr = CommandState.directoryEntryIterator(directories);
-
             blk: switch (CommandState.state) {
                 .processing => {
                     CommandState.prompt = null;
@@ -35,7 +34,7 @@ pub fn newDirectoryListHandler(
                                 CommandState.state = .waiting_for_input;
                                 CommandState.currentFile().?.message = options.prompt_file;
                             } else {
-                                CommandState.state = .processing;
+                                //CommandState.state = .processing;
                                 // Continue to the .confirm case.
                                 // Note that state stays as processing so that "action handlers" can
                                 // tell if it is a new file or a file being confirmed.
@@ -140,6 +139,330 @@ pub fn newPromptForFileHandler(
             }
         }
     };
+}
+
+test "directory list handler" {
+    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    var directories = [_]DirectoryEntry{
+        .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
+    };
+    for (&directories) |*dir| {
+        dir.checked = true;
+    }
+    const handler = newDirectoryListHandler(
+        struct {
+            pub fn testAction(file: *DirectoryEntry) anyerror!void {
+                _ = file;
+            }
+        }.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+        },
+    );
+    CommandState.current_command = .get;
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "prompt for file handler" {
+    const handler = newPromptForFileHandler(
+        struct {
+            pub fn testAction(_: []const u8, _: Options) anyerror!void {}
+        }.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+            .input_buttons = .{ .open_file_selector = true },
+        },
+    );
+    CommandState.current_command = .getsys;
+    CommandState.file_selector_buffer = "test.img";
+
+    try handler.process();
+    try std.testing.expectEqual(.getsys, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+
+    CommandState.state = .confirm;
+
+    try handler.process();
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "directory list handler errors" {
+    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    var directories = [_]DirectoryEntry{
+        .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
+    };
+    for (&directories) |*dir| {
+        dir.checked = true;
+    }
+
+    const local = struct {
+        var err_to_return: ?anyerror = null;
+        pub fn testAction(_: *DirectoryEntry) anyerror!void {
+            if (err_to_return) |err| {
+                return err;
+            }
+        }
+    };
+
+    const handler = newDirectoryListHandler(
+        local.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+        },
+    );
+    CommandState.current_command = .get;
+
+    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    CommandState.state = .confirm;
+    local.err_to_return = null;
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "prompt for file handler errors" {
+    const local = struct {
+        var err_to_return: ?anyerror = null;
+        pub fn testAction(_: []const u8, _: Options) anyerror!void {
+            if (err_to_return) |err| {
+                return err;
+            }
+        }
+    };
+    const handler = newPromptForFileHandler(
+        local.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+            .input_buttons = .{ .open_file_selector = true },
+        },
+    );
+
+    CommandState.current_command = .getsys;
+    CommandState.file_selector_buffer = "test.img";
+
+    try handler.process();
+    try std.testing.expectEqual(.getsys, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+
+    CommandState.state = .confirm;
+    local.err_to_return = std.fs.Dir.MakeError.BadPathName;
+
+    try handler.process();
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "directory list handler confirm errors" {
+    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    var directories = [_]DirectoryEntry{
+        .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
+    };
+    for (&directories) |*dir| {
+        dir.checked = true;
+    }
+
+    const local = struct {
+        var err_to_return: ?anyerror = null;
+        pub fn testAction(_: *DirectoryEntry) anyerror!void {
+            if (err_to_return) |err| {
+                return err;
+            }
+        }
+    };
+
+    const handler = newDirectoryListHandler(
+        local.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+        },
+    );
+    CommandState.current_command = .get;
+
+    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    CommandState.state = .confirm;
+    CommandState.confirm_all = .yes_to_all;
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test3.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "prompt for file handler cancel" {
+    const handler = newPromptForFileHandler(
+        struct {
+            pub fn testAction(_: []const u8, _: Options) anyerror!void {
+                return;
+            }
+        }.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+            .input_buttons = .{ .open_file_selector = true },
+        },
+    );
+
+    CommandState.current_command = .getsys;
+    CommandState.file_selector_buffer = "test.img";
+
+    try handler.process();
+    try std.testing.expectEqual(.getsys, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+
+    CommandState.state = .cancel;
+    CommandState.file_selector_buffer = null;
+
+    try handler.process();
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "directory list handler cancel errors" {
+    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    var directories = [_]DirectoryEntry{
+        .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
+    };
+    for (&directories) |*dir| {
+        dir.checked = true;
+    }
+
+    const local = struct {
+        var err_to_return: ?anyerror = null;
+        var already_errored = false;
+        pub fn testAction(_: *DirectoryEntry) anyerror!void {
+            // For no to all, there should be no retries of the error.
+            std.debug.assert(!already_errored);
+            already_errored = true;
+            if (err_to_return) |err| {
+                return err;
+            }
+        }
+    };
+
+    const handler = newDirectoryListHandler(
+        local.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+        },
+    );
+    CommandState.current_command = .get;
+
+    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    CommandState.state = .cancel;
+    CommandState.confirm_all = .no_to_all;
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test3.txt", CommandState.currentFile().?.filename);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
 }
 
 const std = @import("std");
