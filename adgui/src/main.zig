@@ -175,6 +175,8 @@ pub fn main() !void {
         commands.openLocalDirectory(local_path_selection.?) catch break :open_local;
         local_directories = commands.localDirectoryListing(allocator) catch null;
     }
+
+    _ = Backend.c.SDL_EventState(Backend.c.SDL_DROPFILE, Backend.c.SDL_ENABLE);
     main_loop: while (true) {
         // beginWait coordinates with waitTime below to run frames only when needed
         const nstime = win.beginWait(backend.hasEvent());
@@ -182,9 +184,29 @@ pub fn main() !void {
         // marks the beginning of a frame for dvui, can call dvui functions after this
         try win.begin(nstime);
 
+        var event: Backend.c.SDL_Event = undefined;
+        while (Backend.c.SDL_PollEvent(&event) != 0) {
+            switch (event.type) {
+                Backend.c.SDL_DROPFILE => {
+                    const dropped_file = event.drop.file;
+                    const filename = std.mem.span(dropped_file);
+
+                    commands.putFile(std.fs.path.basename(filename), std.fs.path.dirname(filename) orelse ".", current_user, false) catch |err| {
+                        const message = try std.fmt.allocPrint(dvui.currentWindow().arena(), "Unable to Put file {s}\n", .{filename});
+                        errorDialog("Copying file", message, err);
+                    };
+                    image_directories = commands.directoryListing(allocator) catch null;
+                    sortDirectories(.image, null, false);
+                    Backend.c.SDL_free(dropped_file);
+                },
+                Backend.c.SDL_QUIT => break :main_loop,
+                else => _ = try backend.addEvent(&win, event),
+            }
+        }
+
         // send all SDL events to dvui for processing
-        const quit = try backend.addAllEvents(&win);
-        if (quit) break :main_loop;
+        //const quit = try backend.addAllEvents(&win);
+        //if (quit) break :main_loop;
 
         // if dvui widgets might not cover the whole window, then need to clear
         // the previous frame's render
@@ -216,6 +238,16 @@ pub fn main() !void {
     }
 }
 
+fn handleEvent(event: *const Backend.c.SDL_Event) void {
+    switch (event.*.type) {
+        Backend.c.SDL_DROPFILE => {
+            const dropped_file = event.*.drop.file;
+            std.debug.print("Dropped file: {s}\n", .{dropped_file});
+            Backend.c.SDL_free(dropped_file);
+        },
+        else => {},
+    }
+}
 var theme_set = false;
 var global_theme: dvui.Theme = undefined;
 
@@ -1746,7 +1778,7 @@ pub const CommandState = struct {
     }
 
     pub fn addProcessedFile(status: FileStatus) !void {
-        try processed_files.append(allocator, status);
+        try processed_files.append(arena.allocator(), status);
     }
 
     pub fn currentFile() ?*FileStatus {
@@ -1777,8 +1809,8 @@ pub const CommandState = struct {
     }
 
     pub fn freeResources() void {
-        // TODO: Move this to using the arena?
-        processed_files.clearAndFree(allocator);
+        // TODO: Why is this shrink required over just setting capacity to 0?
+        processed_files.clearAndFree(arena.allocator());
         if (file_selector_buffer) |buffer| {
             allocator.free(buffer);
             file_selector_buffer = null;
@@ -2032,6 +2064,7 @@ pub fn makeTransferDialog() !void {
             if (key_state == .enter or try buttonFocussed(@src(), "Close", .{}, .{})) {
                 CommandState.finishCommand();
                 CommandState.freeResources();
+                std.debug.print("Closed\n", .{});
                 // TODO: Need to clear the selection as well. prod add an EndCommand() that does the cleanup.
                 dialog_win.close(); // can close the dialog this way
                 // Refresh everything to the newset state.
