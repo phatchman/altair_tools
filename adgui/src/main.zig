@@ -155,7 +155,7 @@ pub fn main() !void {
     defer backend.deinit();
 
     try setImagePath("");
-    defer allocator.free(image_path_selection.?); // TODO: Either make thes undefined and free here or options nad check the optional.
+    defer allocator.free(image_path_selection.?); // TODO: I don't think these should be optionals. We set them at the start and then they onyl every get updated.
     try setLocalPath(".\\disks");
     defer allocator.free(local_path_selection.?);
 
@@ -171,8 +171,10 @@ pub fn main() !void {
     }
 
     std.debug.print("Local path = {s}\n", .{local_path_selection.?});
-    try commands.openLocalDirectory(local_path_selection.?);
-    local_directories = try commands.localDirectoryListing(allocator);
+    open_local: {
+        commands.openLocalDirectory(local_path_selection.?) catch break :open_local;
+        local_directories = commands.localDirectoryListing(allocator) catch null;
+    }
     main_loop: while (true) {
         // beginWait coordinates with waitTime below to run frames only when needed
         const nstime = win.beginWait(backend.hasEvent());
@@ -706,8 +708,10 @@ fn createFileSelector(id: GridType) !void {
     }
     if (entry.enter_pressed) {
         // TODO: Repeated code from the icon click.
-        image_directories = null;
-        openImageFile(entry.getText());
+        switch (id) {
+            .image => openImageFile(entry.getText()),
+            .local => openLocalDirectory(entry.getText()),
+        }
         dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
     }
     entry.deinit();
@@ -730,11 +734,18 @@ fn createFileSelector(id: GridType) !void {
                 try setLocalPath(full_path);
             }
 
+            const path_to_use = path: {
+                if (local_path_selection) |local_path| {
+                    break :path std.fs.cwd().realpathAlloc(dvui.currentWindow().arena(), local_path) catch local_path[0..];
+                } else {
+                    break :path std.fs.cwd().realpathAlloc(dvui.currentWindow().arena(), ".") catch ".";
+                }
+            };
+
             const dirname =
-                try dvui.dialogNativeFolderSelect(dvui.currentWindow().arena(), .{ .title = "Select a Folder", .path = local_path_selection });
+                try dvui.dialogNativeFolderSelect(dvui.currentWindow().arena(), .{ .title = "Select a Folder", .path = path_to_use });
             if (dirname) |dir| {
-                try commands.openLocalDirectory(dir);
-                local_directories = try commands.localDirectoryListing(allocator);
+                openLocalDirectory(dir);
                 try setLocalPath(dir);
             }
         }
@@ -769,7 +780,10 @@ fn makeGridBody(id: GridType) !void {
         .local => if (local_directories == null) false else true,
     };
     if (!loaded) {
-        try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5 });
+        switch (id) {
+            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5 }),
+            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5 }),
+        }
         return;
     }
 
@@ -1036,7 +1050,7 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
                 dir.checked = checked;
             }
         } else {
-            sortDirectories(id, label);
+            sortDirectories(id, label, true);
         }
     }
     try dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
@@ -1185,9 +1199,11 @@ fn sortDesc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
     unreachable;
 }
 
-fn sortDirectories(id: GridType, sort_by: []const u8) void {
+fn sortDirectories(id: GridType, sort_by_opt: ?[]const u8, toggle_direction: bool) void {
     const idx = @intFromEnum(id);
-    if (std.mem.eql(u8, sort_column[idx], sort_by)) {
+    const sort_by = sort_by_opt orelse sort_column[idx];
+
+    if (toggle_direction and std.mem.eql(u8, sort_column[idx], sort_by)) {
         sort_asc[idx] = !sort_asc[idx];
     } else {
         sort_column[idx] = sort_by;
@@ -1419,7 +1435,8 @@ pub fn processEvents() void {
                     .down => {
                         var dirs = getDirectoryById(focussed_grid);
                         const current_selection = getKbSelectionIndex(focussed_grid);
-                        dirs[current_selection].checked = !dirs[current_selection].checked;
+                        if (current_selection < dirs.len)
+                            dirs[current_selection].checked = !dirs[current_selection].checked;
                     },
                     else => {},
                 }
@@ -2022,10 +2039,12 @@ pub fn makeTransferDialog() !void {
                 // Refresh everything to the newset state.
                 // TODO: This needs to be moved so it is always called on closeing of the window. i.e. by checking the closing variable?
                 if (local_directories != null) {
-                    local_directories = try commands.localDirectoryListing(allocator);
+                    local_directories = commands.localDirectoryListing(allocator) catch null;
+                    sortDirectories(.local, null, false);
                 }
                 if (image_directories != null) {
-                    image_directories = try commands.directoryListing(allocator);
+                    image_directories = commands.directoryListing(allocator) catch null;
+                    sortDirectories(.image, null, false);
                 }
             }
         }
@@ -2074,6 +2093,7 @@ fn putButtonHandler() !void {
             pub fn putFile(file: *DirectoryEntry) !void {
                 const local_path = local_path_selection.?;
                 try commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm);
+                // TODO: Think of a way to make the grid get filled as files are copied.
             }
         }.putFile,
         struct {
@@ -2111,6 +2131,7 @@ fn eraseButtonHandler() !void {
         struct {
             pub fn eraseFile(file: *DirectoryEntry) !void {
                 try commands.eraseFile(file);
+                file.deleted = true;
             }
         }.eraseFile,
         struct {
@@ -2222,6 +2243,23 @@ fn infoButtonHandler() !void {
     }
 }
 
+fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void {
+    const display_message = message: {
+        if (opt_err) |err| {
+            break :message std.fmt.allocPrint(dvui.currentWindow().arena(), "{s}\n\nError is: {s}", .{ message, @errorName(err) }) catch message;
+        } else {
+            break :message message;
+        }
+    };
+    dvui.dialog(@src(), .{
+        .title = title,
+        .message = display_message,
+        .modal = true,
+    }) catch |err| {
+        std.debug.panic("Can't open error dialog: {}", .{err});
+    };
+}
+
 /// finds the next available name in NEWnnn.DSK
 pub fn findNewImageName(directory: []const u8) ![]const u8 {
     const static = struct {
@@ -2278,23 +2316,13 @@ pub fn openImageFile(filename: []const u8) void {
     };
 
     main: {
+        const error_title = "Error opening image";
         var image_type = image_type: {
             const img_type = commands.detectImageType(filename) catch |err| {
-                std.debug.print("Error is {}\n", .{err});
-                dvui.dialog(@src(), .{
-                    .title = "Error opening image",
-                    .message = "Could not detect image type",
-                    .modal = true,
-                }) catch {};
-                break :main;
+                break :main errorDialog(error_title, "Could not detect image type", err);
             };
             if (img_type == null) {
-                dvui.dialog(@src(), .{
-                    .title = "Error opening image",
-                    .message = "Not a supported Altair disk image format",
-                    .modal = true,
-                }) catch {};
-                break :main;
+                break :main errorDialog(error_title, "Not a supported Altair disk image format", null);
             }
             break :image_type img_type.?;
         };
@@ -2313,19 +2341,14 @@ pub fn openImageFile(filename: []const u8) void {
         } else if (image_type == .HDD_5MB) {
             image_type = dialogFollowup.img_type.?;
         }
-        // TODO: print out the error number. Needs some sort of "formatError"
         image_directories = null;
         commands.openExistingImage(filename, image_type) catch |err| {
-            std.debug.print("Error is {}\n", .{err});
-            dvui.dialog(@src(), .{
-                .title = "Error opening image",
-                .message = "Could not open image",
-                .modal = true,
-            }) catch {};
-            break :main;
+            break :main errorDialog(error_title, "Could not open image file.", err);
         };
-        // TODO: This should be dialog as well if it fails.
-        image_directories = commands.directoryListing(allocator) catch null;
+        image_directories = commands.directoryListing(allocator) catch |err| {
+            break :main errorDialog(error_title, "Could not open directory table.", err);
+        };
+        sortDirectories(.image, null, false);
         success = true;
     }
     if (!success) {
@@ -2333,6 +2356,27 @@ pub fn openImageFile(filename: []const u8) void {
         image_directories = null;
     }
     dialogFollowup.deinit();
+}
+
+pub fn openLocalDirectory(path: []const u8) void {
+    std.debug.print("Open local dircetory {s}\n", .{path});
+    var success = false;
+
+    main: {
+        const error_title = "Error opening directory";
+        local_directories = null;
+        commands.openLocalDirectory(path) catch |err| {
+            break :main errorDialog(error_title, "Could not open directory.", err);
+        };
+        local_directories = commands.localDirectoryListing(allocator) catch |err| {
+            break :main errorDialog(error_title, "Could not get directtory listing.", err);
+        };
+        sortDirectories(.local, null, false);
+        success = true;
+    }
+    if (!success) {
+        local_directories = null;
+    }
 }
 
 // TODO: Move this into the handler and make not pub.

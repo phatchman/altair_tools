@@ -18,6 +18,10 @@ pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
     if (self.disk_image) |*disk_image| {
         disk_image.deinit();
     }
+    if (self.current_dir) |*current_dir| {
+        current_dir.close();
+        self.current_dir = null;
+    }
 }
 
 pub const LocalDirEntry = struct {
@@ -230,6 +234,7 @@ pub fn dump(self: *Self) void {
 pub fn openLocalDirectory(self: *Self, dir_path: []const u8) !void {
     if (self.current_dir) |*current_dir| {
         current_dir.close();
+        self.current_dir = null;
     }
     self.current_dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
 }
