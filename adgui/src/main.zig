@@ -1,30 +1,18 @@
 //
-// TODO: [X] Not to all should only no errors, not working. e.g. no to all overwriting should still copy the files it can copy.
+// TODO:
 //       [_] Fix up the size of the "transfer window"
-//       [X] Fix up the "yes" / "no" on the transfer window
-//       [X] Implement get/put sys
 //       [_] Ask to do a recovery if the disk image is corrupted
 //       [_] Handle errors properly so app doesn't exit unexpectedly
 //       [_] Keep a backup image of any file opened? OR at least make that an option.
-//       [X] Add a help screen with keyboard shortcuts
-//       [X] Keyboard shortcuts for the open image and open local directory
-//       [X] Something better to display if no image has been opened yet
-//       [_] Title bars on transfer window
-//       [X] Ctrl-A - select all
-//       [X] Fix issue with pgup / pgdown not moving selection in keyboard selection mode.
-//       [_] Fix issue with new images being created in local dir, not same as the dir used for open file.
-//       [X] Disable menu buttons that aren't valid for the current selection / action.
-//       [_] Handle errors when invalid filesnames types into the text box
-//       [X] Change shortcuts.  Alt I - manually enter an image name.
-//                              Alt M - opens an image browser.
-//                              Alt L - manually enter disk directory.
-//                              Alt O - open the local dir brownser.
-//                              Alt F - info.
-//                              Alt R - orient.
-//       [_] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
-//       [_] Grids lose sort order when refreshed.
-//       [_] Drag and Drop???
+//       [X] Title bars on transfer window
+//       [X] Fix issue with new images being created in local dir, not same as the dir used for open file.
+//       [X] Handle errors when invalid filesnames typed into the text box
+//       [?] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
+//       [X] Grids lose sort order when refreshed.
+//       [_] The current way we handle the pane collapsing is broken. It doesn't work with "vertical" orientation.
+//       [_] Drag and Drop
 //              1) From windows into app
+//              2) From app to local OS (SDL doesn't currently support this)
 //              2) Between application grids?
 //       [_]
 //
@@ -1829,6 +1817,7 @@ pub fn makeTransferDialog() !void {
         var scroll_info: dvui.ScrollInfo = .{};
         var last_nr_messages: usize = 0;
         var choice: usize = 0;
+        var last_command: CommandList = .none;
     };
 
     if (CommandState.state != .waiting_for_input and CommandState.processed_files.items.len == 0) {
@@ -1846,11 +1835,23 @@ pub fn makeTransferDialog() !void {
         },
     );
     defer dialog_win.deinit();
-    //    if (current_command == .info) {
-    //        dialog_win.autoSize();
-    //  }
 
-    try dvui.windowHeader("Altair to Local", "", &static.open_flag);
+    const title = title: switch (CommandState.current_command) {
+        .get => "Copy from Altair to Local",
+        .put => "Copy from Local to Altair",
+        .erase => "Erase file from Altair",
+        .getsys => "Copy system image from Altair",
+        .putsys => "Copy system image to Altair",
+        .info => "Altair disk image information",
+        .new => "Create new Altair disk iamge",
+        .none => continue :title static.last_command, // Command will be .none when finished, so show the last state.
+        .close, .exit, .mode, .user, .orient => unreachable,
+    };
+    if (CommandState.current_command != .none) {
+        static.last_command = CommandState.current_command;
+    }
+
+    try dvui.windowHeader(title, "", &static.open_flag);
     var outer_vbox = try dvui.box(@src(), .vertical, .{
         .expand = .both,
         .min_size_content = .{ .w = 500, .h = 500 },
@@ -1862,9 +1863,6 @@ pub fn makeTransferDialog() !void {
     // TODO: Should we filter. this is modal, does it matter?
     const evts = dvui.events();
     for (evts) |*e| {
-        //                if (!dvui.eventMatchSimple(e, dialog_win.data())) {
-        //                    continue;
-        //                }
         if (e.handled or e.evt != .key) continue;
         const ke = e.evt.key;
         if (ke.action != .down) continue;
@@ -1909,7 +1907,7 @@ pub fn makeTransferDialog() !void {
             defer vbox.deinit();
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
-                try dvui.label(@src(), "{s:<12} {s} {s}", .{ basename, if (file.message.len > 0) "-->" else "", file.message }, .{ .id_extra = i });
+                try dvui.label(@src(), "{s:<12} {s} {s}", .{ basename, if (basename.len > 0) "-->" else "", file.message }, .{ .id_extra = i });
                 current_file = file;
             }
         }
@@ -2174,6 +2172,7 @@ fn eraseButtonHandler() !void {
             .default_to_confirm = true,
             .prompt_file = "Erase?",
             .prompt_success = "Erased.",
+            .skip_when_no_to_all = true,
         },
     );
     try handler.process(image_directories.?);
@@ -2255,15 +2254,17 @@ fn infoButtonHandler() !void {
             if (commands.disk_image) |disk_image| {
                 const image_type = disk_image.image_type;
                 const arena = CommandState.arena.allocator();
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Format", image_type.type_name }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Res Track", image_type.reserved_tracks }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "Sects Track  : {d}", .{image_type.sectors_per_track}), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Sect Len", image_type.sector_size }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Block Size", image_type.block_size }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Directories", image_type.directories }), ""));
-                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Allocations", image_type.total_allocs }), ""));
+                // This is a bit hacky - using the filename to display the info.
+                // If the display of this goes wonky, it"", 's probably because we are treng it as a filename, rather than a label.
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Format", image_type.type_name })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Res Track", image_type.reserved_tracks })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Sects/Track", image_type.sectors_per_track })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Sect Len", image_type.sector_size })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Block Size", image_type.block_size })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Directories", image_type.directories })));
+                try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Allocations", image_type.total_allocs })));
                 CommandState.state = .waiting_for_input;
                 CommandState.finishCommand();
             } else {

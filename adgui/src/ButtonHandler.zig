@@ -5,6 +5,8 @@ pub const Options = struct {
     prompt_skip: []const u8 = "Skipped",
     prompt_retry: []const u8 = "Retry",
     input_buttons: CommandState.Buttons = .none,
+    skip_when_no_to_all: bool = false, // How should no to all work? Skip the command or process, but not force.
+    //  TODO: Consider making this "stop when no to all" so we don't just keep showin the list.
 };
 
 pub fn newDirectoryListHandler(
@@ -27,7 +29,12 @@ pub fn newDirectoryListHandler(
                             // Continue to the .confirm case.
                             continue :blk .confirm;
                         } else if (CommandState.confirm_all == .no_to_all) {
-                            CommandState.currentFile().?.message = options.prompt_skip;
+                            if (options.skip_when_no_to_all) {
+                                CommandState.currentFile().?.message = options.prompt_skip;
+                            } else {
+                                CommandState.state = .processing;
+                                continue :blk .confirm;
+                            }
                         } else {
                             if (options.default_to_confirm) {
                                 CommandState.buttons = .yes_no_all;
@@ -50,7 +57,6 @@ pub fn newDirectoryListHandler(
                     if (dir_itr.peek()) |file| {
                         var success: bool = true;
                         action_function(file) catch |err| {
-                            std.debug.print("err = {}\n", .{err});
                             success = false;
                             var current = CommandState.currentFile().?;
                             if (error_function(current, err)) {
@@ -399,7 +405,7 @@ test "prompt for file handler cancel" {
     try std.testing.expectEqual(.processing, CommandState.state);
 }
 
-test "directory list handler cancel errors" {
+test "directory list handler cancel errors with skip" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
@@ -412,11 +418,11 @@ test "directory list handler cancel errors" {
 
     const local = struct {
         var err_to_return: ?anyerror = null;
-        var already_errored = false;
+        var action_count: usize = 0;
         pub fn testAction(_: *DirectoryEntry) anyerror!void {
-            // For no to all, there should be no retries of the error.
-            std.debug.assert(!already_errored);
-            already_errored = true;
+            // No to all should keep running the command, but ignore any errors
+            // generated.
+            action_count += 1;
             if (err_to_return) |err| {
                 return err;
             }
@@ -441,7 +447,7 @@ test "directory list handler cancel errors" {
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);
     try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
-
+    try std.testing.expectEqual(1, local.action_count);
     CommandState.state = .cancel;
     CommandState.confirm_all = .no_to_all;
 
@@ -449,18 +455,93 @@ test "directory list handler cancel errors" {
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.processing, CommandState.state);
     try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(1, local.action_count);
 
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.processing, CommandState.state);
     try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(2, local.action_count);
 
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.processing, CommandState.state);
     try std.testing.expectEqualStrings("test3.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(3, local.action_count);
 
     try handler.process(&directories);
+    try std.testing.expectEqual(3, local.action_count);
+    try std.testing.expectEqual(.none, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+}
+
+test "directory list handler cancel errors no skip" {
+    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    var directories = [_]DirectoryEntry{
+        .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
+        .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
+    };
+    for (&directories) |*dir| {
+        dir.checked = true;
+    }
+
+    const local = struct {
+        var err_to_return: ?anyerror = null;
+        var action_count: usize = 0;
+        pub fn testAction(_: *DirectoryEntry) anyerror!void {
+            // No to all should keep running the command, but ignore any errors
+            // generated.
+            action_count += 1;
+            if (err_to_return) |err| {
+                return err;
+            }
+        }
+    };
+
+    const handler = newDirectoryListHandler(
+        local.testAction,
+        struct {
+            pub fn testError(_: *FileStatus, _: anyerror) bool {
+                return false;
+            }
+        }.testError,
+        Options{
+            .default_to_confirm = false,
+            .skip_when_no_to_all = true,
+        },
+    );
+    CommandState.current_command = .get;
+
+    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.waiting_for_input, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(1, local.action_count);
+    CommandState.state = .cancel;
+    CommandState.confirm_all = .no_to_all;
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(1, local.action_count);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test2.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(1, local.action_count);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(.get, CommandState.current_command);
+    try std.testing.expectEqual(.processing, CommandState.state);
+    try std.testing.expectEqualStrings("test3.txt", CommandState.currentFile().?.filename);
+    try std.testing.expectEqual(1, local.action_count);
+
+    try handler.process(&directories);
+    try std.testing.expectEqual(1, local.action_count);
     try std.testing.expectEqual(.none, CommandState.current_command);
     try std.testing.expectEqual(.processing, CommandState.state);
 }
