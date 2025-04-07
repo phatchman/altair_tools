@@ -141,7 +141,7 @@ pub fn main() !void {
 
     defer if (gpa_instance.deinit() != .ok) @panic("Memory leak on exit!");
     defer commands.deinit(allocator);
-    defer CommandState.processed_files.clearAndFree(allocator);
+    defer CommandState.freeResources();
 
     // init SDL backend (creates and owns OS window)
     var backend = try Backend.initWindow(.{
@@ -191,9 +191,13 @@ pub fn main() !void {
         _ = Backend.c.SDL_SetRenderDrawColor(backend.renderer, 0, 0, 0, 255);
         _ = Backend.c.SDL_RenderClear(backend.renderer);
 
-        // The demos we pass in here show up under "Platform-specific demos"
-        // TODO: This is where we need to catch unexpected errors
-        if (!try gui_frame()) break :main_loop;
+        const running = gui_frame() catch |err| {
+            std.log.err("Encountered an unrecovereable error: {s}", .{@errorName(err)});
+            return err;
+        };
+        if (!running) {
+            break :main_loop;
+        }
 
         // marks end of dvui frame, don't call dvui functions after this
         // - sends all dvui stuff to backend for rendering, must be called before renderPresent()
@@ -727,20 +731,14 @@ fn createFileSelector(id: GridType) !void {
                 is_initialised.* = false;
             }
         } else {
-            // TODO: prob just init this to undefined. it's not really an optional.
-            if (local_path_selection.?.len == 1 and local_path_selection.?[0] == '.') {
-                var cwd = std.fs.cwd();
-                const full_path = try cwd.realpathAlloc(allocator, ".");
-                try setLocalPath(full_path);
-            }
-
             const path_to_use = path: {
                 if (local_path_selection) |local_path| {
-                    break :path std.fs.cwd().realpathAlloc(dvui.currentWindow().arena(), local_path) catch local_path[0..];
+                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch local_path[0..];
                 } else {
-                    break :path std.fs.cwd().realpathAlloc(dvui.currentWindow().arena(), ".") catch ".";
+                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
                 }
             };
+            try setLocalPath(path_to_use);
 
             const dirname =
                 try dvui.dialogNativeFolderSelect(dvui.currentWindow().arena(), .{ .title = "Select a Folder", .path = path_to_use });
@@ -1780,7 +1778,7 @@ pub const CommandState = struct {
 
     pub fn freeResources() void {
         // TODO: Move this to using the arena?
-        processed_files.clearRetainingCapacity();
+        processed_files.clearAndFree(allocator);
         if (file_selector_buffer) |buffer| {
             allocator.free(buffer);
             file_selector_buffer = null;
@@ -1879,7 +1877,7 @@ pub fn makeTransferDialog() !void {
             defer vbox.deinit();
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
-                try dvui.label(@src(), "{s:<12} --> {s}", .{ basename, file.message }, .{ .id_extra = i });
+                try dvui.label(@src(), "{s:<12} {s} {s}", .{ basename, if (file.message.len > 0) "-->" else "", file.message }, .{ .id_extra = i });
                 current_file = file;
             }
         }
@@ -2223,17 +2221,18 @@ fn infoButtonHandler() !void {
         .processing => {
             if (commands.disk_image) |disk_image| {
                 const image_type = disk_image.image_type;
-                const message_list = &CommandState.processed_files;
                 const arena = CommandState.arena.allocator();
-                try message_list.append(arena, .init("Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.tracks})));
-                try message_list.append(arena, .init("Track Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.track_size})));
-                try message_list.append(arena, .init("Res Tracks", try std.fmt.allocPrint(allocator, "{d}", .{image_type.reserved_tracks})));
-                try message_list.append(arena, .init("Sect/Track", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sectors_per_track})));
-                try message_list.append(arena, .init("Sect Len", try std.fmt.allocPrint(allocator, "{d}", .{image_type.sector_size})));
-                try message_list.append(arena, .init("Block Size", try std.fmt.allocPrint(allocator, "{d}", .{image_type.block_size})));
-                try message_list.append(arena, .init("Directories", try std.fmt.allocPrint(allocator, "{d}", .{image_type.directories})));
-                try message_list.append(arena, .init("Allocations", try std.fmt.allocPrint(allocator, "{d}", .{image_type.total_allocs})));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Format", image_type.type_name }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Res Track", image_type.reserved_tracks }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "Sects Track  : {d}", .{image_type.sectors_per_track}), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Sect Len", image_type.sector_size }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Block Size", image_type.block_size }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Directories", image_type.directories }), ""));
+                try CommandState.addProcessedFile(.init(try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Allocations", image_type.total_allocs }), ""));
                 CommandState.state = .waiting_for_input;
+                CommandState.finishCommand();
             } else {
                 CommandState.finishCommand();
                 CommandState.freeResources();
