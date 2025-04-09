@@ -548,6 +548,6 @@ test "directory list handler cancel errors no skip" {
 
 const std = @import("std");
 const DirectoryEntry = @import("commands.zig").DirectoryEntry;
-const CommandState = @import("main.zig").CommandState;
-const FileStatus = @import("main.zig").FileStatus;
+const CommandState = @import("CommandState.zig");
+const FileStatus = CommandState.FileStatus;
 const formatErrorMessage = @import("main.zig").formatErrorMessage;
