@@ -149,6 +149,9 @@ pub fn newPromptForFileHandler(
 
 test "directory list handler" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
@@ -189,6 +192,9 @@ test "directory list handler" {
 }
 
 test "prompt for file handler" {
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     const handler = newPromptForFileHandler(
         struct {
             pub fn testAction(_: []const u8, _: Options) anyerror!void {}
@@ -204,7 +210,7 @@ test "prompt for file handler" {
         },
     );
     CommandState.current_command = .getsys;
-    CommandState.file_selector_buffer = "test.img";
+    CommandState.file_selector_buffer = try CommandState.arena.allocator().dupe(u8, "test.img");
 
     try handler.process();
     try std.testing.expectEqual(.getsys, CommandState.current_command);
@@ -219,6 +225,9 @@ test "prompt for file handler" {
 
 test "directory list handler errors" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
@@ -274,6 +283,9 @@ test "directory list handler errors" {
 }
 
 test "prompt for file handler errors" {
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     const local = struct {
         var err_to_return: ?anyerror = null;
         pub fn testAction(_: []const u8, _: Options) anyerror!void {
@@ -296,7 +308,7 @@ test "prompt for file handler errors" {
     );
 
     CommandState.current_command = .getsys;
-    CommandState.file_selector_buffer = "test.img";
+    CommandState.file_selector_buffer = try CommandState.arena.allocator().dupe(u8, "test.img");
 
     try handler.process();
     try std.testing.expectEqual(.getsys, CommandState.current_command);
@@ -312,6 +324,9 @@ test "prompt for file handler errors" {
 
 test "directory list handler confirm errors" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
@@ -373,6 +388,9 @@ test "directory list handler confirm errors" {
 }
 
 test "prompt for file handler cancel" {
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     const handler = newPromptForFileHandler(
         struct {
             pub fn testAction(_: []const u8, _: Options) anyerror!void {
@@ -391,7 +409,7 @@ test "prompt for file handler cancel" {
     );
 
     CommandState.current_command = .getsys;
-    CommandState.file_selector_buffer = "test.img";
+    CommandState.file_selector_buffer = try CommandState.arena.allocator().dupe(u8, "test.img");
 
     try handler.process();
     try std.testing.expectEqual(.getsys, CommandState.current_command);
@@ -407,6 +425,9 @@ test "prompt for file handler cancel" {
 
 test "directory list handler cancel errors with skip" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
@@ -477,6 +498,9 @@ test "directory list handler cancel errors with skip" {
 
 test "directory list handler cancel errors no skip" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    CommandState.init(std.testing.allocator);
+    defer CommandState.freeResources();
+
     var directories = [_]DirectoryEntry{
         .init(.{ .local = LocalDirEntry{ .filename = "test", .extension = "txt", .full_filename = "test.txt", .size = 999 } }),
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
