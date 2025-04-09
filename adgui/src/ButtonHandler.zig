@@ -147,6 +147,16 @@ pub fn newPromptForFileHandler(
     };
 }
 
+fn formatErrorMessage(err: anyerror) []const u8 {
+    const static = struct {
+        var buffer: [1024]u8 = undefined;
+    };
+
+    return std.fmt.bufPrint(&static.buffer, "Error: {s}", .{@errorName(err)}) catch {
+        return "";
+    };
+}
+
 test "directory list handler" {
     const LocalDirEntry = @import("commands.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
@@ -574,4 +584,3 @@ const std = @import("std");
 const DirectoryEntry = @import("commands.zig").DirectoryEntry;
 const CommandState = @import("CommandState.zig");
 const FileStatus = CommandState.FileStatus;
-const formatErrorMessage = @import("main.zig").formatErrorMessage;
