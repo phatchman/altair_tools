@@ -274,6 +274,12 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
     };
 
     var cwd = std.fs.cwd();
+    if (options.get_out_dir.len > 0) {
+        cwd = cwd.openDir(options.get_out_dir, .{}) catch |err| {
+            printErrorMessage(current_command, .open_directory, .{options.get_out_dir}, err);
+            return error.CommandFailed;
+        };
+    }
     var filename_buf: [dir_entry._filename.len + 3]u8 = undefined; // Underlying filename + _nn for the user.
     const out_filename = try if (add_user_extension)
         std.fmt.bufPrint(&filename_buf, "{s}_{d}", .{ dir_entry.filenameAndExtension(), dir_entry.user })
@@ -538,6 +544,7 @@ fn printErrorMessage(command: []const u8, comptime message: ErrorMessage, args: 
 
 const ErrorMessage = enum {
     open_image,
+    open_directory,
     image_type_detect,
     image_type_set,
     image_init,
@@ -559,6 +566,7 @@ const ErrorMessage = enum {
 
 const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
     .open_image = "Error opening disk image {s}",
+    .open_directory = "Error opening directory {s}",
     .image_type_detect = "Can't detect image type. Use -h to see supported types and -T to force a type.",
     .image_type_set = "Image type is not set correctly. Use -h to see supported types or -v to see the detected type.",
     .image_init = "Initializing disk image {s}",

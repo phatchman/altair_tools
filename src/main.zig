@@ -85,6 +85,7 @@ pub const CommandLineOptions = struct {
     system_image_get: []const u8 = undefined,
     system_image_put: []const u8 = undefined,
     recovery_image_file: []const u8 = undefined,
+    get_out_dir: []const u8 = undefined,
     // All command options need to be in the format do_xxxx to be
     // included in the dispatch table.
     do_directory: bool = false,
@@ -174,6 +175,13 @@ pub fn main() !void {
                     .help = "Copy file from Altair disk image to host",
                     .short_alias = 'g',
                     .value_ref = r.mkRef(&options.do_get),
+                },
+                .{
+                    .long_name = "out",
+                    .help = "Out directory for get and get multiple",
+                    .short_alias = 'o',
+                    .value_name = "outdir",
+                    .value_ref = r.mkRef(&options.get_out_dir),
                 },
                 .{
                     .long_name = "get-multiple",
@@ -359,6 +367,15 @@ pub fn validateOptions() !bool {
             return false;
         }
     }
+    if (options.get_out_dir.len != 0 and !(options.do_get or options.do_get_multi)) {
+        cli.printError(&app,
+            \\You may only use --out with:
+            \\ --get, --get-multiple
+            \\
+        , .{});
+        return false;
+    }
+
     if (options.cpm_user) |user| {
         if (user > 15) {
             cli.printError(&app, "User must be between 0 and 15.", .{});
