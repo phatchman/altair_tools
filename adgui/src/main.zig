@@ -9,11 +9,14 @@
 //       [X] Handle errors when invalid filesnames typed into the text box
 //       [?] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
 //       [X] Grids lose sort order when refreshed.
-//       [_] The current way we handle the pane collapsing is broken. It doesn't work with "vertical" orientation.
+//       [X] The current way we handle the pane collapsing is broken. It doesn't work with "vertical" orientation. Maybe just set a minsize?
+//              Basically just removed any paned collapsing, set the min widths on all fields and stopped "breaking lines" on the labels.
 //       [_] Drag and Drop
 //              1) From windows into app
 //              2) From app to local OS (SDL doesn't currently support this)
-//              2) Between application grids?
+//              2) Between application grids - "Phase 2"
+//       [_] Ctrl-A sometimes selects the text being displayed in the grid labels.
+//       [_] Add keyboard shortcuts for all dialog windows.
 //       [_]
 //
 
@@ -50,7 +53,7 @@ var pgup_pressed: bool = false;
 var down_pressed: bool = false;
 var up_pressed: bool = false;
 
-var paned_collapsed_width: f32 = 600;
+const paned_min_width = 300;
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
 
@@ -88,7 +91,7 @@ var frame_count: u64 = 0;
 
 // Layout information for each column.
 const num_columns = 7;
-const min_sizes = [num_columns]f32{ 10, 80, 30, 20, 60, 40, 10 };
+const min_sizes = [num_columns]f32{ 10, 80, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 15.0;
@@ -141,6 +144,7 @@ pub fn main() !void {
         .icon = window_icon_png, // can also call setIconFromFileContent()
     });
     defer backend.deinit();
+    Backend.c.SDL_SetWindowMinimumSize(backend.window, 900, 600);
 
     try setImagePath("");
     defer allocator.free(image_path_selection.?); // TODO: I don't think these should be optionals. We set them at the start and then they onyl every get updated.
@@ -319,11 +323,10 @@ fn gui_frame() !bool {
         // User can select horizontal or vertial orientation.
         var paned = try dvui.paned(@src(), .{
             .direction = pane_orientation,
-            .collapsed_size = paned_collapsed_width,
+            .collapsed_size = paned_min_width * 2,
         }, .{
             .expand = .both,
             .background = true,
-            .min_size_content = .{ .h = 100 },
         });
         defer paned.deinit();
         {
@@ -336,12 +339,10 @@ fn gui_frame() !bool {
                 .corner_radius = dvui.Rect.all(5),
                 .background = true, // remove
             });
-            if (top_half.wd.rect.w < 400) {
-                paned.animateSplit(0);
-            }
-
             defer top_half.deinit();
-            if (true) {
+            //            if (top_half.wd.rect.w < paned_min_width) {
+            //                paned.animateSplit(0);
+            if (false) {} else {
                 try createFileSelector(.image);
                 {
                     // Beneath the file selector is the file grid, with a fixed header
@@ -364,12 +365,12 @@ fn gui_frame() !bool {
                 }
             }
         }
-        blk: {
+        {
             // If paned is collapse, don't display the right/bottom pane.
-            if (paned.collapsed()) {
-                paned.animateSplit(1.0);
-                break :blk;
-            }
+            //            if (paned.collapsed()) {
+            //                paned.animateSplit(1.0);
+            //                break :blk;
+            //            }
 
             var bottom_half = try dvui.box(@src(), .vertical, .{
                 .expand = .both,
@@ -378,9 +379,9 @@ fn gui_frame() !bool {
                 .background = true, // remove
             });
             defer bottom_half.deinit();
-            if (bottom_half.wd.rect.w < 400) {
-                paned.animateSplit(1);
-            }
+            //            if (bottom_half.wd.rect.w < 400) {
+            //                paned.animateSplit(1);
+            //            }
 
             {
                 if (true) {
@@ -1108,7 +1109,7 @@ fn makeGridDataRow(col_num: u32, item_num: usize, value: []const u8, justify: bo
         });
     } else {
         // TODO: Magic numbers.
-        var name = try dvui.textLayout(@src(), .{}, .{
+        var name = try dvui.textLayout(@src(), .{ .break_lines = false }, .{
             .id_extra = col_num * 100 + item_num,
             .margin = Rect{ .x = 1, .w = 1 },
             .padding = Rect{ .x = 8, .w = 8 },
@@ -2360,13 +2361,37 @@ pub fn openImageFile(filename: []const u8) void {
             break :image_type img_type.?;
         };
 
+        const events = dvui.events();
+        for (events) |evt| {
+            std.debug.print("evt = {}\n", .{evt});
+            if (evt.handled or evt.evt != .key) continue;
+
+            switch (evt.evt.key.code) {
+                .one => {
+                    std.debug.print("one\n", .{});
+                    if (evt.evt.key.action == .down) {
+                        dialogFollowup.handleResponse(0, .cancel) catch {};
+                        dialogFollowup.deinit();
+                    }
+                },
+                .two => {
+                    std.debug.print("two\n", .{});
+                    if (evt.evt.key.action == .down) {
+                        dialogFollowup.handleResponse(0, .ok) catch {};
+                        dialogFollowup.deinit();
+                    }
+                },
+                else => {},
+            }
+        }
+
         if (dialogFollowup.img_type == null and image_type == .HDD_5MB) {
             dialogFollowup.selected_filename = allocator.dupe(u8, filename) catch unreachable;
             dvui.dialog(@src(), .{
                 .title = "Select image type",
-                .message = "The HDD_5MB and HDD_5MB_1024 formats cannot be distinguished.\n\nPlease select the correct format.",
-                .ok_label = "HDD_5MB_1024",
-                .cancel_label = "HDD_5MB",
+                .message = "The HDD_5MB and HDD_5MB_1024 formats cannot be auto-detected.\n\nPlease select the correct format.",
+                .cancel_label = "1) HDD_5MB",
+                .ok_label = " 2) HDD_5MB_1024",
                 .modal = true,
                 .callafterFn = dialogFollowup.handleResponse,
             }) catch {};
