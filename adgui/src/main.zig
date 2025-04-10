@@ -1,6 +1,6 @@
 //
 // TODO:
-//       [_] Fix up the size of the "transfer window"
+//       [_] Fix up the size of the "transfer window" for smaller prompts?
 //       [_] Ask to do a recovery if the disk image is corrupted
 //       [_] Handle errors properly so app doesn't exit unexpectedly
 //       [_] Keep a backup image of any file opened? OR at least make that an option.
@@ -16,8 +16,8 @@
 //              2) From app to local OS (SDL doesn't currently support this)
 //              2) Between application grids - "Phase 2"
 //       [_] Ctrl-A sometimes selects the text being displayed in the grid labels.
-//       [_] Add keyboard shortcuts for all dialog windows.
-//       [_] Change the "Size" formatter so that it can scale from B to K to M? as required.
+//       [X] Add keyboard shortcuts for all dialog windows.
+//       [X] Change the "Size" formatter so that it displays overflow when numbers are too big.
 //       [_]
 //
 
@@ -296,6 +296,7 @@ fn guiFrame() !bool {
     var vbox = try dvui.box(@src(), .vertical, .{
         .expand = .both,
         .border = Rect.all(0),
+        .background = true,
     });
     defer vbox.deinit();
     {
@@ -419,7 +420,7 @@ fn guiFrame() !bool {
         var menu_box = try dvui.boxEqual(@src(), .horizontal, .{
             .expand = .horizontal,
             .background = true,
-            .margin = Rect{},
+            .margin = Rect{ .y = 3 },
         });
         defer menu_box.deinit();
         running = try makeStatusBar();
@@ -602,6 +603,7 @@ fn makeFileSelector(id: GridType) !void {
         is_initialised.* = true;
         entry.textLayout.selection.selectAll();
         entry.textTyped(path.*.?, false);
+        entry.textLayout.selection.moveCursor(path.*.?.len, false);
         dvui.refresh(null, @src(), null);
     }
     if (entry.enter_pressed) {
@@ -1291,6 +1293,7 @@ pub fn makeTransferDialog() !void {
                             try CommandState.setFileSelectorBuffer(image_name);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(image_name, false);
+                            entry.textLayout.selection.moveCursor(image_name.len, false);
                             dvui.refresh(null, @src(), null);
                         }
                     } else {
@@ -1298,11 +1301,13 @@ pub fn makeTransferDialog() !void {
                         try CommandState.setFileSelectorBuffer(filename);
                         entry.textLayout.selection.selectAll();
                         entry.textTyped(filename, false);
+                        entry.textLayout.selection.moveCursor(filename.len, false);
                         dvui.refresh(null, @src(), null);
                     }
                 }
                 if (entry.enter_pressed or entry.text_changed) {
                     try CommandState.setFileSelectorBuffer(entry.getText());
+                    entry.textLayout.selection.moveCursor(entry.getText().len, false);
                 }
                 empty_file_selector = entry.getText().len == 0;
                 entry.deinit();
@@ -1316,6 +1321,7 @@ pub fn makeTransferDialog() !void {
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(filename, false);
+                            entry.textLayout.selection.moveCursor(filename.len, false);
                             dvui.refresh(null, @src(), null);
                         }
                     } else if (CommandState.buttons.save_file_selector) {
@@ -1328,6 +1334,7 @@ pub fn makeTransferDialog() !void {
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(filename, false);
+                            entry.textLayout.selection.moveCursor(filename.len, false);
                             dvui.refresh(null, @src(), null);
                         }
                     } else {
@@ -1340,6 +1347,7 @@ pub fn makeTransferDialog() !void {
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(filename, false);
+                            entry.textLayout.selection.moveCursor(filename.len, false);
                             dvui.refresh(null, @src(), null);
                         }
                     }
