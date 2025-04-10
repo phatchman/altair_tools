@@ -23,19 +23,6 @@
 //
 
 const folder_icon = @embedFile("icons/folder.tvg");
-const std = @import("std");
-const builtin = @import("builtin");
-const dvui = @import("dvui");
-const GridWidget = dvui.GridWidget;
-const Rect = dvui.Rect;
-const Options = dvui.Options;
-const ad = @import("altair_disk");
-const DiskImage = ad.DiskImage;
-const Commands = @import("commands.zig");
-const DirectoryEntry = Commands.DirectoryEntry;
-const CopyMode = Commands.CopyMode;
-
-const Backend = dvui.backend;
 
 const window_icon_png = @embedFile("altair.png");
 
@@ -2419,3 +2406,15 @@ const ButtonHandler = @import("ButtonHandler.zig");
 const CommandState = @import("CommandState.zig");
 const CommandList = CommandState.CommandList;
 const FileStatus = CommandState.FileStatus;
+const std = @import("std");
+const builtin = @import("builtin");
+const dvui = @import("dvui");
+const GridWidget = dvui.GridWidget;
+const Rect = dvui.Rect;
+const Options = dvui.Options;
+const ad = @import("altair_disk");
+const DiskImage = ad.DiskImage;
+const Commands = @import("commands.zig");
+const DirectoryEntry = Commands.DirectoryEntry;
+const CopyMode = Commands.CopyMode;
+const Backend = dvui.backend;
