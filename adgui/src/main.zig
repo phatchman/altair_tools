@@ -90,7 +90,7 @@ var frame_count: u64 = 0;
 
 // Layout information for each column.
 const num_columns = 7;
-const min_sizes = [num_columns]f32{ 10, 80, 30, 20, 70, 40, 10 };
+const min_sizes = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 15.0;
@@ -1672,6 +1672,111 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     return click;
 }
 
+pub fn dialogDisplay(id: u32) !void {
+    const modal = dvui.dataGet(null, id, "_modal", bool) orelse {
+        std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
+        dvui.dialogRemove(id);
+        return;
+    };
+
+    const title = dvui.dataGetSlice(null, id, "_title", []u8) orelse {
+        std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
+        dvui.dialogRemove(id);
+        return;
+    };
+
+    const message = dvui.dataGetSlice(null, id, "_message", []u8) orelse {
+        std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
+        dvui.dialogRemove(id);
+        return;
+    };
+
+    const ok_label = dvui.dataGetSlice(null, id, "_ok_label", []u8) orelse {
+        std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
+        dvui.dialogRemove(id);
+        return;
+    };
+
+    const center_on = dvui.dataGet(null, id, "_center_on", Rect) orelse dvui.currentWindow().subwindow_currentRect;
+
+    const cancel_label = dvui.dataGetSlice(null, id, "_cancel_label", []u8);
+
+    const callafter = dvui.dataGet(null, id, "_callafter", dvui.DialogCallAfterFn);
+
+    const maxSize = dvui.dataGet(null, id, "_max_size", dvui.Size);
+
+    var win = try dvui.floatingWindow(@src(), .{ .modal = modal, .center_on = center_on, .window_avoid = .nudge }, .{ .id_extra = id, .max_size_content = maxSize });
+    defer win.deinit();
+
+    var header_openflag = true;
+    try dvui.windowHeader(title, "", &header_openflag);
+    if (!header_openflag) {
+        dvui.dialogRemove(id);
+        if (callafter) |ca| {
+            try ca(id, .cancel);
+        }
+        return;
+    }
+
+    {
+        // Add the buttons at the bottom first, so that they are guaranteed to be shown
+        var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        defer hbox.deinit();
+
+        if (try buttonFocussed(@src(), ok_label, .{}, .{ .tab_index = 1 })) {
+            dvui.dialogRemove(id);
+            if (callafter) |ca| {
+                try ca(id, .ok);
+            }
+            return;
+        }
+
+        if (cancel_label) |cl| {
+            if (try dvui.button(@src(), cl, .{}, .{ .tab_index = 2 })) {
+                dvui.dialogRemove(id);
+                if (callafter) |ca| {
+                    try ca(id, .cancel);
+                }
+                return;
+            }
+        }
+
+        const evts = dvui.events();
+        for (evts) |*e| {
+            if (e.handled or e.evt != .key) continue;
+            const ke = e.evt.key;
+            if (ke.action != .down) continue;
+
+            switch (ke.code) {
+                .enter, .one => {
+                    e.handled = true;
+                    dvui.dialogRemove(id);
+                    if (callafter) |ca| {
+                        try ca(id, .ok);
+                    }
+                    return;
+                },
+                .escape, .two => {
+                    e.handled = true;
+                    dvui.dialogRemove(id);
+                    if (callafter) |ca| {
+                        try ca(id, .cancel);
+                    }
+                    return;
+                },
+                else => {},
+            }
+        }
+    }
+
+    // Now add the scroll area which will get the remaining space
+    var scroll = try dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .name = .fill_window } });
+    var tl = try dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
+    try tl.addText(message, .{});
+    tl.deinit();
+    scroll.deinit();
+}
+
 pub fn processEvents() void {
     const evts = dvui.events();
     pgdn_pressed = false;
@@ -2152,6 +2257,7 @@ fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void 
         .title = title,
         .message = display_message,
         .modal = true,
+        .displayFn = dialogDisplay,
     }) catch |err| {
         std.debug.panic("Can't open error dialog: {}", .{err});
     };
@@ -2196,8 +2302,8 @@ pub fn openImageFile(filename: []const u8) void {
         var selected_filename: ?[]const u8 = null;
         fn handleResponse(_: u32, response: dvui.enums.DialogResponse) dvui.Error!void {
             switch (response) {
-                .ok => img_type = .HDD_5MB_1024,
-                .cancel => img_type = .HDD_5MB,
+                .cancel => img_type = .HDD_5MB_1024,
+                .ok => img_type = .HDD_5MB,
                 else => unreachable,
             }
             openImageFile(selected_filename.?);
@@ -2224,39 +2330,16 @@ pub fn openImageFile(filename: []const u8) void {
             break :image_type img_type.?;
         };
 
-        const events = dvui.events();
-        for (events) |evt| {
-            std.debug.print("evt = {}\n", .{evt});
-            if (evt.handled or evt.evt != .key) continue;
-
-            switch (evt.evt.key.code) {
-                .one => {
-                    std.debug.print("one\n", .{});
-                    if (evt.evt.key.action == .down) {
-                        dialogFollowup.handleResponse(0, .cancel) catch {};
-                        dialogFollowup.deinit();
-                    }
-                },
-                .two => {
-                    std.debug.print("two\n", .{});
-                    if (evt.evt.key.action == .down) {
-                        dialogFollowup.handleResponse(0, .ok) catch {};
-                        dialogFollowup.deinit();
-                    }
-                },
-                else => {},
-            }
-        }
-
         if (dialogFollowup.img_type == null and image_type == .HDD_5MB) {
             dialogFollowup.selected_filename = allocator.dupe(u8, filename) catch unreachable;
             dvui.dialog(@src(), .{
                 .title = "Select image type",
                 .message = "The HDD_5MB and HDD_5MB_1024 formats cannot be auto-detected.\n\nPlease select the correct format.",
-                .cancel_label = "1) HDD_5MB",
-                .ok_label = " 2) HDD_5MB_1024",
+                .ok_label = "1) HDD_5MB",
+                .cancel_label = " 2) HDD_5MB_1024",
                 .modal = true,
                 .callafterFn = dialogFollowup.handleResponse,
+                .displayFn = dialogDisplay,
             }) catch {};
             return;
         } else if (image_type == .HDD_5MB) {
