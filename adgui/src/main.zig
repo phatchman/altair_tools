@@ -886,10 +886,10 @@ fn makeGridBody(id: GridType) !void {
         try makeGridDataRow(2, id_extra, entry.entry.extension(), false);
         try makeGridDataRow(3, id_extra, entry.entry.attribs(), false);
 
-        var text = try formatNumber(&buf, "{}B", entry.entry.fileSizeInB());
+        var text = try formatNumber(&buf, "{}B", entry.entry.fileSizeInB(), "####,###B");
         try makeGridDataRow(4, id_extra, text, true);
 
-        text = try formatNumber(&buf, "{}K", entry.entry.fileUsedInKB());
+        text = try formatNumber(&buf, "{}K", entry.entry.fileUsedInKB(), "#,###K");
         try makeGridDataRow(5, id_extra, text, true);
 
         text = try std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()});
@@ -1477,7 +1477,7 @@ fn sortDirectories(id: GridType, sort_by_opt: ?[]const u8, toggle_direction: boo
 }
 
 // We need another format that does B/K/M/G
-fn formatNumber(buf: []u8, comptime fmt: []const u8, value: usize) ![]const u8 {
+fn formatNumber(buf: []u8, comptime fmt: []const u8, value: usize, overflow: []const u8) ![]const u8 {
     var tmp_buf = std.mem.zeroes([20]u8);
     const slice = try std.fmt.bufPrint(&tmp_buf, fmt, .{value});
 
@@ -1499,9 +1499,13 @@ fn formatNumber(buf: []u8, comptime fmt: []const u8, value: usize) ![]const u8 {
         buf[buf_idx] = c;
         buf_idx += 1;
     }
-    const result_slice = buf[0..buf_idx];
-    std.mem.reverse(u8, result_slice);
-    return result_slice;
+    if (buf_idx > overflow.len) {
+        return overflow[0..];
+    } else {
+        const result_slice = buf[0..buf_idx];
+        std.mem.reverse(u8, result_slice);
+        return result_slice;
+    }
 }
 
 pub fn labelNoFmtRect(src: std.builtin.SourceLocation, str: []const u8, opts: Options) !dvui.Rect {
