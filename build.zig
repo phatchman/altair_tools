@@ -42,11 +42,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const exe = b.addExecutable(.{
-        .name = "altair_disk",
-        .root_module = exe_mod,
-        //        .use_llvm = optimize == .Debug,
-    });
     const zigcli = b.dependency("cli", .{ .target = target, .optimize = optimize });
     exe.root_module.addImport("zig-cli", zigcli.module("zig-cli"));
 
@@ -103,18 +98,18 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
 
-    const exe_check = b.addExecutable(.{
-        .name = "foo",
-        .root_module = exe_mod,
-    });
+    //    const exe_check = b.addExecutable(.{
+    //        .name = "foo",
+    //        .root_module = exe_mod,
+    //    });
     // There is no `b.installArtifact(exe_check);` here.
 
     // Finally we add the "check" step which will be detected
     // by ZLS and automatically enable Build-On-Save.
     // If you copy this into your `build.zig`, make sure to rename 'foo'
-    const check = b.step("check", "Check if altair_disk compiles");
-    check.dependOn(&exe_check.step);
-
+    //    const check = b.step("check", "Check if altair_disk compiles");
+    //    check.dependOn(&exe_check.step);
+    //
     const no_bin = b.option(bool, "no-bin", "skip emitting binary") orelse false;
     if (no_bin) {
         b.getInstallStep().dependOn(&exe.step);
