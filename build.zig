@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
-        .name = "altair_disk",
+        .name = "altairdsk",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
