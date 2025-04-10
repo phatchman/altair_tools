@@ -18,6 +18,7 @@
 //       [_] Ctrl-A sometimes selects the text being displayed in the grid labels.
 //       [X] Add keyboard shortcuts for all dialog windows.
 //       [X] Change the "Size" formatter so that it displays overflow when numbers are too big.
+//       [_] Fix the filenames around get/put sys. and which defualt directory etc.
 //       [_]
 //
 
@@ -1289,7 +1290,7 @@ pub fn makeTransferDialog() !void {
                     if (CommandState.buttons.image_selector) {
                         if (image_path_selection) |image_path| {
                             const dir_path = std.fs.path.dirname(image_path) orelse ".";
-                            const image_name = try findNewImageName(dir_path);
+                            const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
                             try CommandState.setFileSelectorBuffer(image_name);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(image_name, false);
@@ -1297,7 +1298,8 @@ pub fn makeTransferDialog() !void {
                             dvui.refresh(null, @src(), null);
                         }
                     } else {
-                        const filename = "cpm.bin";
+                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                        const filename = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
                         try CommandState.setFileSelectorBuffer(filename);
                         entry.textLayout.selection.selectAll();
                         entry.textTyped(filename, false);
@@ -1315,8 +1317,8 @@ pub fn makeTransferDialog() !void {
                     if (CommandState.buttons.image_selector) {
                         if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
                             .title = "Save image as",
-                            .filters = &.{ "*.DSK", "*.IMG" },
-                            .filter_description = "Altair Disk Images *.DSK;*.IMG",
+                            .filters = &.{ "*.DSK", "*.IMG", "*.dsk", "*.img" },
+                            .filter_description = "Altair Disk Images *.dsk;*.img",
                         })) |filename| {
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textLayout.selection.selectAll();
@@ -1325,10 +1327,12 @@ pub fn makeTransferDialog() !void {
                             dvui.refresh(null, @src(), null);
                         }
                     } else if (CommandState.buttons.save_file_selector) {
-                        try CommandState.setFileSelectorBuffer("cpm.bin");
+                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                        const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
+                        try CommandState.setFileSelectorBuffer(default_name);
                         if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
                             .title = "Save file as",
-                            .filters = &.{ "*.bin", "*.cpm" },
+                            .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
                             .filter_description = "System Images *.bin;*.cpm",
                         })) |filename| {
                             try CommandState.setFileSelectorBuffer(filename);
@@ -1338,10 +1342,14 @@ pub fn makeTransferDialog() !void {
                             dvui.refresh(null, @src(), null);
                         }
                     } else {
-                        try CommandState.setFileSelectorBuffer("cpm.bin");
+                        // TODO: Remember the last thing they saved / loaded?
+                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                        const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
+                        try CommandState.setFileSelectorBuffer(default_name);
+
                         if (try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
                             .title = "Save file as",
-                            .filters = &.{ "*.bin", "*.cpm" },
+                            .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
                             .filter_description = "System Images *.bin;*.cpm",
                         })) |filename| {
                             try CommandState.setFileSelectorBuffer(filename);
@@ -2276,12 +2284,11 @@ fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void 
 }
 
 /// finds the next available name in NEWnnn.DSK
-pub fn findNewImageName(directory: []const u8) ![]const u8 {
-    const static = struct {
-        var filename: [10]u8 = undefined;
-    };
-    @memcpy(&static.filename, "IMG000.DSK");
-    var num_part = static.filename[3..6];
+pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const u8 {
+    std.debug.print("Find new name\n", .{});
+    var filename: [10]u8 = undefined;
+    @memcpy(&filename, "IMG000.DSK");
+    var num_part = filename[3..6];
     std.debug.print("opening {s}\n", .{directory});
     var cwd = try std.fs.cwd().openDir(directory, .{});
     for (0..999) |file_num| {
@@ -2292,14 +2299,17 @@ pub fn findNewImageName(directory: []const u8) ![]const u8 {
         if (file_num % 100 == 0) {
             num_part[0] = '0' + @as(u8, @intCast((file_num / 100) % 10));
         }
-        _ = cwd.statFile(&static.filename) catch |err| {
+        _ = cwd.statFile(&filename) catch |err| {
             switch (err) {
-                error.FileNotFound => return &static.filename,
+                error.FileNotFound => break,
                 else => continue,
             }
         };
     }
-    return &static.filename;
+    const current_path = try cwd.realpathAlloc(gpa, ".");
+    defer gpa.free(current_path);
+    std.debug.print("Paths are: {s}, {s}\n", .{ current_path, &filename });
+    return try std.fs.path.join(gpa, &[2][]const u8{ current_path, filename[0..] });
 }
 
 pub fn openImageFile(filename: []const u8) void {
