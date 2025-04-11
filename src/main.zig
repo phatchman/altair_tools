@@ -141,7 +141,7 @@ pub fn main() !void {
                     .exec = do_main,
                 },
             },
-            .name = "altair_disk",
+            .name = "altairdsk",
             .description = cli.Description{
                 .one_line = "Altair Disk Image Utility",
             },
