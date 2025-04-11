@@ -278,7 +278,7 @@ pub fn main() !void {
             },
         },
         .version = "0.9",
-        .author = "Paul Hatchman",
+        //.author = "Paul Hatchman",
     };
 
     app.help_config.print_help_on_error = false;
