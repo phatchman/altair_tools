@@ -32,7 +32,7 @@ pub const LocalDirEntry = struct {
 
     pub fn init(gpa: std.mem.Allocator, filename: []const u8, size: usize) !LocalDirEntry {
         var filename_buf: [12]u8 = undefined;
-        const xlated_filename = ad.DirectoryTable.translateToCPMFilename(filename, &filename_buf);
+        const xlated_filename = try ad.DirectoryTable.translateToCPMFilename(filename, &filename_buf);
         const dotIndex = std.mem.indexOf(u8, xlated_filename, ".") orelse xlated_filename.len;
         const filename_only = xlated_filename[0..dotIndex];
         const extension = if (dotIndex < filename.len - 1) xlated_filename[dotIndex + 1 .. xlated_filename.len] else "";
@@ -278,7 +278,6 @@ pub fn getFile(self: *Self, src: *const DirectoryEntry, dest_dir: []const u8, co
     };
 
     if (self.disk_image) |*image| {
-        std.debug.print("Dest dir = {s}\n,", .{dest_dir});
         var dir = try std.fs.cwd().openDir(dest_dir, .{});
         defer dir.close();
         switch (src.entry) {

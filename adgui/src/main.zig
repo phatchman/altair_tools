@@ -1,24 +1,40 @@
+//! Altair Disk GUI
 //
-// TODO:
-//       [_] Fix up the size of the "transfer window" for smaller prompts?
+// MIT License
+//
+// Copyright (c) 2025 Paul Hatchman
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
+//
+// POTENTIAL TODO:
 //       [_] Ask to do a recovery if the disk image is corrupted
-//       [_] Handle errors properly so app doesn't exit unexpectedly
 //       [_] Keep a backup image of any file opened? OR at least make that an option.
-//       [X] Title bars on transfer window
-//       [X] Fix issue with new images being created in local dir, not same as the dir used for open file.
-//       [X] Handle errors when invalid filesnames typed into the text box
-//       [?] Fix up all the places that die because there is no selected image and keyboard selection commands are used.
-//       [X] Grids lose sort order when refreshed.
-//       [X] The current way we handle the pane collapsing is broken. It doesn't work with "vertical" orientation. Maybe just set a minsize?
-//              Basically just removed any paned collapsing, set the min widths on all fields and stopped "breaking lines" on the labels.
+//       [_] Cleanup how directory paths and image paths etc are stored, updated and displayed.
+//       [_] Cleanup all of the global state for selection, key hanbdling etc.
+//       [_] Measure the width of header columns based on data column widths, rather than the other way around
+//           This would allow us to makie the column expand to the width of the data.
 //       [x] Drag and Drop
 //              1) From windows into app
 //              2) From app to local OS (SDL doesn't currently support this)
 //              2) Between application grids - "Phase 2"
-//       [_] Ctrl-A sometimes selects the text being displayed in the grid labels.
-//       [X] Add keyboard shortcuts for all dialog windows.
-//       [X] Change the "Size" formatter so that it displays overflow when numbers are too big.
-//       [_] Fix the filenames around get/put sys. and which defualt directory etc.
 //       [_]
 //
 
@@ -141,18 +157,16 @@ pub fn main() !void {
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
-    defer {
-        std.debug.print("DEINITY\n", .{});
-        win.deinit();
-    }
+    defer win.deinit();
     defer {
         if (theme_set)
             global_theme.deinit(allocator);
     }
 
-    std.debug.print("Local path = {s}\n", .{local_path_selection.?});
     open_local: {
-        commands.openLocalDirectory(local_path_selection.?) catch break :open_local;
+        commands.openLocalDirectory(local_path_selection.?) catch {
+            break :open_local;
+        };
         local_directories = commands.localDirectoryListing(allocator) catch null;
     }
 
@@ -222,7 +236,6 @@ fn handleEvent(event: *const Backend.c.SDL_Event) void {
     switch (event.*.type) {
         Backend.c.SDL_DROPFILE => {
             const dropped_file = event.*.drop.file;
-            std.debug.print("Dropped file: {s}\n", .{dropped_file});
             Backend.c.SDL_free(dropped_file);
         },
         else => {},
@@ -273,10 +286,6 @@ fn guiFrame() !bool {
         try setTheme();
     frame_count += 1;
     text_box_focussed = false;
-    //    if (frame_count % 10 == 0) {
-    //        std.debug.print("FPS = {d}\n", .{dvui.FPS()});
-    //        std.debug.print("Start time = {}\n", .{std.time.microTimestamp()});
-    //    }
 
     if (!try makeMenu()) return false;
 
@@ -621,7 +630,6 @@ fn makeFileSelector(id: GridType) !void {
                 .path = path_to_use,
             });
             if (filename) |f| {
-                std.debug.print("New file: {s}\n", .{f});
                 image_directories = null;
                 openImageFile(f);
                 try setImagePath(f);
@@ -1421,11 +1429,7 @@ pub fn makeTransferDialog() !void {
             if (key_state == .enter or try buttonFocussed(@src(), "Close", .{}, .{})) {
                 CommandState.finishCommand();
                 CommandState.freeResources();
-                std.debug.print("Closed\n", .{});
-                // TODO: Need to clear the selection as well. prod add an EndCommand() that does the cleanup.
                 dialog_win.close(); // can close the dialog this way
-                // Refresh everything to the newset state.
-                // TODO: This needs to be moved so it is always called on closeing of the window. i.e. by checking the closing variable?
                 if (local_directories != null) {
                     local_directories = commands.localDirectoryListing(allocator) catch null;
                     sortDirectories(.local, null, false);
@@ -2118,9 +2122,6 @@ fn putButtonHandler() !void {
 }
 
 fn eraseButtonHandler() !void {
-    std.debug.print("Erase handler\n", .{});
-    //const local = struct {};
-
     if (image_path_selection == null) {
         CommandState.finishCommand();
         CommandState.freeResources();
@@ -2151,14 +2152,12 @@ fn eraseButtonHandler() !void {
 }
 
 fn newButtonHandler() !void {
-    std.debug.print("New handler\n", .{});
     CommandState.current_command = .new;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn createNewImage(image_path: []const u8, _: ButtonHandler.Options) !void {
             image_directories = null;
             const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
-            std.debug.print("cwd = {s}, image_path = {s}\n", .{ try std.fs.cwd().realpathAlloc(allocator, "."), image_path });
             try commands.createNewImage(image_path, image_type);
             try setImagePath(image_path);
             image_directories = try commands.directoryListing(allocator);
@@ -2178,7 +2177,6 @@ fn newButtonHandler() !void {
 }
 
 fn getSysButtonHandler() !void {
-    std.debug.print("Get Sys handler\n", .{});
     CommandState.current_command = .getsys;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
@@ -2199,12 +2197,10 @@ fn getSysButtonHandler() !void {
 }
 
 fn putSysButtonHandler() !void {
-    std.debug.print("Put Sys handler\n", .{});
     CommandState.current_command = .putsys;
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn putSystem(sys_path: []const u8, _: ButtonHandler.Options) !void {
-            std.debug.print("Path = {s}\n", .{sys_path});
             try commands.putSystem(sys_path);
         }
     }.putSystem, struct {
@@ -2222,7 +2218,6 @@ fn putSysButtonHandler() !void {
 
 // TODO: Make this a nicer screen. Prob don't use the hack of process_files list to display.
 fn infoButtonHandler() !void {
-    std.debug.print("Info handler\n", .{});
     CommandState.current_command = .info;
 
     switch (CommandState.state) {
@@ -2272,11 +2267,9 @@ fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void 
 
 /// finds the next available name in NEWnnn.DSK
 pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const u8 {
-    std.debug.print("Find new name\n", .{});
     var filename: [10]u8 = undefined;
     @memcpy(&filename, "IMG000.DSK");
     var num_part = filename[3..6];
-    std.debug.print("opening {s}\n", .{directory});
     var cwd = try std.fs.cwd().openDir(directory, .{});
     for (0..999) |file_num| {
         num_part[2] = '0' + @as(u8, @intCast(file_num % 10));
@@ -2295,12 +2288,10 @@ pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const 
     }
     const current_path = try cwd.realpathAlloc(gpa, ".");
     defer gpa.free(current_path);
-    std.debug.print("Paths are: {s}, {s}\n", .{ current_path, &filename });
     return try std.fs.path.join(gpa, &[2][]const u8{ current_path, filename[0..] });
 }
 
 pub fn openImageFile(filename: []const u8) void {
-    std.debug.print("Open image file {s}\n", .{filename});
     var success = false;
 
     // TODO: Would rather just call openImageFile with an image type once it is known.
@@ -2372,7 +2363,6 @@ pub fn openImageFile(filename: []const u8) void {
 }
 
 pub fn openLocalDirectory(path: []const u8) void {
-    std.debug.print("Open local dircetory {s}\n", .{path});
     var success = false;
 
     main: {
