@@ -458,6 +458,8 @@ pub const DirectoryTable = struct {
     /// while all alphanumerics and remaining special characters are allowed.
     /// We'll also enforce that it is at least a "printable" character
     /// as the 8th bit of the first 2 filename chars are used for attributes
+    /// Note that CPM filenames permit a subset of filenames on modern OS's, except for ", which
+    /// is not allowed on Windows. So no need to have a "reverse" translation of CPM to local filenames.
     pub fn translateToCPMFilename(filename: []const u8, buffer: []u8) error{InvalidFilename}![]u8 {
         var found_dot: bool = false;
         var char_count: usize = 0;
