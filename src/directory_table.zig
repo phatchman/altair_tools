@@ -458,7 +458,7 @@ pub const DirectoryTable = struct {
     /// while all alphanumerics and remaining special characters are allowed.
     /// We'll also enforce that it is at least a "printable" character
     /// as the 8th bit of the first 2 filename chars are used for attributes
-    pub fn translateToCPMFilename(filename: []const u8, buffer: []u8) []u8 {
+    pub fn translateToCPMFilename(filename: []const u8, buffer: []u8) error{InvalidFilename}![]u8 {
         var found_dot: bool = false;
         var char_count: usize = 0;
         var ext_count: usize = 0;
@@ -517,7 +517,11 @@ pub const DirectoryTable = struct {
         }
         log.info("Translated filename {s} to {s}", .{ filename, buffer[0..char_count] });
 
-        return buffer[0..char_count];
+        if (char_count <= 1) {
+            return error.InvalidFilename;
+        } else {
+            return buffer[0..char_count];
+        }
     }
 
     /// Return a free allocation

@@ -3,6 +3,7 @@ const testing = std.testing;
 const FileNameIterator = @import("disk_image.zig").FileNameIterator;
 const Disk8IN = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN);
 const DiskImageType = @import("disk_types.zig").DiskImageType;
+const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 const RawDirEntry = @import("directory_table.zig").RawDirEntry;
 
@@ -88,4 +89,35 @@ test "short extension no filename" {
     try std.testing.expectEqualStrings(".X", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("", cooked.filenameOnly());
     try std.testing.expectEqualStrings("X", cooked.extension());
+}
+
+test "translate valid filename" {
+    const filename = "FILENAME.TXT";
+    var buffer: [15]u8 = undefined;
+
+    const cpm_name = try DirectoryTable.translateToCPMFilename(filename[0..], &buffer);
+    try std.testing.expectEqualStrings(filename, cpm_name);
+}
+
+test "translate invalid chars filename" {
+    const filename = "FI?LE[AME.T:T";
+    var buffer: [15]u8 = undefined;
+
+    const cpm_name = try DirectoryTable.translateToCPMFilename(filename[0..], &buffer);
+    try std.testing.expectEqualStrings("FILEAME.TT", cpm_name);
+}
+
+test "translate multiple extension filename" {
+    const filename = "FILE.....NAME.TXT.ASM";
+    var buffer: [15]u8 = undefined;
+
+    const cpm_name = try DirectoryTable.translateToCPMFilename(filename[0..], &buffer);
+    try std.testing.expectEqualStrings("FILE.NAM", cpm_name);
+}
+
+test "translate all invalid filename" {
+    const filename = "[[[.]]]";
+    var buffer: [15]u8 = undefined;
+
+    try testing.expectError(error.InvalidFilename, DirectoryTable.translateToCPMFilename(filename[0..], &buffer));
 }

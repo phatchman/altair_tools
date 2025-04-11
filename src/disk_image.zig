@@ -156,7 +156,7 @@ pub const DiskImage = struct {
                 return std.fs.Dir.MakeError.PathAlreadyExists;
             }
         }
-        const cpm_filename = DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
+        const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
 
         var sector: DiskSector = .init();
         var alloc_count: u16 = 0;
