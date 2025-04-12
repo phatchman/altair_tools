@@ -57,6 +57,7 @@ One of the nice things about Zig is that the build system is part of the languag
 
 1. Install Zig version 0.14.0 from https://ziglang.org/ or from your package manager if available.
 2. zig build --release=safe --strip-exe=true
+
 Optionally build the GUI.
 1. cd adgui
 2. zig buld --release=safe --strip-exe=true
