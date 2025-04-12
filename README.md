@@ -32,12 +32,28 @@ altairdsk allows you to:
 
 While every care has been taken to ensure this utility will not corrupt you disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 
-## Build Instructions
+## Releases
 
-This version of altair tools is built using Zig. If you are interested in why or my general thoughts after my first real Zig project, take a look kat WhyZig.MD
-The C version can be found in the legacy directory and should still build using cmake. However the C version will no longer be developed or supported by me.
-One of the nice things about Zig is that the build system is part of the language.
-One of the not-so-nice things about Zig is that it's not a standard part of O/S distributions yet. but it is very easy to install.
+Binaries are provided on the Release page for the following architectures:
+
+| OS      | Arch    |  |   |
+|---------|---------|-----|----|
+| Windows | x86_64  | ✅ | ✅ |
+| Linux   | x86_64  | ✅ | ✅ |
+| MacOS   | x86_64  | ✅ | ❌ |
+| Windows | aarch64 | ✅ | ❌ |
+| Linux   | aarch64 | ✅ | ❌ |
+| MacOS   | aarch64 | ✅ | ❌ |
+| Linux   | arm     | ✅ | ❌ |
+
+If you want to use the gui on one of the other platforms, you will need to build from source. 
+
+## Building from Source
+
+This version of altair tools is built using Zig. Zig aims to be a more modern version of C, without all the complications of languages kitchen-sink languages, like C++ and Rust.
+The C version can be found in the legacy directory and should still build using cmake, but will no longer be supported or developed by me.
+
+One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
 
 1. Install Zig version 0.14.0 from https://ziglang.org/ or from your package manager if available.
 2. zig build --release=safe --strip-exe=true
@@ -47,6 +63,18 @@ Optionally build the GUI.
 
 The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
+
+## GUI
+
+The Altair Disk GUI (adgui) provides access to most of the functionality of the altaridsk tool. The application can be operated entirely by keyboard
+if desired. See the keybaord shortcuts below.
+
+### Altair Disk GUI
+<img src="docs/adgui.png">
+
+### Shortcuts
+<img src="docs/shortcuts.png">
+
 
 ## Command Line
 ```
@@ -193,12 +221,14 @@ To remove all files from user 2<br>
 `./altairdsk -s cpm.dsk boot.img`
 
 ### Fixup Altair Duino 5MB HDSK images
-The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. This version of altairdsk includes a -R / --recovery option to create a new version of the image. Please be careful with the order you specify the options or you can accidentally overwrite the original image. The new image name must be specified immediately after the -R option. *Always keep a backup before doing any write operations*<br>
+The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. 
+
+This version of altairdsk includes a -R / --recovery option to create a new version of the image. Please be careful with the order you specify the options or you can accidentally overwrite the original image. The new image name must be specified immediately after the -R option. *Always keep a backup before doing any write operations*<br>
 `altairdsk -R HDSDK04_NEW.DSK HDSK04.DSK`
 
 You will see a list of errors while running this command. These are expected.
 
-### Image Informatio
+### Image Information
 Displays track and sector information.
 `./altairdsk -i cpm.dsk`
 ```
