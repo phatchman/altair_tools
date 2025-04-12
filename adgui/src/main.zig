@@ -613,8 +613,14 @@ fn makeFileSelector(id: GridType) !void {
     if (entry.enter_pressed) {
         // TODO: Repeated code from the icon click.
         switch (id) {
-            .image => openImageFile(entry.getText()),
-            .local => openLocalDirectory(entry.getText()),
+            .image => {
+                try setImagePath(entry.getText());
+                openImageFile(entry.getText());
+            },
+            .local => {
+                try setLocalPath(entry.getText());
+                openLocalDirectory(entry.getText());
+            },
         }
         dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
     }
@@ -956,7 +962,7 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, 
     // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
     // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
     // whole area. This way we can handle an "unlimited" number of directory entries.
-    if (item_num > 1024) {
+    if (item_num > 500) {
         return;
     }
     // Note this multiplier needs to be greater than the item_num cut-off above.
@@ -1260,11 +1266,25 @@ pub fn makeTransferDialog() !void {
         defer scroll.deinit();
         var current_file: *FileStatus = undefined; // We already know there are files by the time wer get here.
         {
-            var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+            // Display the files.
+            var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal, .background = false });
             defer vbox.deinit();
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
-                try dvui.label(@src(), "{s:<12} {s} {s}", .{ basename, if (basename.len > 0) "-->" else "", file.message }, .{ .id_extra = i });
+                var text = try dvui.textLayout(@src(), .{}, .{
+                    .id_extra = i,
+                    .background = false,
+                    .padding = Rect.all(0),
+                    .margin = Rect.all(4),
+                });
+                defer text.deinit();
+                try text.addText(try std.fmt.allocPrint(
+                    dvui.currentWindow().arena(),
+                    "{s:<12} {s} {s}",
+                    .{ basename, if (basename.len > 0) "-->" else "", file.message },
+                ), .{
+                    .id_extra = i,
+                });
                 current_file = file;
             }
         }
