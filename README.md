@@ -40,10 +40,10 @@ One of the nice things about Zig is that the build system is part of the languag
 One of the not-so-nice things about Zig is that it's not a standard part of O/S distributions yet. but it is very easy to install.
 
 1. Install Zig version 0.14.0 from https://ziglang.org/ or from your package manager if available.
-2. zig build --release=safe
+2. zig build --release=safe --strip-exe=true
 Optionally build the GUI.
 1. cd adgui
-2. zig buld --release=safe
+2. zig buld --release=safe --strip-exe=true
 
 The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
