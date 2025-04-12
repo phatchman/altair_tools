@@ -350,7 +350,6 @@ fn guiFrame() !bool {
                 });
                 defer grid.deinit();
 
-                // TODO: What is this second vbox for?
                 var header = try dvui.box(@src(), .vertical, .{
                     .expand = .horizontal,
                     .border = border_width,
@@ -868,14 +867,7 @@ fn makeGridBody(id: GridType) !void {
         }
         // TODO: Check if this *1000000 is really needed? If the create is called from
         // different parts of the source code.
-        const id_extra = @intFromEnum(id) * 1000000 + abs_index;
-
-        // TODO: I don;t think this is needed any more . USed ot be used for hover
-        var row_box = try dvui.box(@src(), .horizontal, .{
-            .id_extra = id_extra,
-            .expand = .horizontal,
-        });
-        defer row_box.deinit();
+        const id_extra = @intFromEnum(id) * 1000000 + rel_idx;
 
         var row = try dvui.box(@src(), .horizontal, .{
             .id_extra = id_extra,
@@ -887,19 +879,19 @@ fn makeGridBody(id: GridType) !void {
         defer row.deinit();
         var buf = std.mem.zeroes([256]u8);
         const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
-        try makeGridDataRow(0, id_extra, checked_value, false);
-        try makeGridDataRow(1, id_extra, entry.entry.filename(), false);
-        try makeGridDataRow(2, id_extra, entry.entry.extension(), false);
-        try makeGridDataRow(3, id_extra, entry.entry.attribs(), false);
+        try makeGridDataRow(@src(), id, 0, rel_idx, checked_value, false);
+        try makeGridDataRow(@src(), id, 1, rel_idx, entry.entry.filename(), false);
+        try makeGridDataRow(@src(), id, 2, rel_idx, entry.entry.extension(), false);
+        try makeGridDataRow(@src(), id, 3, rel_idx, entry.entry.attribs(), false);
 
         var text = try formatNumber(&buf, "{}B", entry.entry.fileSizeInB(), "####,###B");
-        try makeGridDataRow(4, id_extra, text, true);
+        try makeGridDataRow(@src(), id, 4, rel_idx, text, true);
 
         text = try formatNumber(&buf, "{}K", entry.entry.fileUsedInKB(), "#,###K");
-        try makeGridDataRow(5, id_extra, text, true);
+        try makeGridDataRow(@src(), id, 5, rel_idx, text, true);
 
         text = try std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()});
-        try makeGridDataRow(6, id_extra, text, true);
+        try makeGridDataRow(@src(), id, 6, rel_idx, text, true);
 
         // TODO: Hardcoded 25's. should jsut be row height?
 
@@ -959,11 +951,19 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
 /// are kept the same size as the header columns.
-fn makeGridDataRow(col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
-
+fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
+    // Note that we're unable to handle > ~800 directories in debug mode due to some dvui error.
+    // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
+    // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
+    // whole area. This way we can handle an "unlimited" number of directory entries.
+    if (item_num > 1024) {
+        return;
+    }
+    // Note this multiplier needs to be greater than the item_num cut-off above.
+    const id_extra = @intFromEnum(id) * 10000 + item_num;
     // This hbox contains the row.
-    var row = try dvui.box(@src(), .horizontal, .{
-        .id_extra = col_num * 100 + item_num,
+    var row = try dvui.box(src, .horizontal, .{
+        .id_extra = id_extra,
         .expand = .horizontal,
         .background = false,
         .margin = Rect.all(0),
@@ -973,24 +973,18 @@ fn makeGridDataRow(col_num: u32, item_num: usize, value: []const u8, justify: bo
     });
     defer row.deinit();
 
-    // TODO: Why do we need 2 hboxes?
-    var hbox = try dvui.box(@src(), .horizontal, .{
-        .id_extra = col_num * 100 + item_num,
-        .background = false,
-        .min_size_content = .{ .w = header_rects[col_num].w, .h = row_height + 10.0 },
-        .max_size_content = .{ .w = header_rects[col_num].w, .h = row_height + 10.0 },
-    });
-    defer hbox.deinit();
     if (col_num == 0 and false) {
         // TODO: Magic numbers.
-        _ = try dvui.button(@src(), "[_]", .{}, .{
-            .id_extra = col_num * 100 + item_num,
+        _ = try dvui.button(src, "[_]", .{}, .{
+            .id_extra = id_extra,
             .background = false,
         });
     } else {
         // TODO: Magic numbers.
-        var name = try dvui.textLayout(@src(), .{ .break_lines = false }, .{
-            .id_extra = col_num * 100 + item_num,
+        var name = try dvui.textLayout(src, .{
+            .break_lines = false,
+        }, .{
+            .id_extra = id_extra,
             .margin = Rect{ .x = 1, .w = 1 },
             .padding = Rect{ .x = 8, .w = 8 },
             .gravity_x = if (justify) 1.0 else 0.0,
@@ -998,6 +992,7 @@ fn makeGridDataRow(col_num: u32, item_num: usize, value: []const u8, justify: bo
             .background = false,
         });
         defer name.deinit();
+        name.selection.moveCursor(0, false); // Stops double-click, ^A etc highlighting this field.
         try name.addText(value, .{ .margin = dvui.Rect{ .w = 5, .h = 5 } });
     }
 }
@@ -1449,7 +1444,6 @@ pub fn makeTransferDialog() !void {
             }
         }
     }
-    // TODO: Move currentcommand into commandstate.
 }
 
 fn sortAsc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
@@ -1613,7 +1607,6 @@ pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: 
     try dvui.icon(@src(), name, tvg_bytes, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
 
     if (alt_held) {
-        // TODO: This needs a better font or something to make it stand out more.
         const label_rect = try labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
             .color_fill = .{ .name = .text },
             .color_text = .{ .name = .fill_control },
@@ -1982,15 +1975,11 @@ pub fn processEvents() void {
                     selection_mode = .kb;
                 }
             },
-            // TODO: for pg up and down, need to also move the current kb index.
-            // Currently will just scroll back.
             .page_down => {
                 e.handled = true;
                 if (ke.action == .down) {
                     pgdn_pressed = true;
                     selection_mode = .kb;
-                    //                    getScrollInfo(focussed_grid).scrollPageDown(.vertical);
-                    //   selection_mode = .mouse; // TODO: This is temp workaround
                 }
             },
             .page_up => {
