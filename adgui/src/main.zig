@@ -88,7 +88,14 @@ var last_mouse_index: [num_grids]usize = @splat(0);
 var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
 var sort_column: [num_grids][]const u8 = @splat("Name");
 var sort_asc: [num_grids]bool = @splat(true);
-var text_box_focussed = false;
+var text_box_focused: [num_grids]bool = @splat(false);
+
+fn textBoxFocused() bool {
+    for (text_box_focused) |focused| {
+        if (focused) return true;
+    }
+    return false;
+}
 
 var frame_count: u64 = 0;
 
@@ -152,7 +159,7 @@ pub fn main() !void {
 
     try setImagePath("");
     defer allocator.free(image_path_selection.?); // TODO: I don't think these should be optionals. We set them at the start and then they onyl every get updated.
-    try setLocalPath(".\\disks");
+    try setLocalPath(".");
     defer allocator.free(local_path_selection.?);
 
     // init dvui Window (maps onto a single OS window)
@@ -285,7 +292,6 @@ fn guiFrame() !bool {
     if (!theme_set)
         try setTheme();
     frame_count += 1;
-    text_box_focussed = false;
 
     if (!try makeMenu()) return false;
 
@@ -580,19 +586,21 @@ fn makeFileSelector(id: GridType) !void {
         .expand = .horizontal,
     });
     errdefer entry.deinit();
-    text_box_focussed = entry.wd.id == dvui.focusedWidgetId() or text_box_focussed;
-    const events = dvui.events();
-    for (events) |*evt| {
-        if (evt.handled or evt.evt != .key)
-            continue;
-        switch (evt.evt) {
-            .key => |ke| {
-                if (ke.action == .down and (id == .image and ke.code == .i) or (id == .local and ke.code == .l)) {
-                    evt.handled = true;
-                    dvui.focusWidget(entry.wd.id, null, null);
-                }
-            },
-            else => {},
+    text_box_focused[@intFromEnum(id)] = entry.wd.id == dvui.focusedWidgetId();
+    if (alt_held) {
+        const events = dvui.events();
+        for (events) |*evt| {
+            if (evt.handled or evt.evt != .key)
+                continue;
+            switch (evt.evt) {
+                .key => |ke| {
+                    if (ke.action == .down and (id == .image and ke.code == .i) or (id == .local and ke.code == .l)) {
+                        evt.handled = true;
+                        dvui.focusWidget(entry.wd.id, null, null);
+                    }
+                },
+                else => {},
+            }
         }
     }
 
@@ -1805,7 +1813,7 @@ pub fn processEvents() void {
         const ke = e.evt.key;
         switch (ke.code) {
             .space => {
-                if (text_box_focussed) break;
+                if (textBoxFocused()) break;
                 e.handled = true;
                 switch (ke.action) {
                     .down => {
@@ -1862,7 +1870,7 @@ pub fn processEvents() void {
                 }
             },
             .enter => {
-                if (text_box_focussed) break;
+                if (textBoxFocused()) break;
                 switch (ke.action) {
                     .down => {
                         enter_pressed = true;
@@ -1890,7 +1898,7 @@ pub fn processEvents() void {
                     e.handled = true;
                     CommandState.current_command = .mode;
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
-                    // select all TODO: Should really be in the grid.
+                    if (textBoxFocused()) break;
 
                     const dir_list = getDirectoryById(focussed_grid);
                     // if everything is selected, then select none.
