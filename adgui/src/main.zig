@@ -629,8 +629,8 @@ fn makeFileSelector(id: GridType) !void {
     if (try buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = @intFromEnum(id) }, id)) {
         if (id == .image) {
             const path_to_use = path: {
-                if (local_path_selection) |local_path| {
-                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch local_path[0..];
+                if (image_path_selection) |image_path| {
+                    break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch image_path[0..];
                 } else {
                     break :path std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
                 }
@@ -958,11 +958,10 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
 /// Note the use of the cols_rects array to make sure the scolling columns
 /// are kept the same size as the header columns.
 fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
-    // Note that we're unable to handle > ~800 directories in debug mode due to some dvui error.
     // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
     // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
     // whole area. This way we can handle an "unlimited" number of directory entries.
-    if (item_num > 500) {
+    if (item_num > 1024) {
         return;
     }
     // Note this multiplier needs to be greater than the item_num cut-off above.
@@ -987,9 +986,7 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, 
         });
     } else {
         // TODO: Magic numbers.
-        var name = try dvui.textLayout(src, .{
-            .break_lines = false,
-        }, .{
+        try dvui.labelNoFmt(@src(), value, .{
             .id_extra = id_extra,
             .margin = Rect{ .x = 1, .w = 1 },
             .padding = Rect{ .x = 8, .w = 8 },
@@ -997,9 +994,6 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, 
             .gravity_y = 0.5,
             .background = false,
         });
-        defer name.deinit();
-        name.selection.moveCursor(0, false); // Stops double-click, ^A etc highlighting this field.
-        try name.addText(value, .{ .margin = dvui.Rect{ .w = 5, .h = 5 } });
     }
 }
 
