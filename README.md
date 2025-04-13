@@ -198,7 +198,7 @@ Copy multiple files to user 1<br>
 `./altairdsk -P -u1 cpm.dsk *.com`
 
 Wildcard expansion is not performed on windows. However you can use the following powershell trick instead:
-`altairdsk cpm.dsk - P $(dir *)`
+`altairdsk cpm.dsk -P $(dir *)`
 
 ### Erase a file
 `./altairdsk -e cpm.dsk asm.com`
