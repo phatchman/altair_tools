@@ -71,10 +71,9 @@ The Altair Disk GUI (adgui) provides access to most of the functionality of the 
 if desired. See the keybaord shortcuts below.
 
 ### Altair Disk GUI
-<img src="docs/adgui.png">
+![Main Screen](docs/adgui.png)
 
-### Shortcuts
-<img src="docs/shortcuts.png">
+Instructions on using the GUI can be found [here](docs/ADGUI.md).
 
 
 ## Command Line
