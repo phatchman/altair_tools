@@ -50,7 +50,7 @@ If you want to use the gui on one of the other platforms, you will need to build
 
 ## Building from Source
 
-This version of altair tools is built using Zig. Zig aims to be a more modern version of C, without all the complications of languages kitchen-sink languages, like C++ and Rust.
+This version of altair tools is built using Zig. Zig aims to be a more modern version of C, without all the complications of kitchen-sink languages, like C++ and Rust.
 The C version can be found in the legacy directory and should still build using cmake, but will no longer be supported or developed by me.
 
 One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
