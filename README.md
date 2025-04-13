@@ -68,12 +68,10 @@ There is no install target provided. So copy the executable to your desired inst
 ## GUI
 
 The Altair Disk GUI (adgui) provides access to most of the functionality of the altaridsk tool. The application can be operated entirely by keyboard
-if desired. See the keybaord shortcuts below.
+if desired. Keyboard shortcuts and general instructions for using the GUI can be found [here](docs/ADGUI.md).
 
 ### Altair Disk GUI
 ![Main Screen](docs/adgui.png)
-
-Instructions on using the GUI can be found [here](docs/ADGUI.md).
 
 
 ## Command Line
@@ -121,7 +119,7 @@ OPTIONS:
 
 ## Some things to note:
 * The 5MB HDD images that come with the Altair-Duino have an invalid directory table. altairdsk will print an error and refuse to open these images. Use the -R / --recover option to create a clean version of these disk images.
-* There is no expansion of wildcards in windows. But there is a work-around for powershell. See below.
+* There is no expansion of wildcards in windows. But there is a work-around for powershell. See the get multiple example for more details.
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
 * If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
