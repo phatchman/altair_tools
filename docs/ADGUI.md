@@ -1,22 +1,25 @@
 # Altair Disk GUI (ADGUI)
 
-Adgui gives you most of the functionality of the command line tool, just with a flashier interface.
-The GUI is designed to be operated solely by keyboard, which is how I mostly use it. But of course, mouse
+Adgui gives you most of the functionality of the command line tool, with a flashier interface.
+
+The GUI is designed to be operated solely by keyboard, but of course mouse
 interaction works perfectly fine as well.
 
 When you start adgui you are greeted with the following screen:
 ![Start Screen](start_screen.png)
 The left grid displays the contents of the disk image, while the right grid displays the contents of the local directory.
 
-Let's open up a new image. You can use Alt-M or click on the folder icon to bring up a file browser, Alt-I to jump to the Image text entry box to type in the directory name.
+To open up an image, you can use Alt-M or click on the left-grid's folder icon to bring up a file browser, Alt-I to jump to the Image text entry box to type in the directory name.
 
 If you open a 5MB HDD image, you will see the following warning:
 ![Warning](warning.png)
-Unless you have patched your CPM kernel to use the 1024 directory entry version, just select the standard HDD_5MB option. But *be warned*, selecting the wrong option can corrupt your disk image, so please keep a backup, just in case.
+
+Unless there is a patched version of CPM that supports 1024 directory entries on the image, select the standard HDD_5MB option. But *be warned*, selecting the wrong option _will_ corrupt your disk image, so please keep a backup, just in case.
 
 ![Opened Image](opened.png)
 
-If you hold down the ALT key, you will see the keyboard shortcuts for the whole screen. You can also use the Help->Shortcuts menu to see more information on the shortcuts and what each command does.
+If you hold down the ALT key, you will see the keyboard shortcuts for the whole screen. 
+You can also use the Help->Shortcuts menu to see more information on the shortcuts and what each command does.
 
 Here we use Ctrl-A to select all of the files in the image and then Alt-G (Get) to copy all of the files from the image to the local directory.
 
