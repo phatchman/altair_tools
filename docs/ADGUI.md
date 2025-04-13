@@ -12,6 +12,7 @@ The left grid displays the contents of the disk image, while the right grid disp
 To open up an image, you can use Alt-M or click on the left-grid's folder icon to bring up a file browser, Alt-I to jump to the Image text entry box to type in the directory name.
 
 If you open a 5MB HDD image, you will see the following warning:
+
 ![Warning](warning.png)
 
 Unless there is a patched version of CPM that supports 1024 directory entries on the image, select the standard HDD_5MB option. But *be warned*, selecting the wrong option _will_ corrupt your disk image, so please keep a backup, just in case.
