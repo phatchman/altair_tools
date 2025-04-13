@@ -24,6 +24,9 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
         .use_llvm = true,
     });
+    if (target.result.os.tag == .windows) {
+        exe.subsystem = .Windows;
+    }
 
     const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .sdl3 = false, .linux_display_backend = .X11 });
     exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl"));
