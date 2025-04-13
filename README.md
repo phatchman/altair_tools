@@ -197,7 +197,7 @@ If the same file exists for multiple users, the user number is appended to the f
 Copy multiple files to user 1<br>
 `./altairdsk -P -u1 cpm.dsk *.com`
 
-Wildcard expansion is not performed on windows. However you can use the following powershell trick instead:
+Wildcard expansion is not performed on windows. However you can use the following powershell trick instead:<br>
 `altairdsk cpm.dsk -P $(dir *)`
 
 ### Erase a file
