@@ -36,8 +36,8 @@ While every care has been taken to ensure this utility will not corrupt you disk
 
 Binaries are provided on the Release page for the following architectures:
 
-| OS      | Arch    |  |   |
-|---------|---------|-----|----|
+| OS      | Arch    | cmdline | GUI  |
+|:--------|:--------|:-------:|:----:|
 | Windows | x86_64  | ✅ | ✅ |
 | Linux   | x86_64  | ✅ | ✅ |
 | MacOS   | x86_64  | ✅ | ❌ |
