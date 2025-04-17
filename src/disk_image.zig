@@ -391,7 +391,7 @@ pub const DiskImage = struct {
 
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
-        try self.image_file.seekTo(@as(u64, @intCast(data_offset)));
+        try self.image_file.seekTo(@intCast(data_offset));
         _ = try self.image_file.reader().readAll(&data.data);
         try data.dump();
     }
