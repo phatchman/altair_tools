@@ -9,6 +9,20 @@ test "8in formatted" {
     try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
 }
 
+test "8in alt size" {
+    var is_unique: bool = undefined;
+    var image_file = try std.fs.cwd().openFile("src/test_disks/8in_fmt_alt.dsk", .{ .mode = .read_only });
+    errdefer image_file.close();
+
+    const image_type = DiskImage.detectImageType(image_file, &is_unique);
+    try std.testing.expect(image_type != null); // Image type should be detected as 8IN
+    try std.testing.expectEqual(FDD_8IN.type_id, image_type.?.type_id);
+    try std.testing.expectEqual(true, is_unique);
+    var disk_image = try DiskImage.init(std.testing.allocator, image_file, FDD_8IN);
+    try disk_image.loadDirectories(false);
+    disk_image.deinit();
+}
+
 test "HDD 5MB formatted" {
     const compare_image = @embedFile("test_disks/5mb_fmt.dsk");
     var test_buffer: [HDD_5MB.image_size]u8 = undefined;

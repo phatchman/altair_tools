@@ -158,7 +158,7 @@ pub const DiskImageType = struct {
         const image_size = image_file.getEndPos() catch {
             return false;
         };
-        const alt_size = if (self.detect_conditions == .padded) (self.image_size + 127) * 128 / 128 else self.image_size;
+        const alt_size = if (self.detect_conditions == .padded) ((self.image_size + 127) / 128) * 128 else self.image_size;
 
         if (image_size == self.image_size or image_size == alt_size) {
             return true;
