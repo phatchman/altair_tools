@@ -257,7 +257,7 @@ pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEn
                     DirectoryEntry.init(.{ .local = try LocalDirEntry.init(
                         gpa,
                         entry.name,
-                        size,
+                        @truncate(size),
                     ) }),
                 );
             }
