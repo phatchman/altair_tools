@@ -158,9 +158,9 @@ pub fn main() !void {
     Backend.c.SDL_SetWindowMinimumSize(backend.window, 900, 600);
 
     try setImagePath("");
-    defer if (image_path_selection != null) allocator.free(image_path_selection.?);
+    defer allocator.free(image_path_selection.?);
     try setLocalPath(".");
-    defer if (local_path_selection != null) allocator.free(local_path_selection.?);
+    defer allocator.free(local_path_selection.?);
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
@@ -628,11 +628,12 @@ fn makeFileSelector(id: GridType) !void {
         if (id == .image) {
             const path_to_use = path: {
                 if (image_path_selection) |image_path| {
-                    break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch image_path[0..];
+                    break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch OOM();
                 } else {
-                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch OOM();
                 }
             };
+            defer allocator.free(path_to_use);
             try setImagePath(path_to_use);
             const filename = try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
                 .title = "Select disk image",
@@ -649,11 +650,12 @@ fn makeFileSelector(id: GridType) !void {
         } else {
             const path_to_use = path: {
                 if (local_path_selection) |local_path| {
-                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch local_path[0..];
+                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch OOM();
                 } else {
-                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch OOM();
                 }
             };
+            defer allocator.free(path_to_use);
             try setLocalPath(path_to_use);
 
             const dirname =
@@ -1888,7 +1890,7 @@ pub fn processEvents() void {
                     else => {},
                 }
             },
-            .right_alt, .left_alt => {
+            .right_alt, .left_alt, .left_command, .right_command => {
                 switch (ke.action) {
                     .down => {
                         alt_held = true;
@@ -1971,6 +1973,10 @@ pub fn processEvents() void {
                 if (ke.action == .down and alt_held) {
                     e.handled = true;
                     CommandState.current_command = .close;
+                } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
+                    copyFilenamesToClipboard() catch |err| {
+                        std.log.info("Clipboard copy error: {s}", .{@errorName(err)});
+                    };
                 }
             },
             .r => {
@@ -2425,6 +2431,43 @@ pub fn openLocalDirectory(path: []const u8) void {
     if (!success) {
         local_directories = null;
     }
+}
+
+// Copy altiar filenames to the clipboard
+fn copyFilenamesToClipboard() !void {
+    var buf_len: usize = 1; // For the null
+    if (image_directories) |dirs| {
+        for (dirs) |*entry| {
+            buf_len += entry.filenameAndExtension().len + 1;
+        }
+
+        const clip_text = try allocator.allocSentinel(u8, buf_len, 0);
+        defer allocator.free(clip_text);
+        var buf_pos: usize = 0;
+
+        for (dirs) |*entry| {
+            std.debug.print("pre buf len = {}, buf_pos = {}\n", .{ buf_len, buf_pos });
+
+            const fmt_slice = try std.fmt.bufPrintZ(clip_text[buf_pos..], "{s}\n", .{entry.filenameAndExtension()});
+            buf_pos += fmt_slice.len;
+
+            std.debug.print("post buf len = {}, buf_pos = {}\n", .{ buf_len, buf_pos });
+        }
+
+        const result = Backend.c.SDL_SetClipboardText(clip_text.ptr);
+
+        std.debug.print("buf len = {}, result = {}\n", .{ buf_len, result });
+
+        if (buf_len > 1 and result == 0) {
+            try dvui.dialog(@src(), .{ .title = "Copy Filenames", .message = "Altair filenames copied\nto the clipboard." });
+        }
+    } else {
+        std.debug.print("image dirs is null?\n", .{});
+    }
+}
+
+fn OOM() noreturn {
+    @panic("Out of Memory");
 }
 
 // Optional: windows os only
