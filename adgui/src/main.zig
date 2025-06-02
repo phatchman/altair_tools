@@ -38,6 +38,8 @@
 //       [_]
 //
 
+const adgui_version = "0.9.5";
+
 const folder_icon = @embedFile("icons/folder.tvg");
 
 const window_icon_png = @embedFile("altair.png");
@@ -453,6 +455,7 @@ fn makeMenu() !bool {
 
         if (try dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
             m.close();
+            try dvui.dialog(@src(), .{ .displayFn = aboutDialogDisplay, .message = "" });
         }
     }
     if (show_shortcuts) {
@@ -1447,6 +1450,48 @@ pub fn makeTransferDialog() !void {
             }
         }
     }
+}
+
+pub fn aboutDialogDisplay(id: u32) !void {
+    var win = try dvui.floatingWindow(
+        @src(),
+        .{ .modal = true, .window_avoid = .nudge },
+        .{ .id_extra = id },
+    );
+    defer win.deinit();
+
+    var header_openflag = true;
+    try dvui.windowHeader("About ADGUI", "", &header_openflag);
+    if (!header_openflag) {
+        dvui.dialogRemove(id);
+        return;
+    }
+
+    {
+        // Add the buttons at the bottom first, so that they are guaranteed to be shown
+        var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        defer hbox.deinit();
+
+        if (try dvui.button(@src(), "OK", .{}, .{ .tab_index = 1 })) {
+            dvui.dialogRemove(id);
+            return;
+        }
+    }
+    try dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
+
+    // Now add the scroll area which will get the remaining space
+    var tl = try dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
+    try tl.addText("\n", .{});
+    const url = "https://github.com/phatchman/altair_tools";
+    if (try tl.addTextClick(url, .{})) {
+        dvui.openURL(url) catch {};
+    }
+    const tl_rect = tl.data().contentRect();
+    tl.deinit();
+    try dvui.separator(@src(), .{
+        .rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w },
+        .color_fill = .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } },
+    });
 }
 
 fn sortAsc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
