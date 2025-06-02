@@ -28,9 +28,9 @@
 //       [_] Ask to do a recovery if the disk image is corrupted
 //       [_] Keep a backup image of any file opened? OR at least make that an option.
 //       [_] Cleanup how directory paths and image paths etc are stored, updated and displayed.
-//       [_] Cleanup all of the global state for selection, key hanbdling etc.
+//       [_] Cleanup all of the global state for selection, key handling etc.
 //       [_] Measure the width of header columns based on data column widths, rather than the other way around
-//           This would allow us to makie the column expand to the width of the data.
+//           This would allow us to make the column expand to the width of the data.
 //       [x] Drag and Drop
 //              1) From windows into app
 //              2) From app to local OS (SDL doesn't currently support this)
@@ -56,7 +56,6 @@ var pgup_pressed: bool = false;
 var down_pressed: bool = false;
 var up_pressed: bool = false;
 
-const paned_min_width = 300;
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
 
@@ -90,14 +89,13 @@ var sort_column: [num_grids][]const u8 = @splat("Name");
 var sort_asc: [num_grids]bool = @splat(true);
 var text_box_focused: [num_grids]bool = @splat(false);
 
+// Don't handle keyboard events if a textbvox is focussed.
 fn textBoxFocused() bool {
     for (text_box_focused) |focused| {
         if (focused) return true;
     }
     return false;
 }
-
-var frame_count: u64 = 0;
 
 // Layout information for each column.
 const num_columns = 7;
@@ -106,7 +104,6 @@ const min_sizes = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 15.0;
 const status_bar_height = 35 * 2; // TODO: Calculate?
-const border_width = dvui.Rect.all(0); // TODO: Can be removed.
 
 var image_path_initialized = false;
 var image_path_selection: ?[]const u8 = null;
@@ -159,9 +156,9 @@ pub fn main() !void {
     Backend.c.SDL_SetWindowMinimumSize(backend.window, 900, 600);
 
     try setImagePath("");
-    defer allocator.free(image_path_selection.?); // TODO: I don't think these should be optionals. We set them at the start and then they onyl every get updated.
+    defer if (image_path_selection != null) allocator.free(image_path_selection.?);
     try setLocalPath(".");
-    defer allocator.free(local_path_selection.?);
+    defer if (local_path_selection != null) allocator.free(local_path_selection.?);
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
@@ -252,7 +249,6 @@ fn handleEvent(event: *const Backend.c.SDL_Event) void {
 var theme_set = false;
 var global_theme: dvui.Theme = undefined;
 
-// TODO: There must be a better way to set the theme?
 fn setTheme() !void {
     if (theme_set)
         return;
@@ -292,7 +288,6 @@ fn guiFrame() !bool {
     var running = true;
     if (!theme_set)
         try setTheme();
-    frame_count += 1;
 
     if (!try makeMenu()) return false;
 
@@ -324,7 +319,7 @@ fn guiFrame() !bool {
         // User can select horizontal or vertial orientation.
         var paned = try dvui.paned(@src(), .{
             .direction = pane_orientation,
-            .collapsed_size = paned_min_width * 2,
+            .collapsed_size = 0,
         }, .{
             .expand = .both,
             .background = true,
@@ -353,7 +348,6 @@ fn guiFrame() !bool {
 
                 var header = try dvui.box(@src(), .vertical, .{
                     .expand = .horizontal,
-                    .border = border_width,
                 });
                 defer header.deinit();
 
@@ -375,7 +369,6 @@ fn guiFrame() !bool {
                     var grid = try dvui.box(@src(), .vertical, .{
                         .background = true,
                         .expand = .horizontal,
-                        .border = border_width,
                     });
                     defer grid.deinit();
 
@@ -383,7 +376,6 @@ fn guiFrame() !bool {
                     var header = try dvui.box(@src(), .vertical, .{
                         .expand = .horizontal,
                         .background = true,
-                        .border = border_width,
                     });
                     defer header.deinit();
 
@@ -434,6 +426,8 @@ fn guiFrame() !bool {
     return running;
 }
 
+// Create the application menus.
+// Returns: false if quitting, true if running.
 fn makeMenu() !bool {
     var m = try dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
     defer m.deinit();
@@ -495,7 +489,7 @@ fn showShortcuts() !void {
         .{ .category = .selection, .shortcut = "UP", .button = null, .help_text = "Highlight prevous file." },
         .{ .category = .selection, .shortcut = "DOWN", .button = null, .help_text = "Highlight next file." },
         .{ .category = .selection, .shortcut = "PGUP", .button = null, .help_text = "Scroll grid up." },
-        .{ .category = .selection, .shortcut = "PG DN", .button = null, .help_text = "Scroll grid down." },
+        .{ .category = .selection, .shortcut = "PGDN", .button = null, .help_text = "Scroll grid down." },
         .{ .category = .file, .shortcut = "ALT-I", .button = null, .help_text = "Type image file name." },
         .{ .category = .file, .shortcut = "ALT-M", .button = null, .help_text = "Browse for image file." },
         .{ .category = .file, .shortcut = "ALT-O", .button = null, .help_text = "Browse for local directory." },
@@ -872,12 +866,8 @@ fn makeGridBody(id: GridType) !void {
         } else {
             background = null;
         }
-        // TODO: Check if this *1000000 is really needed? If the create is called from
-        // different parts of the source code.
-        const id_extra = @intFromEnum(id) * 1000000 + rel_idx;
-
         var row = try dvui.box(@src(), .horizontal, .{
-            .id_extra = id_extra,
+            .id_extra = rel_idx,
             .expand = .horizontal,
             .background = true,
             .color_fill = background,
@@ -958,18 +948,16 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
 /// are kept the same size as the header columns.
-fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
+fn makeGridDataRow(src: std.builtin.SourceLocation, _: GridType, col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
     // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
     // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
     // whole area. This way we can handle an "unlimited" number of directory entries.
     if (item_num > 1024) {
         return;
     }
-    // Note this multiplier needs to be greater than the item_num cut-off above.
-    const id_extra = @intFromEnum(id) * 10000 + item_num;
     // This hbox contains the row.
     var row = try dvui.box(src, .horizontal, .{
-        .id_extra = id_extra,
+        .id_extra = item_num,
         .expand = .horizontal,
         .background = false,
         .margin = Rect.all(0),
@@ -982,13 +970,13 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, id: GridType, col_num: u32, 
     if (col_num == 0 and false) {
         // TODO: Magic numbers.
         _ = try dvui.button(src, "[_]", .{}, .{
-            .id_extra = id_extra,
+            .id_extra = item_num,
             .background = false,
         });
     } else {
         // TODO: Magic numbers.
         try dvui.labelNoFmt(@src(), value, .{
-            .id_extra = id_extra,
+            .id_extra = item_num,
             .margin = Rect{ .x = 1, .w = 1 },
             .padding = Rect{ .x = 8, .w = 8 },
             .gravity_x = if (justify) 1.0 else 0.0,
