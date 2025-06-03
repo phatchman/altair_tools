@@ -697,6 +697,8 @@ fn makeGridBody(id: GridType) !void {
         .local => if (local_directories == null) false else true,
     };
     if (!loaded) {
+        var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = @intFromEnum(id) });
+        defer hbox.deinit();
         switch (id) {
             .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
             .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
