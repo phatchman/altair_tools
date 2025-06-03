@@ -28,8 +28,8 @@ pub fn build(b: *std.Build) void {
         exe.subsystem = .Windows;
     }
 
-    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .sdl3 = false, .linux_display_backend = .X11 });
-    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl"));
+    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .linux_display_backend = .X11 });
+    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
 
     exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
     b.installArtifact(exe);

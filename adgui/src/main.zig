@@ -455,7 +455,7 @@ fn makeMenu() !bool {
 
         if (try dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
             m.close();
-            try dvui.dialog(@src(), .{ .displayFn = aboutDialogDisplay, .message = "" });
+            try dvui.dialog(@src(), .{}, .{ .displayFn = aboutDialogDisplay, .message = "" });
         }
     }
     if (show_shortcuts) {
@@ -698,8 +698,8 @@ fn makeGridBody(id: GridType) !void {
     };
     if (!loaded) {
         switch (id) {
-            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5 }),
-            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5 }),
+            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
+            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
         }
         return;
     }
@@ -1319,7 +1319,7 @@ pub fn makeTransferDialog() !void {
                 }
                 empty_file_selector = entry.getText().len == 0;
                 entry.deinit();
-                if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{})) {
+                if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{}, .{})) {
                     if (CommandState.buttons.image_selector) {
                         if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
                             .title = "Save image as",
@@ -1454,11 +1454,11 @@ pub fn makeTransferDialog() !void {
     }
 }
 
-pub fn aboutDialogDisplay(id: u32) !void {
+pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
     var win = try dvui.floatingWindow(
         @src(),
         .{ .modal = true, .window_avoid = .nudge },
-        .{ .id_extra = id },
+        .{ .id_extra = id.asUsize() },
     );
     defer win.deinit();
 
@@ -1638,7 +1638,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     // send our min size to parent
     bw.deinit();
     if (selected) {
-        dvui.refresh(null, @src(), 0);
+        dvui.refresh(null, @src(), null);
     }
 
     return click;
@@ -1654,7 +1654,7 @@ pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: 
     // When someone passes min_size_content to buttonIcon, they want the icon
     // to be that size, so we pass it through.
 
-    try dvui.icon(@src(), name, tvg_bytes, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
+    try dvui.icon(@src(), name, tvg_bytes, .{}, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
 
     if (alt_held) {
         const label_rect = try labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
@@ -1734,7 +1734,7 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     return click;
 }
 
-pub fn dialogDisplay(id: u32) !void {
+pub fn dialogDisplay(id: dvui.WidgetId) !void {
     const modal = dvui.dataGet(null, id, "_modal", bool) orelse {
         std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
         dvui.dialogRemove(id);
@@ -1759,15 +1759,19 @@ pub fn dialogDisplay(id: u32) !void {
         return;
     };
 
-    const center_on = dvui.dataGet(null, id, "_center_on", Rect) orelse dvui.currentWindow().subwindow_currentRect;
+    const center_on = dvui.dataGet(null, id, "_center_on", Rect.Natural) orelse dvui.currentWindow().subwindow_currentRect;
 
     const cancel_label = dvui.dataGetSlice(null, id, "_cancel_label", []u8);
 
     const callafter = dvui.dataGet(null, id, "_callafter", dvui.DialogCallAfterFn);
 
-    const maxSize = dvui.dataGet(null, id, "_max_size", dvui.Size);
+    const maxSize = dvui.dataGet(null, id, "_max_size", dvui.Options.MaxSize);
 
-    var win = try dvui.floatingWindow(@src(), .{ .modal = modal, .center_on = center_on, .window_avoid = .nudge }, .{ .id_extra = id, .max_size_content = maxSize });
+    var win = try dvui.floatingWindow(
+        @src(),
+        .{ .modal = modal, .center_on = center_on, .window_avoid = .nudge },
+        .{ .id_extra = id.asUsize(), .max_size_content = maxSize },
+    );
     defer win.deinit();
 
     var header_openflag = true;
@@ -2306,7 +2310,7 @@ fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void 
             break :message message;
         }
     };
-    dvui.dialog(@src(), .{
+    dvui.dialog(@src(), .{}, .{
         .title = title,
         .message = display_message,
         .modal = true,
@@ -2351,7 +2355,7 @@ pub fn openImageFile(filename: []const u8) void {
     const dialogFollowup = struct {
         var img_type: ?ad.DiskImageTypes = null;
         var selected_filename: ?[]const u8 = null;
-        fn handleResponse(_: u32, response: dvui.enums.DialogResponse) dvui.Error!void {
+        fn handleResponse(_: dvui.WidgetId, response: dvui.enums.DialogResponse) dvui.Error!void {
             switch (response) {
                 .cancel => img_type = .HDD_5MB_1024,
                 .ok => img_type = .HDD_5MB,
@@ -2383,7 +2387,7 @@ pub fn openImageFile(filename: []const u8) void {
 
         if (dialogFollowup.img_type == null and image_type == .HDD_5MB) {
             dialogFollowup.selected_filename = allocator.dupe(u8, filename) catch unreachable;
-            dvui.dialog(@src(), .{
+            dvui.dialog(@src(), .{}, .{
                 .title = "Select image type",
                 .message = "The HDD_5MB and HDD_5MB_1024 formats cannot be auto-detected.\n\nPlease select the correct format.",
                 .ok_label = "1) HDD_5MB",
@@ -2459,7 +2463,7 @@ fn copyFilenamesToClipboard() !void {
         std.debug.print("buf len = {}, result = {}\n", .{ buf_len, result });
 
         if (buf_len > 1 and result == 0) {
-            try dvui.dialog(@src(), .{ .title = "Copy Filenames", .message = "Altair filenames copied\nto the clipboard." });
+            try dvui.dialog(@src(), .{}, .{ .title = "Copy Filenames", .message = "Altair filenames copied\nto the clipboard." });
         }
     } else {
         std.debug.print("image dirs is null?\n", .{});
