@@ -836,11 +836,9 @@ fn makeGridBody(id: GridType) !void {
 
             switch (e.evt) {
                 .mouse => |me| {
-                    // TODO: Hardcoded 25's. should just be row height?
-                    const offset_magic = -103; // Not sure why this magic number is required?
                     const first_displayed_f: f32 = getScrollInfo(id).viewport.y / 25;
-                    //const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
-                    const rel_mouse_index_f = @max(me.p.y + offset_magic, 0) / 25 + first_displayed_f;
+                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
+                    const rel_mouse_index_f = mouse_p_relative.y / 25 + first_displayed_f;
                     rel_mouse_index = @intFromFloat(rel_mouse_index_f);
                     rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
