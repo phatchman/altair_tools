@@ -62,10 +62,19 @@ var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
 
 // Image grid for disk image or local for local filesystem.
-const GridType = enum(usize) {
-    image = 0,
+const GridType = enum {
+    image,
     local,
+
+    fn toUSize(self: GridType) usize {
+        return @intFromEnum(self);
+    }
+
+    fn fromUSize(self: *GridType, val: usize) void {
+        self.* = @enumFromInt(val);
+    }
 };
+
 const num_grids = std.meta.fields(GridType).len;
 
 // Which grid has keyboard or mouse focus.
@@ -455,7 +464,10 @@ fn makeMenu() !bool {
 
         if (try dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
             m.close();
-            try dvui.dialog(@src(), .{}, .{ .displayFn = aboutDialogDisplay, .message = "" });
+            try dvui.dialog(@src(), .{}, .{
+                .displayFn = aboutDialogDisplay,
+                .message = "",
+            });
         }
     }
     if (show_shortcuts) {
@@ -559,19 +571,19 @@ fn makeFileSelector(id: GridType) !void {
         @src(),
         .horizontal,
         .{
-            .id_extra = @intFromEnum(id),
+            .id_extra = id.toUSize(),
             .background = true,
             .expand = .horizontal,
         },
     );
     defer file_selector_box.deinit();
     switch (id) {
-        .image => try dvui.labelNoFmt(@src(), "Image:", .{ .id_extra = @intFromEnum(id), .gravity_y = 0.5 }),
-        .local => try dvui.labelNoFmt(@src(), "Local:", .{ .id_extra = @intFromEnum(id), .gravity_y = 0.5 }),
+        .image => try dvui.labelNoFmt(@src(), "Image:", .{ .id_extra = id.toUSize(), .gravity_y = 0.5 }),
+        .local => try dvui.labelNoFmt(@src(), "Local:", .{ .id_extra = id.toUSize(), .gravity_y = 0.5 }),
     }
     if (alt_held) {
         try dvui.separator(@src(), .{
-            .id_extra = @intFromEnum(id),
+            .id_extra = id.toUSize(),
             .rect = .{ .x = 5, .y = 30, .w = 10, .h = 2 },
             .color_fill = .{ .name = .text },
         });
@@ -579,11 +591,11 @@ fn makeFileSelector(id: GridType) !void {
     // TODO: I think this can be simplified by just setting the text after the folder selection,
     // So we don't need to use is_initilized on the next loop to set the text?
     var entry = try dvui.textEntry(@src(), .{}, .{
-        .id_extra = @intFromEnum(id),
+        .id_extra = id.toUSize(),
         .expand = .horizontal,
     });
     errdefer entry.deinit();
-    text_box_focused[@intFromEnum(id)] = entry.wd.id == dvui.focusedWidgetId();
+    text_box_focused[id.toUSize()] = entry.wd.id == dvui.focusedWidgetId();
     if (alt_held) {
         const events = dvui.events();
         for (events) |*evt| {
@@ -624,7 +636,7 @@ fn makeFileSelector(id: GridType) !void {
     }
     entry.deinit();
 
-    if (try buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = @intFromEnum(id) }, id)) {
+    if (try buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = id.toUSize() }, id)) {
         if (id == .image) {
             const path_to_use = path: {
                 if (image_path_selection) |image_path| {
@@ -672,7 +684,7 @@ fn makeGridHeader(id: GridType) !void {
     {
         // This hbox contains all of the buttons making up the grid headers.
         var hbox = try dvui.box(@src(), .horizontal, .{
-            .id_extra = @intFromEnum(id),
+            .id_extra = id.toUSize(),
             .expand = .horizontal,
             .background = false,
         });
@@ -697,11 +709,11 @@ fn makeGridBody(id: GridType) !void {
         .local => if (local_directories == null) false else true,
     };
     if (!loaded) {
-        var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = @intFromEnum(id) });
+        var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = id.toUSize() });
         defer hbox.deinit();
         switch (id) {
-            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
-            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = @intFromEnum(id), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
+            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
+            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
         }
         return;
     }
@@ -733,7 +745,7 @@ fn makeGridBody(id: GridType) !void {
     var scroll = try dvui.scrollArea(@src(), .{
         .scroll_info = getScrollInfo(id),
     }, .{
-        .id_extra = @intFromEnum(id),
+        .id_extra = id.toUSize(),
         .expand = .both,
         .color_fill = .{ .name = .fill_window },
     });
@@ -827,6 +839,7 @@ fn makeGridBody(id: GridType) !void {
                     // TODO: Hardcoded 25's. should just be row height?
                     const offset_magic = -103; // Not sure why this magic number is required?
                     const first_displayed_f: f32 = getScrollInfo(id).viewport.y / 25;
+                    //const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
                     const rel_mouse_index_f = @max(me.p.y + offset_magic, 0) / 25 + first_displayed_f;
                     rel_mouse_index = @intFromFloat(rel_mouse_index_f);
                     rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
@@ -1284,91 +1297,98 @@ pub fn makeTransferDialog() !void {
             defer button_box.deinit();
 
             if (CommandState.buttons.image_selector or CommandState.buttons.save_file_selector or CommandState.buttons.open_file_selector) {
-                var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
-                defer hbox.deinit();
-                if (CommandState.buttons.image_selector) {
-                    try dvui.labelNoFmt(@src(), "Image name:", .{ .gravity_y = 0.5 });
-                } else {
-                    try dvui.labelNoFmt(@src(), "File name:", .{ .gravity_y = 0.5 });
-                }
-
-                var entry = try dvui.textEntry(@src(), .{}, .{});
-                errdefer entry.deinit();
-                if (CommandState.file_selector_buffer == null) {
+                var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+                defer vbox.deinit();
+                {
+                    var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    defer hbox.deinit();
                     if (CommandState.buttons.image_selector) {
-                        if (image_path_selection) |image_path| {
-                            const dir_path = std.fs.path.dirname(image_path) orelse ".";
-                            const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
-                            try CommandState.setFileSelectorBuffer(image_name);
-                            entry.textLayout.selection.selectAll();
-                            entry.textTyped(image_name, false);
-                            entry.textLayout.selection.moveCursor(image_name.len, false);
-                            dvui.refresh(null, @src(), null);
-                        }
+                        try dvui.labelNoFmt(@src(), "Image name:", .{ .gravity_y = 0.5 });
                     } else {
-                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
-                        const filename = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
-                        try CommandState.setFileSelectorBuffer(filename);
-                        entry.textLayout.selection.selectAll();
-                        entry.textTyped(filename, false);
-                        entry.textLayout.selection.moveCursor(filename.len, false);
-                        dvui.refresh(null, @src(), null);
+                        try dvui.labelNoFmt(@src(), "File name:", .{ .gravity_y = 0.5 });
                     }
-                }
-                if (entry.enter_pressed or entry.text_changed) {
-                    try CommandState.setFileSelectorBuffer(entry.getText());
-                    entry.textLayout.selection.moveCursor(entry.getText().len, false);
-                }
-                empty_file_selector = entry.getText().len == 0;
-                entry.deinit();
-                if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{}, .{})) {
-                    if (CommandState.buttons.image_selector) {
-                        if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
-                            .title = "Save image as",
-                            .filters = &.{ "*.DSK", "*.IMG", "*.dsk", "*.img" },
-                            .filter_description = "Altair Disk Images *.dsk;*.img",
-                        })) |filename| {
-                            try CommandState.setFileSelectorBuffer(filename);
-                            entry.textLayout.selection.selectAll();
-                            entry.textTyped(filename, false);
-                            entry.textLayout.selection.moveCursor(filename.len, false);
-                            dvui.refresh(null, @src(), null);
-                        }
-                    } else if (CommandState.buttons.save_file_selector) {
-                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
-                        const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
-                        try CommandState.setFileSelectorBuffer(default_name);
-                        if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
-                            .title = "Save file as",
-                            .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
-                            .filter_description = "System Images *.bin;*.cpm",
-                        })) |filename| {
-                            try CommandState.setFileSelectorBuffer(filename);
-                            entry.textLayout.selection.selectAll();
-                            entry.textTyped(filename, false);
-                            entry.textLayout.selection.moveCursor(filename.len, false);
-                            dvui.refresh(null, @src(), null);
-                        }
-                    } else {
-                        // TODO: Remember the last thing they saved / loaded?
-                        const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
-                        const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
-                        try CommandState.setFileSelectorBuffer(default_name);
 
-                        if (try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
-                            .title = "Save file as",
-                            .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
-                            .filter_description = "System Images *.bin;*.cpm",
-                        })) |filename| {
+                    var entry = try dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
+                    errdefer entry.deinit();
+                    if (CommandState.file_selector_buffer == null) {
+                        if (CommandState.buttons.image_selector) {
+                            if (image_path_selection) |image_path| {
+                                const dir_path = std.fs.path.dirname(image_path) orelse ".";
+                                const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
+                                try CommandState.setFileSelectorBuffer(image_name);
+                                entry.textLayout.selection.selectAll();
+                                entry.textTyped(image_name, false);
+                                entry.textLayout.selection.moveCursor(image_name.len, false);
+                                dvui.refresh(null, @src(), null);
+                            }
+                        } else {
+                            const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                            const filename = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textLayout.selection.selectAll();
                             entry.textTyped(filename, false);
                             entry.textLayout.selection.moveCursor(filename.len, false);
                             dvui.refresh(null, @src(), null);
+                        }
+                    }
+                    if (entry.enter_pressed or entry.text_changed) {
+                        try CommandState.setFileSelectorBuffer(entry.getText());
+                        entry.textLayout.selection.moveCursor(entry.getText().len, false);
+                    }
+                    empty_file_selector = entry.getText().len == 0;
+                    entry.deinit();
+                    if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{}, .{})) {
+                        if (CommandState.buttons.image_selector) {
+                            if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
+                                .title = "Save image as",
+                                .filters = &.{ "*.DSK", "*.IMG", "*.dsk", "*.img" },
+                                .filter_description = "Altair Disk Images *.dsk;*.img",
+                            })) |filename| {
+                                try CommandState.setFileSelectorBuffer(filename);
+                                entry.textLayout.selection.selectAll();
+                                entry.textTyped(filename, false);
+                                entry.textLayout.selection.moveCursor(filename.len, false);
+                                dvui.refresh(null, @src(), null);
+                            }
+                        } else if (CommandState.buttons.save_file_selector) {
+                            const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                            const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
+                            try CommandState.setFileSelectorBuffer(default_name);
+                            if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
+                                .title = "Save file as",
+                                .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
+                                .filter_description = "System Images *.bin;*.cpm",
+                            })) |filename| {
+                                try CommandState.setFileSelectorBuffer(filename);
+                                entry.textLayout.selection.selectAll();
+                                entry.textTyped(filename, false);
+                                entry.textLayout.selection.moveCursor(filename.len, false);
+                                dvui.refresh(null, @src(), null);
+                            }
+                        } else {
+                            // TODO: Remember the last thing they saved / loaded?
+                            const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
+                            const default_name = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
+                            try CommandState.setFileSelectorBuffer(default_name);
+
+                            if (try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
+                                .title = "Save file as",
+                                .filters = &.{ "*.bin", "*.cpm", "*.BIN", "*.CPM" },
+                                .filter_description = "System Images *.bin;*.cpm",
+                            })) |filename| {
+                                try CommandState.setFileSelectorBuffer(filename);
+                                entry.textLayout.selection.selectAll();
+                                entry.textTyped(filename, false);
+                                entry.textLayout.selection.moveCursor(filename.len, false);
+                                dvui.refresh(null, @src(), null);
+                            }
                         }
                     }
                 }
                 if (CommandState.buttons.type_selector) {
+                    var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    defer hbox.deinit();
+
                     try dvui.labelNoFmt(@src(), "Format:", .{ .gravity_y = 0.5 });
 
                     if (try dvui.dropdown(@src(), &ad.all_disk_type_names, &static.choice, .{})) {
@@ -1476,7 +1496,7 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
         var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
         defer hbox.deinit();
 
-        if (try dvui.button(@src(), "OK", .{}, .{ .tab_index = 1 })) {
+        if (try buttonFocussed(@src(), "OK", .{}, .{ .tab_index = 1 })) {
             dvui.dialogRemove(id);
             return;
         }
@@ -1492,9 +1512,25 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
     }
     const tl_rect = tl.data().contentRect();
     tl.deinit();
+
+    const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
+    const evts = dvui.events();
+    // Highlight the underline separator if the text is hovered.
+    const hovered: bool = blk: {
+        for (evts) |*evt| {
+            if (evt.evt == .mouse and evt.evt.mouse.action == .position) {
+                const pos_physical = evt.evt.mouse.p;
+                const pos = dvui.parentGet().data().contentRectScale().pointFromPhysical(pos_physical);
+                if (tl.data().contentRect().contains(pos)) {
+                    break :blk true;
+                }
+            }
+        }
+        break :blk false;
+    };
     try dvui.separator(@src(), .{
-        .rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w },
-        .color_fill = .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } },
+        .rect = underline_rect,
+        .color_fill = if (!hovered) .text else .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } },
     });
 }
 
@@ -1521,7 +1557,7 @@ fn sortDesc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
 }
 
 fn sortDirectories(id: GridType, sort_by_opt: ?[]const u8, toggle_direction: bool) void {
-    const idx = @intFromEnum(id);
+    const idx = id.toUSize();
     const sort_by = sort_by_opt orelse sort_column[idx];
 
     if (toggle_direction and std.mem.eql(u8, sort_column[idx], sort_by)) {
@@ -1627,8 +1663,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
             break :color opts.color(.fill);
         }
     };
-    try dvui.separator(src, .{
-        .id_extra = 1, // Not sure why required.
+    try dvui.separator(@src(), .{
         .rect = .{ .x = label_rect.x + @as(f32, @floatFromInt(underline_pos)) * 8, .y = 15, .w = 10, .h = 2 },
         .color_fill = .{ .color = fill_color },
         .background = true,
@@ -2068,35 +2103,35 @@ pub fn getDirectoryById(id: GridType) []DirectoryEntry {
 }
 
 pub fn getScrollInfo(id: GridType) *dvui.ScrollInfo {
-    return &scroll_info[@intFromEnum(id)];
+    return &scroll_info[id.toUSize()];
 }
 
 pub fn getKbSelectionIndex(id: GridType) usize {
-    return kb_dir_index[@intFromEnum(id)];
+    return kb_dir_index[id.toUSize()];
 }
 
 pub fn setKbSelectionIndex(id: GridType, value: usize) void {
-    kb_dir_index[@intFromEnum(id)] = value;
+    kb_dir_index[id.toUSize()] = value;
 }
 
 pub fn setLastMouseSelectedIndex(id: GridType, value: usize) void {
-    last_mouse_index[@intFromEnum(id)] = value;
+    last_mouse_index[id.toUSize()] = value;
 }
 
 pub fn getLastMouseSelectedIndex(id: GridType) usize {
-    return last_mouse_index[@intFromEnum(id)];
+    return last_mouse_index[id.toUSize()];
 }
 
 pub fn getMouseSelectionIndex(id: GridType) usize {
-    return mouse_dir_index[@intFromEnum(id)];
+    return mouse_dir_index[id.toUSize()];
 }
 
 pub fn setMouseSelectionIndex(id: GridType, value: usize) void {
-    mouse_dir_index[@intFromEnum(id)] = value;
+    mouse_dir_index[id.toUSize()] = value;
 }
 
 pub fn getLastMouseSelectionIndex(id: GridType) usize {
-    return last_mouse_index[@intFromEnum(id)];
+    return last_mouse_index[id.toUSize()];
 }
 
 pub fn swapFocussedGrid() void {
@@ -2442,9 +2477,11 @@ pub fn openLocalDirectory(path: []const u8) void {
 // Copy altiar filenames to the clipboard
 fn copyFilenamesToClipboard() !void {
     var buf_len: usize = 1; // For the null
+    var any_selected: bool = false;
     if (image_directories) |dirs| {
         for (dirs) |*entry| {
             buf_len += entry.filenameAndExtension().len + 1;
+            any_selected = any_selected or entry.isSelected();
         }
 
         const clip_text = try allocator.allocSentinel(u8, buf_len, 0);
@@ -2452,23 +2489,21 @@ fn copyFilenamesToClipboard() !void {
         var buf_pos: usize = 0;
 
         for (dirs) |*entry| {
-            std.debug.print("pre buf len = {}, buf_pos = {}\n", .{ buf_len, buf_pos });
-
-            const fmt_slice = try std.fmt.bufPrintZ(clip_text[buf_pos..], "{s}\n", .{entry.filenameAndExtension()});
-            buf_pos += fmt_slice.len;
-
-            std.debug.print("post buf len = {}, buf_pos = {}\n", .{ buf_len, buf_pos });
+            if (!any_selected or entry.isSelected()) {
+                const fmt_slice = try std.fmt.bufPrintZ(clip_text[buf_pos..], "{s}\n", .{entry.filenameAndExtension()});
+                buf_pos += fmt_slice.len;
+            }
         }
 
         const result = Backend.c.SDL_SetClipboardText(clip_text.ptr);
 
-        std.debug.print("buf len = {}, result = {}\n", .{ buf_len, result });
-
         if (buf_len > 1 and result == 0) {
-            try dvui.dialog(@src(), .{}, .{ .title = "Copy Filenames", .message = "Altair filenames copied\nto the clipboard." });
+            try dvui.dialog(@src(), .{}, .{
+                .title = "Copy Filenames",
+                .message = if (any_selected) "Selected Altair filenames\ncopied to the clipboard." else "All Altair filenames\ncopied to the clipboard.",
+                .default = .ok,
+            });
         }
-    } else {
-        std.debug.print("image dirs is null?\n", .{});
     }
 }
 
