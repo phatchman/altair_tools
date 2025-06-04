@@ -113,8 +113,8 @@ const num_columns = 7;
 const min_sizes = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
-const row_height: f32 = 15.0;
-const status_bar_height = 35 * 2; // TODO: Calculate?
+const row_height: f32 = 25.0;
+const status_bar_height = 35 * 2;
 
 var image_path_initialized = false;
 var image_path_selection: ?[]const u8 = null;
@@ -588,8 +588,7 @@ fn makeFileSelector(id: GridType) !void {
             .color_fill = .{ .name = .text },
         });
     }
-    // TODO: I think this can be simplified by just setting the text after the folder selection,
-    // So we don't need to use is_initilized on the next loop to set the text?
+
     var entry = try dvui.textEntry(@src(), .{}, .{
         .id_extra = id.toUSize(),
         .expand = .horizontal,
@@ -621,7 +620,6 @@ fn makeFileSelector(id: GridType) !void {
         dvui.refresh(null, @src(), null);
     }
     if (entry.enter_pressed) {
-        // TODO: Repeated code from the icon click.
         switch (id) {
             .image => {
                 try setImagePath(entry.getText());
@@ -769,7 +767,7 @@ fn makeGridBody(id: GridType) !void {
     var background: ?dvui.Options.ColorOrName = null;
 
     if (pgdn_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / 25);
+        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / row_height);
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
             if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
                 break :idx idx;
@@ -785,7 +783,7 @@ fn makeGridBody(id: GridType) !void {
         setMouseSelectionIndex(id, to_display.items[new_index].index);
         setKbSelectionIndex(id, to_display.items[new_index].index);
     } else if (pgup_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / 25);
+        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / row_height);
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
             if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
                 break :idx idx;
@@ -836,9 +834,9 @@ fn makeGridBody(id: GridType) !void {
 
             switch (e.evt) {
                 .mouse => |me| {
-                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / 25;
+                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
                     const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
-                    const rel_mouse_index_f = mouse_p_relative.y / 25 + first_displayed_f;
+                    const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
                     rel_mouse_index = @intFromFloat(rel_mouse_index_f);
                     rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
@@ -908,17 +906,15 @@ fn makeGridBody(id: GridType) !void {
         text = try std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()});
         try makeGridDataRow(@src(), id, 6, rel_idx, text, true);
 
-        // TODO: Hardcoded 25's. should jsut be row height?
-
-        const nr_displayed = getScrollInfo(id).viewport.h / 25 - 2;
+        const nr_displayed = getScrollInfo(id).viewport.h / row_height - 2;
         if (id == focussed_grid and selection_mode == .kb and getKbSelectionIndex(id) == abs_index) {
-            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * 25; // relative pos
+            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * row_height; // relative pos
             const viewport_btm = getScrollInfo(id).viewport.y + getScrollInfo(id).viewport.h - 40;
             if (viewport_btm < my_pos) {
-                const scroll_pos: f32 = my_pos - (nr_displayed * 25);
+                const scroll_pos: f32 = my_pos - (nr_displayed * row_height);
                 getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
             } else if (my_pos < getScrollInfo(id).viewport.y + 40) {
-                const scroll_pos: f32 = my_pos - 25;
+                const scroll_pos: f32 = my_pos - row_height;
                 getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
             }
         }
@@ -980,19 +976,17 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, _: GridType, col_num: u32, i
         .background = false,
         .margin = Rect.all(0),
         .padding = Rect.all(0),
-        .min_size_content = .{ .w = header_rects[col_num].w, .h = row_height + 10.0 },
-        .max_size_content = .{ .w = header_rects[col_num].w, .h = row_height + 10.0 },
+        .min_size_content = .{ .w = header_rects[col_num].w, .h = row_height },
+        .max_size_content = .{ .w = header_rects[col_num].w, .h = row_height },
     });
     defer row.deinit();
 
     if (col_num == 0 and false) {
-        // TODO: Magic numbers.
         _ = try dvui.button(src, "[_]", .{}, .{
             .id_extra = item_num,
             .background = false,
         });
     } else {
-        // TODO: Magic numbers.
         try dvui.labelNoFmt(@src(), value, .{
             .id_extra = item_num,
             .margin = Rect{ .x = 1, .w = 1 },
@@ -1015,8 +1009,6 @@ fn makeCapacityUsageGraph() !void {
         });
         defer files_box.deinit();
         if (commands.disk_image) |disk_image| {
-
-            // TODO: Pull all of the UI values into a Model class or similar.
             const total_space = disk_image.capacityTotalInKB();
             const free_space = disk_image.capacityFreeInKB();
             const used_space = total_space - free_space;
@@ -1224,7 +1216,6 @@ pub fn makeTransferDialog() !void {
     const KeyState = enum { none, yes, no, yes_all, no_all, enter };
     var key_state: KeyState = .none;
 
-    // TODO: Should we filter. this is modal, does it matter?
     const evts = dvui.events();
     for (evts) |*e| {
         if (e.handled or e.evt != .key) continue;
@@ -1387,7 +1378,7 @@ pub fn makeTransferDialog() !void {
                     var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                     defer hbox.deinit();
 
-                    try dvui.labelNoFmt(@src(), "Format:", .{ .gravity_y = 0.5 });
+                    try dvui.labelNoFmt(@src(), "Format:    ", .{ .gravity_y = 0.5 });
 
                     if (try dvui.dropdown(@src(), &ad.all_disk_type_names, &static.choice, .{})) {
                         CommandState.image_type = &ad.all_disk_types.values[static.choice];
@@ -1886,10 +1877,6 @@ pub fn processEvents() void {
     down_pressed = false;
 
     for (evts) |*e| {
-        // This doesn't return events, even when the scrollbar is focused.
-        //        if (!dvui.eventMatch(e, .{ .id = scroll2.data().id, .r = scroll2.data().borderRectScale().r })) {
-        //            continue;
-        //        }
         if (e.handled or e.evt != .key) continue;
 
         const ke = e.evt.key;
@@ -2384,9 +2371,6 @@ pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const 
 pub fn openImageFile(filename: []const u8) void {
     var success = false;
 
-    // TODO: Would rather just call openImageFile with an image type once it is known.
-    // But need to keep the duplicated filename somewhere, so may as well store the image
-    // type as well.
     const dialogFollowup = struct {
         var img_type: ?ad.DiskImageTypes = null;
         var selected_filename: ?[]const u8 = null;
