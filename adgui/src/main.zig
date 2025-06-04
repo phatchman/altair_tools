@@ -338,7 +338,7 @@ fn guiFrame() !bool {
         defer paned.deinit();
         {
 
-            // Top (or left) half of the pane contails the files from the Altair disk image.
+            // Top (or left) half of the pane contaims the files from the Altair disk image.
             var top_half = try dvui.box(@src(), .vertical, .{
                 .expand = .both,
                 .color_border = .{ .name = .text },
@@ -367,6 +367,7 @@ fn guiFrame() !bool {
             }
         }
         {
+            // The bottom or right half is for displaying local system files.
             var bottom_half = try dvui.box(@src(), .vertical, .{
                 .expand = .both,
                 .border = dvui.Rect.all(2),
@@ -509,6 +510,7 @@ fn showShortcuts() !void {
         .{ .category = .file, .shortcut = "ALT-M", .button = null, .help_text = "Browse for image file." },
         .{ .category = .file, .shortcut = "ALT-O", .button = null, .help_text = "Browse for local directory." },
         .{ .category = .file, .shortcut = "ALT-L", .button = null, .help_text = "Type local directory name." },
+        .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filesnames to clipboard." },
     };
     var dialog_win = try dvui.floatingWindow(@src(), .{ .modal = true, .open_flag = &show_shortcuts }, .{});
     defer dialog_win.deinit();
@@ -1491,25 +1493,17 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
         }
     }
     try dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
-
     // Now add the scroll area which will get the remaining space
     var tl = try dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
     try tl.addText("\n", .{});
-    const url = "https://github.com/phatchman/altair_tools";
-    if (try tl.addTextClick(url, .{})) {
-        dvui.openURL(url) catch {};
-    }
-    const tl_rect = tl.data().contentRect();
-    tl.deinit();
 
-    const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
-    const evts = dvui.events();
     // Highlight the underline separator if the text is hovered.
+    const evts = dvui.events();
     const hovered: bool = blk: {
         for (evts) |*evt| {
             if (evt.evt == .mouse and evt.evt.mouse.action == .position) {
                 const pos_physical = evt.evt.mouse.p;
-                const pos = dvui.parentGet().data().contentRectScale().pointFromPhysical(pos_physical);
+                const pos = tl.data().parent.data().contentRectScale().pointFromPhysical(pos_physical);
                 if (tl.data().contentRect().contains(pos)) {
                     break :blk true;
                 }
@@ -1517,9 +1511,20 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
         }
         break :blk false;
     };
+    const color_url: dvui.Options.ColorOrName = .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } };
+    const url = "https://github.com/phatchman/altair_tools";
+    if (try tl.addTextClick(url, .{
+        .color_text = if (!hovered) .text else color_url,
+    })) {
+        dvui.openURL(url) catch {};
+    }
+    const tl_rect = tl.data().contentRect();
+    tl.deinit();
+
+    const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
     try dvui.separator(@src(), .{
         .rect = underline_rect,
-        .color_fill = if (!hovered) .text else .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } },
+        .color_fill = if (!hovered) .text else color_url,
     });
 }
 
