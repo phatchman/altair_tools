@@ -643,9 +643,9 @@ fn makeFileSelector(id: GridType) !void {
         if (id == .image) {
             const path_to_use = path: {
                 if (image_path_selection) |image_path| {
-                    break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch OOM();
+                    break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch defaultPath();
                 } else {
-                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch OOM();
+                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch defaultPath();
                 }
             };
             defer allocator.free(path_to_use);
@@ -665,9 +665,9 @@ fn makeFileSelector(id: GridType) !void {
         } else {
             const path_to_use = path: {
                 if (local_path_selection) |local_path| {
-                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch OOM();
+                    break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch defaultPath();
                 } else {
-                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch OOM();
+                    break :path std.fs.cwd().realpathAlloc(allocator, ".") catch defaultPath();
                 }
             };
             defer allocator.free(path_to_use);
@@ -2502,8 +2502,8 @@ fn copyFilenamesToClipboard() !void {
     }
 }
 
-fn OOM() noreturn {
-    @panic("Out of Memory");
+fn defaultPath() []u8 {
+    return allocator.dupe(u8, ".") catch @panic("OOM");
 }
 
 // Optional: windows os only
