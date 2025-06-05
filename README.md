@@ -3,7 +3,7 @@
 A collection of utilities for the Altair 8800
 
 * Altairdsk allows the reading and writing of CP/M formatted Altair 8800 floppy disk disk images.
-* If you are looking for the GUI version of altair_disk, please check the "experimental" branch of this repository.
+* If you are looking for the GUI version of altairdsk, please check the "experimental" branch of this repository.
 
 If you are looking for a utility similar to cpmtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
 It has been tested under Windows and Linux, but would probably work on MacOS as well.
