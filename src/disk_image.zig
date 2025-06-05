@@ -100,7 +100,12 @@ pub const DiskImage = struct {
         }
         for (0..num_records) |total_rec_nr| {
             const rec_nr: u8 = @intCast(total_rec_nr % 128);
-            const alloc = entry.allocations.items[total_rec_nr / self.image_type.recs_per_alloc];
+            // This protects against trying to copy files from CDOS.
+            const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
+            if (alloc_idx >= entry.allocations.items.len) {
+                return error.InvalidRecordNumber;
+            }
+            const alloc = entry.allocations.items[alloc_idx];
             if (alloc == 0)
                 break;
             try self.readSector(.{ .record = rec_nr, .allocation = alloc }, &sector);
