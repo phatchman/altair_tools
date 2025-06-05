@@ -34,7 +34,7 @@ An example of copying files is shown below:
 1) Sorting, by clicking on the grid column headers
 2) There is a splitter between the grids so you can resize each grid. You can completely hide the local directory if you just want to see the altair files.
 3) You can drag files from the operating system and drop them into the application. SDL does not currently support dragging files out of the application, so it is one-way functionality for now.
-4) The Orient (Orientation) button is broken in this build. I'll fix it before the final release.
+4) Use Ctrl-C to copy the list of filenames from an image to the clipboard. If no files are selected, all filesnames are copied, otherwise the selected filesnames are copied.
 
 ## Keyboard Shortcuts
 ![Keyboard Shortcuts](shortcuts.png)
