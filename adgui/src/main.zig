@@ -1156,6 +1156,7 @@ fn makeStatusBar() !bool {
     const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
     if (try statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
         copy_mode = nextCopyMode(copy_mode);
+        CommandState.finishCommand();
     }
 
     if (try statusBarButton(@src(), "ORIENT", .{}, reversed, 1, .orient, true)) {
@@ -1885,11 +1886,14 @@ pub fn processEvents() void {
     up_pressed = false;
     down_pressed = false;
 
+    if (showing_dialog) {
+        alt_held = false;
+        shift_held = false;
+        return;
+    }
+
     for (evts) |*e| {
         if (e.handled or e.evt != .key) continue;
-        if (showing_dialog) {
-            continue;
-        }
         const ke = e.evt.key;
         switch (ke.code) {
             .space => {
