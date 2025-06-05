@@ -57,6 +57,7 @@ var pgdn_pressed: bool = false;
 var pgup_pressed: bool = false;
 var down_pressed: bool = false;
 var up_pressed: bool = false;
+var showing_dialog = false;
 
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
@@ -325,6 +326,8 @@ fn guiFrame() !bool {
         // Handle keyboard and other global events
         // before any of the widgets can. Because we want to globally capture the
         // alt key being pressed etc.
+        // TODO: This needs to be split up to events that should happen before widgets can handle them and
+        // those that should be handled after all widgets.
         processEvents();
 
         // Paned widget containts the two scrolling file grids.
@@ -1177,11 +1180,12 @@ pub fn makeTransferDialog() !void {
         var last_nr_messages: usize = 0;
         var choice: usize = 0;
     };
-
+    showing_dialog = false;
     if (CommandState.state != .waiting_for_input and CommandState.processed_files.items.len == 0) {
         return;
     } else {
         static.open_flag = true; // is the dialog open?
+        showing_dialog = true;
     }
     var dialog_win = try dvui.floatingWindow(
         @src(),
@@ -1305,6 +1309,7 @@ pub fn makeTransferDialog() !void {
                                 const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
                                 try CommandState.setFileSelectorBuffer(image_name);
                                 entry.textSet(image_name, false);
+
                                 entry.textLayout.selection.moveCursor(image_name.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
@@ -1314,12 +1319,12 @@ pub fn makeTransferDialog() !void {
                             try CommandState.setFileSelectorBuffer(filename);
                             entry.textSet(filename, false);
                             entry.textLayout.selection.moveCursor(filename.len, false);
+
                             dvui.refresh(null, @src(), null);
                         }
                     }
                     if (entry.enter_pressed or entry.text_changed) {
                         try CommandState.setFileSelectorBuffer(entry.getText());
-                        entry.textLayout.selection.moveCursor(entry.getText().len, false);
                     }
                     empty_file_selector = entry.getText().len == 0;
                     entry.deinit();
@@ -1458,6 +1463,11 @@ pub fn makeTransferDialog() !void {
                 }
             }
         }
+    }
+
+    for (evts) |*e| {
+        if (e.handled or e.evt != .key) continue;
+        if (!e.handled) e.handle(@src(), dialog_win.data());
     }
 }
 
@@ -1877,7 +1887,9 @@ pub fn processEvents() void {
 
     for (evts) |*e| {
         if (e.handled or e.evt != .key) continue;
-
+        if (showing_dialog) {
+            continue;
+        }
         const ke = e.evt.key;
         switch (ke.code) {
             .space => {
@@ -2066,8 +2078,6 @@ pub fn processEvents() void {
                 if (ke.action == .down) {
                     pgup_pressed = true;
                     selection_mode = .kb;
-                    //getScrollInfo(focussed_grid).scrollPageUp(.vertical);
-                    // selection_mode = .mouse;
                 }
             },
             else => {},
