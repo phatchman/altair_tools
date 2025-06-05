@@ -56,11 +56,11 @@ The C version can be found in the legacy directory and should still build using 
 One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
 
 1. Install Zig version 0.14.0 from https://ziglang.org/ or from your package manager if available.
-2. zig build --release=safe -Dstrip-exe=true
+2. zig build --release=safe -Doptimize=ReleaseSafe
 
 Optionally build the GUI.
 1. cd adgui
-2. zig buld --release=safe -Dstrip-exe=true
+2. zig buld --release=safe -Doptimize=ReleaseSafe
 
 The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
