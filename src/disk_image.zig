@@ -123,7 +123,7 @@ pub const DiskImage = struct {
                         }
                     }
 
-                    if (check_for_text and total_rec_nr == num_records - 1 and b == 0x1a) {
+                    if (b == 0x1a) {
                         data_len = i;
                         break;
                     }
