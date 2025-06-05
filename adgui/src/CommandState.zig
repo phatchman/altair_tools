@@ -62,6 +62,7 @@ pub const ConfirmAllState = enum { none, yes_to_all, no_to_all };
 // Remember the itr for next time!
 pub var state: State = .processing;
 pub var current_command: CommandList = .none;
+pub var prev_command: CommandList = .none;
 pub var confirm_all: ConfirmAllState = .none;
 var itr: ?Commands.DirIterator = null;
 pub var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
@@ -112,6 +113,7 @@ pub fn finishCommand() void {
     state = .processing;
     confirm_all = .none;
     buttons = .none;
+    prev_command = current_command;
     current_command = .none;
 }
 

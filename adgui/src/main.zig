@@ -187,9 +187,10 @@ pub fn main() !void {
     }
 
     _ = Backend.c.SDL_EventState(Backend.c.SDL_DROPFILE, Backend.c.SDL_ENABLE);
+    var interrupted = false;
     main_loop: while (true) {
         // beginWait coordinates with waitTime below to run frames only when needed
-        const nstime = win.beginWait(backend.hasEvent());
+        const nstime = win.beginWait(interrupted);
 
         // marks the beginning of a frame for dvui, can call dvui functions after this
         try win.begin(nstime);
@@ -244,7 +245,7 @@ pub fn main() !void {
 
         // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros, null);
-        backend.waitEventTimeout(wait_event_micros);
+        interrupted = backend.waitEventTimeout(wait_event_micros);
     }
 }
 
@@ -616,8 +617,7 @@ fn makeFileSelector(id: GridType) !void {
 
     if (is_initialised.* == false) {
         is_initialised.* = true;
-        entry.textLayout.selection.selectAll();
-        entry.textTyped(path.*.?, false);
+        entry.textSet(path.*.?, false);
         entry.textLayout.selection.moveCursor(path.*.?.len, false);
         dvui.refresh(null, @src(), null);
     }
@@ -1143,6 +1143,7 @@ fn makeStatusBar() !bool {
         }
         CommandState.finishCommand();
     }
+
     if (try statusBarButton(@src(), "NEW", .{}, reversed, 0, .new, true)) {
         if (CommandState.shouldProcessCommand()) {
             try newButtonHandler();
@@ -1175,7 +1176,6 @@ pub fn makeTransferDialog() !void {
         var scroll_info: dvui.ScrollInfo = .{};
         var last_nr_messages: usize = 0;
         var choice: usize = 0;
-        var last_command: CommandList = .none;
     };
 
     if (CommandState.state != .waiting_for_input and CommandState.processed_files.items.len == 0) {
@@ -1183,7 +1183,6 @@ pub fn makeTransferDialog() !void {
     } else {
         static.open_flag = true; // is the dialog open?
     }
-
     var dialog_win = try dvui.floatingWindow(
         @src(),
         .{ .modal = true, .open_flag = &static.open_flag },
@@ -1202,12 +1201,9 @@ pub fn makeTransferDialog() !void {
         .putsys => "Copy system image to Altair",
         .info => "Altair disk image information",
         .new => "Create new Altair disk iamge",
-        .none => continue :title static.last_command, // Command will be .none when finished, so show the last state.
+        .none => continue :title if (CommandState.prev_command != .none) CommandState.prev_command else @panic("Invalid Command State"),
         .close, .exit, .mode, .user, .orient => unreachable,
     };
-    if (CommandState.current_command != .none) {
-        static.last_command = CommandState.current_command;
-    }
 
     try dvui.windowHeader(title, "", &static.open_flag);
     var outer_vbox = try dvui.box(@src(), .vertical, .{
@@ -1282,6 +1278,7 @@ pub fn makeTransferDialog() !void {
                 current_file = file;
             }
         }
+
         var empty_file_selector = false;
         if (CommandState.state == .waiting_for_input) {
             var button_box = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
@@ -1307,8 +1304,7 @@ pub fn makeTransferDialog() !void {
                                 const dir_path = std.fs.path.dirname(image_path) orelse ".";
                                 const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
                                 try CommandState.setFileSelectorBuffer(image_name);
-                                entry.textLayout.selection.selectAll();
-                                entry.textTyped(image_name, false);
+                                entry.textSet(image_name, false);
                                 entry.textLayout.selection.moveCursor(image_name.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
@@ -1316,8 +1312,7 @@ pub fn makeTransferDialog() !void {
                             const current_dir = try std.fs.cwd().realpathAlloc(CommandState.arena.allocator(), ".");
                             const filename = try std.fs.path.join(CommandState.arena.allocator(), &[2][]const u8{ current_dir, "cpm.bin" });
                             try CommandState.setFileSelectorBuffer(filename);
-                            entry.textLayout.selection.selectAll();
-                            entry.textTyped(filename, false);
+                            entry.textSet(filename, false);
                             entry.textLayout.selection.moveCursor(filename.len, false);
                             dvui.refresh(null, @src(), null);
                         }
@@ -1336,8 +1331,7 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "Altair Disk Images *.dsk;*.img",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textLayout.selection.selectAll();
-                                entry.textTyped(filename, false);
+                                entry.textSet(filename, false);
                                 entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
@@ -1351,8 +1345,7 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "System Images *.bin;*.cpm",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textLayout.selection.selectAll();
-                                entry.textTyped(filename, false);
+                                entry.textSet(filename, false);
                                 entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
@@ -1368,14 +1361,14 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "System Images *.bin;*.cpm",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textLayout.selection.selectAll();
-                                entry.textTyped(filename, false);
+                                entry.textSet(filename, false);
                                 entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
                         }
                     }
                 }
+
                 if (CommandState.buttons.type_selector) {
                     var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                     defer hbox.deinit();
@@ -1420,6 +1413,7 @@ pub fn makeTransferDialog() !void {
                     }
                 }
             }
+
             {
                 if (CommandState.err_message) |message| {
                     var text = try dvui.textLayout(@src(), .{}, .{ .expand = .horizontal });

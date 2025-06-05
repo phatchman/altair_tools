@@ -25,12 +25,12 @@ pub fn build(b: *std.Build) void {
         .use_llvm = true,
     });
     if (target.result.os.tag == .windows) {
+        exe.win32_manifest = b.path("./src/main.manifest");
         exe.subsystem = .Windows;
     }
 
     const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .linux_display_backend = .X11 });
     exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
-
     exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
     b.installArtifact(exe);
 

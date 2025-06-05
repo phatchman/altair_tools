@@ -37,8 +37,8 @@
     // internet connectivity.
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui/#04ba19689d39a3d4932ea3b1427ecacce9345085",
-            .hash = "dvui-0.2.0-AQFJmROEzQAN-2TU13TIKdvaBTIcBg1mJXp4CKecTZ6L",
+            .url = "git+https://github.com/david-vanderson/dvui/#ecce8ef3b945ca06ba118c917bef788bcdd3ee26",
+            .hash = "dvui-0.2.0-AQFJmRurzQCN_B3Hj0163S1LcJtN_QmDwbeRjE09uxG7",
         },
         .altair_disk = .{
             .path = "..",
