@@ -511,7 +511,7 @@ fn showShortcuts() !void {
         .{ .category = .file, .shortcut = "ALT-M", .button = null, .help_text = "Browse for image file." },
         .{ .category = .file, .shortcut = "ALT-O", .button = null, .help_text = "Browse for local directory." },
         .{ .category = .file, .shortcut = "ALT-L", .button = null, .help_text = "Type local directory name." },
-        .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filesnames to clipboard." },
+        .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filenames to clipboard." },
     };
     var dialog_win = try dvui.floatingWindow(@src(), .{ .modal = true, .open_flag = &show_shortcuts }, .{});
     defer dialog_win.deinit();
