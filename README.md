@@ -30,7 +30,7 @@ altairdsk allows you to:
 | FDD_1.5MB         | FDC+ 1.5MB images |
 | FDD_8IN_8MB       | FDC+ 8MB "floppy" images |
 
-While every care has been taken to ensure this utility will not corrupt you disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
+While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 
 ## Releases
 
@@ -55,7 +55,7 @@ The C version can be found in the legacy directory and should still build using 
 
 One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
 
-1. Install Zig version 0.14.0 from https://ziglang.org/ or from your package manager if available.
+1. Install Zig version 0.14.1 from https://ziglang.org/ or from your package manager if available.
 2. zig build --release=safe -Doptimize=ReleaseSafe
 
 Optionally build the GUI.
