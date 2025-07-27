@@ -355,19 +355,11 @@ fn guiFrame() !bool {
             {
                 // Beneath the file selector is the file grid, with a fixed header
                 // and scroll area for the body. This vbox contains that grid.
-                var grid = dvui.box(@src(), .vertical, .{
-                    .background = true,
-                    .expand = .both,
-                });
+                var grid = dvui.grid(@src(), .numCols(5), .{}, .{ .expand = .both, .background = true });
                 defer grid.deinit();
 
-                var header = dvui.box(@src(), .vertical, .{
-                    .expand = .horizontal,
-                });
-                defer header.deinit();
-
-                try makeGridHeader(.image);
-                try makeGridBody(.image);
+                try makeGridHeader(.image, grid);
+                makeGridBody(.image, grid);
             }
         }
         {
@@ -395,8 +387,8 @@ fn guiFrame() !bool {
                     });
                     defer header.deinit();
 
-                    try makeGridHeader(.local);
-                    try makeGridBody(.local);
+                    //try makeGridHeader(.local);
+                    //try makeGridBody(.local);
                 }
             }
         }
@@ -683,27 +675,22 @@ fn makeFileSelector(id: GridType) !void {
     }
 }
 
-fn makeGridHeader(id: GridType) !void {
+fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
+    _ = id;
+    var sort_dir: dvui.GridWidget.SortDirection = .unsorted;
     {
-        // This hbox contains all of the buttons making up the grid headers.
-        var hbox = dvui.box(@src(), .horizontal, .{
-            .id_extra = id.toUSize(),
-            .expand = .horizontal,
-            .background = false,
-        });
-        defer hbox.deinit();
-        try makeGridHeading("[_]", 0, id);
-        try makeGridHeading("Name", 1, id);
-        try makeGridHeading("Ext", 2, id);
-        try makeGridHeading("A", 3, id);
-        try makeGridHeading("Size", 4, id);
-        try makeGridHeading("Used", 5, id);
-        try makeGridHeading("U", 6, id);
+        _ = dvui.gridHeadingSortable(@src(), grid, 0, "[_]", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 1, "Name", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 2, "Ext", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 3, "A", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 4, "Size", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 5, "Used", &sort_dir, .fixed, .{});
+        _ = dvui.gridHeadingSortable(@src(), grid, 6, "U", &sort_dir, .fixed, .{});
     }
 }
 
 // TODO: Thius needs some cleanup / refactoring. Especially for the guard / return cases.
-fn makeGridBody(id: GridType) !void {
+fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     const directory_list = getDirectoryById(id);
     var should_display = true;
 
@@ -744,23 +731,13 @@ fn makeGridBody(id: GridType) !void {
         return;
     }
 
-    // The scrollable area of the grid.
-    var scroll = dvui.scrollArea(@src(), .{
-        .scroll_info = getScrollInfo(id),
-    }, .{
-        .id_extra = id.toUSize(),
-        .expand = .both,
-        .color_fill = .{ .name = .fill_window },
-    });
-    defer scroll.deinit();
-
     // Filter out any files that shouldn't be displayed.
     const DisplayedFile = struct {
         entry: *DirectoryEntry,
         index: usize, // Real index of the entry in the unfiltered "directory_list"
     };
-    var to_display = try std.ArrayListUnmanaged(DisplayedFile).initCapacity(dvui.currentWindow().arena(), directory_list.len);
-    // No need to deinit, using arena.
+    var to_display = std.ArrayListUnmanaged(DisplayedFile).initCapacity(dvui.currentWindow().arena(), directory_list.len) catch return;
+    // No need to deinit, as using arena.
 
     for (directory_list, 0..) |*entry, i| {
         if (entry.deleted) continue;
@@ -829,51 +806,51 @@ fn makeGridBody(id: GridType) !void {
             setKbSelectionIndex(focussed_grid, to_display.items[rel_index].index);
         }
     } else {
-        var rel_mouse_index: usize = 0;
+        //var rel_mouse_index: usize = 0;
 
-        const evts = dvui.events();
-        for (evts) |*e| {
-            if (!dvui.eventMatchSimple(e, scroll.data())) {
-                continue;
-            }
-
-            switch (e.evt) {
-                .mouse => |me| {
-                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
-                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
-                    const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
-                    rel_mouse_index = @intFromFloat(rel_mouse_index_f);
-                    rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
-                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
-
-                    if (me.action == .press and me.button.pointer()) {
-                        e.handled = true;
-                        var dirs = getDirectoryById(id);
-                        if (!shift_held) {
-                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
-                            setLastMouseSelectedIndex(id, abs_mouse_index);
-                        } else {
-                            const prev_index = getLastMouseSelectedIndex(id);
-                            const prev_checked = dirs[prev_index].checked;
-                            const first_idx = @min(prev_index, abs_mouse_index);
-                            const last_idx = @max(prev_index, abs_mouse_index);
-                            for (first_idx..last_idx + 1) |idx| {
-                                dirs[idx].checked = prev_checked;
-                            }
-                        }
-                    } else if (selection_mode == .mouse and me.action == .position) {
-                        dvui.focusWidget(null, scroll.data().id, e.num);
-                        setMouseSelectionIndex(id, abs_mouse_index);
-                        setKbSelectionIndex(id, abs_mouse_index);
-                        focussed_grid = id;
-                        selection_mode = .mouse;
-                    } else if (me.action == .motion) {
-                        selection_mode = .mouse;
-                    }
-                },
-                else => {},
-            }
-        }
+        //        const evts = dvui.events();
+        //        for (evts) |*e| {
+        //            if (!dvui.eventMatchSimple(e, scroll.data())) {
+        //                continue;
+        //            }
+        //
+        //            switch (e.evt) {
+        //                .mouse => |me| {
+        //                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
+        //                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
+        //                    const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
+        //                    rel_mouse_index = @intFromFloat(rel_mouse_index_f);
+        //                    rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
+        //                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
+        //
+        //                    if (me.action == .press and me.button.pointer()) {
+        //                        e.handled = true;
+        //                        var dirs = getDirectoryById(id);
+        //                        if (!shift_held) {
+        //                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
+        //                            setLastMouseSelectedIndex(id, abs_mouse_index);
+        //                        } else {
+        //                            const prev_index = getLastMouseSelectedIndex(id);
+        //                            const prev_checked = dirs[prev_index].checked;
+        //                            const first_idx = @min(prev_index, abs_mouse_index);
+        //                            const last_idx = @max(prev_index, abs_mouse_index);
+        //                            for (first_idx..last_idx + 1) |idx| {
+        //                                dirs[idx].checked = prev_checked;
+        //                            }
+        //                        }
+        //                    } else if (selection_mode == .mouse and me.action == .position) {
+        //                        dvui.focusWidget(null, scroll.data().id, e.num);
+        //                        setMouseSelectionIndex(id, abs_mouse_index);
+        //                        setKbSelectionIndex(id, abs_mouse_index);
+        //                        focussed_grid = id;
+        //                        selection_mode = .mouse;
+        //                    } else if (me.action == .motion) {
+        //                        selection_mode = .mouse;
+        //                    }
+        //                },
+        //                else => {},
+        //            }
+        //        }
     }
 
     for (to_display.items, 0..) |entry, rel_idx| {
@@ -887,29 +864,36 @@ fn makeGridBody(id: GridType) !void {
         } else {
             background = null;
         }
-        var row = dvui.box(@src(), .horizontal, .{
-            .id_extra = rel_idx,
-            .expand = .horizontal,
-            .background = true,
-            .color_fill = background,
-        });
+        var cell_num: dvui.GridWidget.Cell = .colRow(0, rel_idx);
+        const cell_style: CellStyle = .{
+            .cell_opts = .{ .background = true, .color_fill = background },
+            .opts = .{ .margin = Rect.all(4), .padding = Rect.all(0) },
+        };
+        const cell_style_right = cell_style.optionsOverride(.{ .gravity_x = 1.0 });
 
-        defer row.deinit();
+        const invalid_number_display = "####";
         var buf = std.mem.zeroes([256]u8);
         const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
-        try makeGridDataRow(@src(), id, 0, rel_idx, checked_value, false);
-        try makeGridDataRow(@src(), id, 1, rel_idx, entry.entry.filename(), false);
-        try makeGridDataRow(@src(), id, 2, rel_idx, entry.entry.extension(), false);
-        try makeGridDataRow(@src(), id, 3, rel_idx, entry.entry.attribs(), false);
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style);
+        cell_num.col_num += 1;
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.filename(), &cell_style);
+        cell_num.col_num += 1;
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.extension(), &cell_style);
+        cell_num.col_num += 1;
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.attribs(), &cell_style);
+        cell_num.col_num += 1;
 
-        var text = try formatNumber(&buf, "{}B", entry.entry.fileSizeInB(), "####,###B");
-        try makeGridDataRow(@src(), id, 4, rel_idx, text, true);
+        var text = formatNumber(&buf, "{}B", entry.entry.fileSizeInB(), "####,###B") catch invalid_number_display;
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        cell_num.col_num += 1;
 
-        text = try formatNumber(&buf, "{}K", entry.entry.fileUsedInKB(), "#,###K");
-        try makeGridDataRow(@src(), id, 5, rel_idx, text, true);
+        text = formatNumber(&buf, "{}K", entry.entry.fileUsedInKB(), "#,###K") catch invalid_number_display;
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        cell_num.col_num += 1;
 
-        text = try std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()});
-        try makeGridDataRow(@src(), id, 6, rel_idx, text, true);
+        text = std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()}) catch "##";
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        cell_num.col_num += 1;
 
         const nr_displayed = getScrollInfo(id).viewport.h / row_height - 2;
         if (id == focussed_grid and selection_mode == .kb and getKbSelectionIndex(id) == abs_index) {
@@ -926,7 +910,7 @@ fn makeGridBody(id: GridType) !void {
     }
 }
 
-fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
+fn makeGridHeading(label: []const u8, num: u32, id: GridType) void {
     var grp = dvui.box(@src(), .horizontal, .{
         .id_extra = num,
         .expand = .horizontal,
@@ -967,38 +951,16 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
 /// are kept the same size as the header columns.
-fn makeGridDataRow(src: std.builtin.SourceLocation, _: GridType, col_num: u32, item_num: usize, value: []const u8, justify: bool) !void {
+fn makeGridDataRow(src: std.builtin.SourceLocation, grid: *GridWidget, cell_num: Cell, item_num: usize, value: []const u8, cell_style: *const CellStyle) void {
     // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
     // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
     // whole area. This way we can handle an "unlimited" number of directory entries.
     if (item_num > 1024) {
         return;
     }
-    // This hbox contains the row.
-    var row = dvui.box(src, .horizontal, .{
-        .id_extra = item_num,
-        .expand = .horizontal,
-        .background = false,
-        .margin = Rect.all(0),
-        .padding = Rect.all(0),
-        .min_size_content = .{ .w = header_rects[col_num].w, .h = row_height },
-        .max_size_content = .{ .w = header_rects[col_num].w, .h = row_height },
-    });
-    defer row.deinit();
-
-    if (col_num == 0 and false) {
-        _ = dvui.button(src, "[_]", .{}, .{
-            .id_extra = item_num,
-            .background = false,
-        });
-    } else {
-        dvui.labelNoFmt(@src(), value, .{ .align_y = 0.5, .align_x = if (justify) 1.0 else 0.0 }, .{
-            .id_extra = item_num,
-            .margin = Rect{ .x = 1, .w = 1 },
-            .padding = Rect{ .x = 8, .w = 8 },
-            .background = false,
-        });
-    }
+    var cell = grid.bodyCell(src, cell_num, cell_style.cell_opts);
+    defer cell.deinit();
+    dvui.labelNoFmt(@src(), value, .{ .align_y = 0.5, .align_x = cell_style.opts.gravityGet().x }, cell_style.opts);
 }
 
 fn makeCapacityUsageGraph() !void {
@@ -2534,4 +2496,6 @@ const DiskImage = ad.DiskImage;
 const Commands = @import("commands.zig");
 const DirectoryEntry = Commands.DirectoryEntry;
 const CopyMode = Commands.CopyMode;
+const CellStyle = dvui.GridWidget.CellStyle;
+const Cell = dvui.GridWidget.Cell;
 const Backend = dvui.backend;
