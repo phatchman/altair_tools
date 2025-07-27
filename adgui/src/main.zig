@@ -238,15 +238,15 @@ pub fn main() !void {
         const end_micros = try win.end(.{});
 
         // cursor management
-        backend.setCursor(win.cursorRequested());
-        backend.textInputRect(win.textInputRequested());
+        backend.setCursor(win.cursorRequested()) catch {};
+        backend.textInputRect(win.textInputRequested()) catch {};
 
         // render frame to OS
-        backend.renderPresent();
+        backend.renderPresent() catch {};
 
         // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros, null);
-        interrupted = backend.waitEventTimeout(wait_event_micros);
+        interrupted = backend.waitEventTimeout(wait_event_micros) catch false;
     }
 }
 
@@ -305,7 +305,7 @@ fn guiFrame() !bool {
     if (!try makeMenu()) return false;
 
     // This vbox contains all of the UI below the menu
-    var vbox = try dvui.box(@src(), .vertical, .{
+    var vbox = dvui.box(@src(), .vertical, .{
         .expand = .both,
         .border = Rect.all(0),
         .background = true,
@@ -316,7 +316,7 @@ fn guiFrame() !bool {
         // status bar at the bottom of the screen. This vbox contails all of the UI excluding
         // the status bar.
         const location = Rect{ .x = 0, .y = 0, .h = vbox.wd.rect.h - status_bar_height, .w = vbox.wd.rect.w };
-        var inner_vbox = try dvui.boxEqual(@src(), .vertical, .{
+        var inner_vbox = dvui.boxEqual(@src(), .vertical, .{
             .expand = .horizontal,
             .background = true,
             .rect = location,
@@ -332,7 +332,7 @@ fn guiFrame() !bool {
 
         // Paned widget containts the two scrolling file grids.
         // User can select horizontal or vertial orientation.
-        var paned = try dvui.paned(@src(), .{
+        var paned = dvui.paned(@src(), .{
             .direction = pane_orientation,
             .collapsed_size = 0,
         }, .{
@@ -343,7 +343,7 @@ fn guiFrame() !bool {
         {
 
             // Top (or left) half of the pane contaims the files from the Altair disk image.
-            var top_half = try dvui.box(@src(), .vertical, .{
+            var top_half = dvui.box(@src(), .vertical, .{
                 .expand = .both,
                 .color_border = .{ .name = .text },
                 .border = dvui.Rect.all(2),
@@ -355,13 +355,13 @@ fn guiFrame() !bool {
             {
                 // Beneath the file selector is the file grid, with a fixed header
                 // and scroll area for the body. This vbox contains that grid.
-                var grid = try dvui.box(@src(), .vertical, .{
+                var grid = dvui.box(@src(), .vertical, .{
                     .background = true,
                     .expand = .both,
                 });
                 defer grid.deinit();
 
-                var header = try dvui.box(@src(), .vertical, .{
+                var header = dvui.box(@src(), .vertical, .{
                     .expand = .horizontal,
                 });
                 defer header.deinit();
@@ -372,7 +372,7 @@ fn guiFrame() !bool {
         }
         {
             // The bottom or right half is for displaying local system files.
-            var bottom_half = try dvui.box(@src(), .vertical, .{
+            var bottom_half = dvui.box(@src(), .vertical, .{
                 .expand = .both,
                 .border = dvui.Rect.all(2),
                 .corner_radius = dvui.Rect.all(5),
@@ -382,14 +382,14 @@ fn guiFrame() !bool {
             {
                 try makeFileSelector(.local);
                 {
-                    var grid = try dvui.box(@src(), .vertical, .{
+                    var grid = dvui.box(@src(), .vertical, .{
                         .background = true,
                         .expand = .horizontal,
                     });
                     defer grid.deinit();
 
                     // This box is just for padding purposes
-                    var header = try dvui.box(@src(), .vertical, .{
+                    var header = dvui.box(@src(), .vertical, .{
                         .expand = .horizontal,
                         .background = true,
                     });
@@ -407,14 +407,14 @@ fn guiFrame() !bool {
 
         // Place the status bar at the bottom of the screen.
         const location = Rect{ .y = vbox.wd.rect.h - status_bar_height, .x = 0, .h = status_bar_height, .w = vbox.wd.rect.w };
-        var vbox_inner = try dvui.box(@src(), .vertical, .{
+        var vbox_inner = dvui.box(@src(), .vertical, .{
             .expand = .vertical,
             .rect = location,
             .margin = Rect{},
         });
         defer vbox_inner.deinit();
         {
-            var stats_box = try dvui.box(@src(), .horizontal, .{
+            var stats_box = dvui.box(@src(), .horizontal, .{
                 .expand = .horizontal,
                 .gravity_y = 0.0,
                 .border = Rect.all(1),
@@ -428,7 +428,7 @@ fn guiFrame() !bool {
         }
 
         // And below the usage graphs is the status bar menu.
-        var menu_box = try dvui.boxEqual(@src(), .horizontal, .{
+        var menu_box = dvui.boxEqual(@src(), .horizontal, .{
             .expand = .horizontal,
             .background = true,
             .margin = Rect{ .y = 3 },
@@ -445,31 +445,31 @@ fn guiFrame() !bool {
 // Create the application menus.
 // Returns: false if quitting, true if running.
 fn makeMenu() !bool {
-    var m = try dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
+    var m = dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
     defer m.deinit();
 
-    if (try dvui.menuItemLabel(@src(), "File", .{ .submenu = true }, .{ .expand = .none })) |r| {
-        var fw = try dvui.floatingMenu(@src(), .{ .from = r }, .{});
+    if (dvui.menuItemLabel(@src(), "File", .{ .submenu = true }, .{ .expand = .none })) |r| {
+        var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
         defer fw.deinit();
 
-        if (try dvui.menuItemLabel(@src(), "Exit", .{}, .{}) != null) {
+        if (dvui.menuItemLabel(@src(), "Exit", .{}, .{}) != null) {
             m.close();
             return false;
         }
     }
 
-    if (try dvui.menuItemLabel(@src(), "Help", .{ .submenu = true }, .{ .expand = .none })) |r| {
-        var fw = try dvui.floatingMenu(@src(), .{ .from = r }, .{});
+    if (dvui.menuItemLabel(@src(), "Help", .{ .submenu = true }, .{ .expand = .none })) |r| {
+        var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
         defer fw.deinit();
 
-        if (try dvui.menuItemLabel(@src(), "Shortcuts", .{}, .{}) != null) {
+        if (dvui.menuItemLabel(@src(), "Shortcuts", .{}, .{}) != null) {
             show_shortcuts = true;
             m.close();
         }
 
-        if (try dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
+        if (dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
             m.close();
-            try dvui.dialog(@src(), .{}, .{
+            dvui.dialog(@src(), .{}, .{
                 .displayFn = aboutDialogDisplay,
                 .message = "",
             });
@@ -516,47 +516,47 @@ fn showShortcuts() !void {
         .{ .category = .file, .shortcut = "ALT-L", .button = null, .help_text = "Type local directory name." },
         .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filenames to clipboard." },
     };
-    var dialog_win = try dvui.floatingWindow(@src(), .{ .modal = true, .open_flag = &show_shortcuts }, .{});
+    var dialog_win = dvui.floatingWindow(@src(), .{ .modal = true, .open_flag = &show_shortcuts }, .{});
     defer dialog_win.deinit();
-    try dvui.windowHeader("Keyboard Shortcuts", "", &show_shortcuts);
+    _ = dvui.windowHeader("Keyboard Shortcuts", "", &show_shortcuts);
 
-    var vbox = try dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+    var vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
     var idx: usize = 0;
     defer vbox.deinit();
     {
-        var inner_vbox = try dvui.box(@src(), .vertical, .{ .expand = .vertical, .gravity_x = 0.5 });
+        var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .vertical, .gravity_x = 0.5 });
         defer inner_vbox.deinit();
-        try dvui.labelNoFmt(@src(), "Menu Shortcuts", .{ .font_style = .title_3, .gravity_x = 0.5 });
+        dvui.labelNoFmt(@src(), "Menu Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
         while (shortcuts[idx].category == .command) : (idx += 1) {
             const s = &shortcuts[idx];
-            try dvui.label(@src(), "{s:<10}{s:<10}{s}", .{ s.shortcut, s.button orelse "", s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
+            dvui.label(@src(), "{s:<10}{s:<10}{s}", .{ s.shortcut, s.button orelse "", s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
         }
     }
     {
-        var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .both });
+        var hbox = dvui.box(@src(), .horizontal, .{ .expand = .both });
         defer hbox.deinit();
         {
-            var inner_vbox = try dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+            var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
             defer inner_vbox.deinit();
 
-            try dvui.labelNoFmt(@src(), "Navigation Shortcuts", .{ .font_style = .title_3, .gravity_x = 0.5 });
+            dvui.labelNoFmt(@src(), "Navigation Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
             while (idx != shortcuts.len and shortcuts[idx].category == .selection) : (idx += 1) {
                 const s = &shortcuts[idx];
-                try dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
+                dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
             }
         }
         {
-            var inner_vbox = try dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+            var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
             defer inner_vbox.deinit();
-            try dvui.labelNoFmt(@src(), "File Shortcuts", .{ .font_style = .title_3, .gravity_x = 0.5 });
+            dvui.labelNoFmt(@src(), "File Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
             while (idx != shortcuts.len and shortcuts[idx].category == .file) : (idx += 1) {
                 const s = &shortcuts[idx];
-                try dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
+                dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = Rect.all(2) });
             }
         }
     }
-    try dvui.separator(@src(), .{ .expand = .horizontal });
-    if (try buttonFocussed(@src(), "Close", .{}, .{ .gravity_x = 0.5 })) {
+    _ = dvui.separator(@src(), .{ .expand = .horizontal });
+    if (buttonFocussed(@src(), "Close", .{}, .{ .gravity_x = 0.5 })) {
         show_shortcuts = false;
     }
 }
@@ -573,7 +573,7 @@ fn makeFileSelector(id: GridType) !void {
         .local => &local_path_initialized,
     };
 
-    var file_selector_box = try dvui.box(
+    var file_selector_box = dvui.box(
         @src(),
         .horizontal,
         .{
@@ -584,18 +584,18 @@ fn makeFileSelector(id: GridType) !void {
     );
     defer file_selector_box.deinit();
     switch (id) {
-        .image => try dvui.labelNoFmt(@src(), "Image:", .{ .id_extra = id.toUSize(), .gravity_y = 0.5 }),
-        .local => try dvui.labelNoFmt(@src(), "Local:", .{ .id_extra = id.toUSize(), .gravity_y = 0.5 }),
+        .image => dvui.labelNoFmt(@src(), "Image:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize() }),
+        .local => dvui.labelNoFmt(@src(), "Local:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize() }),
     }
     if (alt_held) {
-        try dvui.separator(@src(), .{
+        _ = dvui.separator(@src(), .{
             .id_extra = id.toUSize(),
             .rect = .{ .x = 5, .y = 30, .w = 10, .h = 2 },
             .color_fill = .{ .name = .text },
         });
     }
 
-    var entry = try dvui.textEntry(@src(), .{}, .{
+    var entry = dvui.textEntry(@src(), .{}, .{
         .id_extra = id.toUSize(),
         .expand = .horizontal,
     });
@@ -639,7 +639,7 @@ fn makeFileSelector(id: GridType) !void {
     }
     entry.deinit();
 
-    if (try buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = id.toUSize() }, id)) {
+    if (buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = id.toUSize() }, id)) {
         if (id == .image) {
             const path_to_use = path: {
                 if (image_path_selection) |image_path| {
@@ -686,7 +686,7 @@ fn makeFileSelector(id: GridType) !void {
 fn makeGridHeader(id: GridType) !void {
     {
         // This hbox contains all of the buttons making up the grid headers.
-        var hbox = try dvui.box(@src(), .horizontal, .{
+        var hbox = dvui.box(@src(), .horizontal, .{
             .id_extra = id.toUSize(),
             .expand = .horizontal,
             .background = false,
@@ -712,11 +712,11 @@ fn makeGridBody(id: GridType) !void {
         .local => if (local_directories == null) false else true,
     };
     if (!loaded) {
-        var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = id.toUSize() });
+        var hbox = dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = id.toUSize() });
         defer hbox.deinit();
         switch (id) {
-            .image => try dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
-            .local => try dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
+            .image => dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
+            .local => dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
         }
         return;
     }
@@ -745,7 +745,7 @@ fn makeGridBody(id: GridType) !void {
     }
 
     // The scrollable area of the grid.
-    var scroll = try dvui.scrollArea(@src(), .{
+    var scroll = dvui.scrollArea(@src(), .{
         .scroll_info = getScrollInfo(id),
     }, .{
         .id_extra = id.toUSize(),
@@ -887,7 +887,7 @@ fn makeGridBody(id: GridType) !void {
         } else {
             background = null;
         }
-        var row = try dvui.box(@src(), .horizontal, .{
+        var row = dvui.box(@src(), .horizontal, .{
             .id_extra = rel_idx,
             .expand = .horizontal,
             .background = true,
@@ -927,12 +927,12 @@ fn makeGridBody(id: GridType) !void {
 }
 
 fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
-    var grp = try dvui.box(@src(), .horizontal, .{
+    var grp = dvui.box(@src(), .horizontal, .{
         .id_extra = num,
         .expand = .horizontal,
     });
     defer grp.deinit();
-    if (try dvui.button(
+    if (dvui.button(
         @src(),
         label,
         .{ .draw_focus = false },
@@ -960,7 +960,7 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
             sortDirectories(id, label, true);
         }
     }
-    try dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
+    _ = dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
     header_rects[num] = grp.data().rect;
 }
 
@@ -975,7 +975,7 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, _: GridType, col_num: u32, i
         return;
     }
     // This hbox contains the row.
-    var row = try dvui.box(src, .horizontal, .{
+    var row = dvui.box(src, .horizontal, .{
         .id_extra = item_num,
         .expand = .horizontal,
         .background = false,
@@ -987,26 +987,24 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, _: GridType, col_num: u32, i
     defer row.deinit();
 
     if (col_num == 0 and false) {
-        _ = try dvui.button(src, "[_]", .{}, .{
+        _ = dvui.button(src, "[_]", .{}, .{
             .id_extra = item_num,
             .background = false,
         });
     } else {
-        try dvui.labelNoFmt(@src(), value, .{
+        dvui.labelNoFmt(@src(), value, .{ .align_y = 0.5, .align_x = if (justify) 1.0 else 0.0 }, .{
             .id_extra = item_num,
             .margin = Rect{ .x = 1, .w = 1 },
             .padding = Rect{ .x = 8, .w = 8 },
-            .gravity_x = if (justify) 1.0 else 0.0,
-            .gravity_y = 0.5,
             .background = false,
         });
     }
 }
 
 fn makeCapacityUsageGraph() !void {
-    try dvui.label(@src(), "Capacity:", .{}, .{ .gravity_y = 0.5 });
+    dvui.label(@src(), "Capacity:", .{}, .{ .gravity_y = 0.5 });
     {
-        var files_box = try dvui.box(@src(), .horizontal, .{
+        var files_box = dvui.box(@src(), .horizontal, .{
             .border = Rect.all(1),
             .background = true,
             .min_size_content = .{ .h = 20, .w = 250 },
@@ -1020,7 +1018,7 @@ fn makeCapacityUsageGraph() !void {
             const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
             const width = percentage * 250;
             {
-                var used_box = try dvui.box(@src(), .horizontal, .{
+                var used_box = dvui.box(@src(), .horizontal, .{
                     .color_fill = .{ .name = .fill_hover },
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
@@ -1030,7 +1028,7 @@ fn makeCapacityUsageGraph() !void {
             var msg_buf: [256]u8 = undefined;
             const message = try std.fmt.bufPrint(&msg_buf, "{:>6}K used {:>6}K remain ", .{ used_space, free_space });
 
-            try dvui.labelNoFmt(@src(), message, .{
+            dvui.labelNoFmt(@src(), message, .{}, .{
                 // TODO: Can we remove this hardcoding of rect?
                 .rect = .{ .x = 0, .y = 0, .h = 20, .w = 250 },
                 .padding = Rect.all(2),
@@ -1040,9 +1038,9 @@ fn makeCapacityUsageGraph() !void {
 }
 
 fn makeDirectoriesUsageGraph() !void {
-    try dvui.label(@src(), "Directories:", .{}, .{ .gravity_y = 0.5 });
+    dvui.label(@src(), "Directories:", .{}, .{ .gravity_y = 0.5 });
     {
-        var files_box = try dvui.box(@src(), .horizontal, .{
+        var files_box = dvui.box(@src(), .horizontal, .{
             .border = Rect.all(1),
             .background = true,
             .min_size_content = .{ .h = 20, .w = 250 },
@@ -1056,7 +1054,7 @@ fn makeDirectoriesUsageGraph() !void {
             const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
             const width = percentage * 250;
             {
-                var used_box = try dvui.box(@src(), .horizontal, .{
+                var used_box = dvui.box(@src(), .horizontal, .{
                     .color_fill = .{ .name = .fill_hover },
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
@@ -1066,7 +1064,7 @@ fn makeDirectoriesUsageGraph() !void {
             var msg_buf: [256]u8 = undefined;
             const message = try std.fmt.bufPrint(&msg_buf, "{:>7} used {:>7} remain ", .{ used_directories, free_directories });
 
-            try dvui.labelNoFmt(@src(), message, .{
+            dvui.labelNoFmt(@src(), message, .{}, .{
                 // TODO: Can we remove this hardcoding of rect?
                 .rect = .{ .x = 0, .y = 0, .h = 20, .w = 250 },
                 .padding = Rect.all(2),
@@ -1087,40 +1085,40 @@ fn makeStatusBar() !bool {
         .background = true,
     };
 
-    if (try statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_directories != null)) {
+    if (statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_directories != null)) {
         if (CommandState.shouldProcessCommand()) {
             try getButtonHandler();
         }
     }
-    if (try statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_directories != null)) {
+    if (statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_directories != null)) {
         if (CommandState.shouldProcessCommand()) {
             try putButtonHandler();
         }
     }
-    if (try statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_directories != null) or
+    if (statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_directories != null) or
         CommandState.current_command == .erase)
     {
         if (CommandState.shouldProcessCommand()) {
             try eraseButtonHandler();
         }
     }
-    if (try statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_directories != null)) {
+    if (statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_directories != null)) {
         if (CommandState.shouldProcessCommand()) {
             try getSysButtonHandler();
         }
     }
-    if (try statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_directories != null)) {
+    if (statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_directories != null)) {
         if (CommandState.shouldProcessCommand()) {
             try putSysButtonHandler();
         }
     }
-    if (try statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
+    if (statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
         commands.closeImage();
         image_directories = null;
         CommandState.finishCommand();
     }
 
-    if (try statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_directories != null)) {
+    if (statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_directories != null)) {
         if (CommandState.shouldProcessCommand()) {
             try infoButtonHandler();
         }
@@ -1132,7 +1130,7 @@ fn makeStatusBar() !bool {
     else
         try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
 
-    if (try statusBarButton(@src(), label, .{}, reversed, 0, .user, true)) {
+    if (statusBarButton(@src(), label, .{}, reversed, 0, .user, true)) {
         current_user += 1;
         current_user %= 17;
         if (current_user != 16) {
@@ -1147,19 +1145,19 @@ fn makeStatusBar() !bool {
         CommandState.finishCommand();
     }
 
-    if (try statusBarButton(@src(), "NEW", .{}, reversed, 0, .new, true)) {
+    if (statusBarButton(@src(), "NEW", .{}, reversed, 0, .new, true)) {
         if (CommandState.shouldProcessCommand()) {
             try newButtonHandler();
         }
     }
     label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
     const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
-    if (try statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
+    if (statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
         copy_mode = nextCopyMode(copy_mode);
         CommandState.finishCommand();
     }
 
-    if (try statusBarButton(@src(), "ORIENT", .{}, reversed, 1, .orient, true)) {
+    if (statusBarButton(@src(), "ORIENT", .{}, reversed, 1, .orient, true)) {
         if (pane_orientation == .horizontal) {
             pane_orientation = .vertical;
         } else {
@@ -1168,7 +1166,7 @@ fn makeStatusBar() !bool {
         }
         CommandState.finishCommand();
     }
-    if (try statusBarButton(@src(), "EXIT", .{}, reversed, 1, .exit, true)) {
+    if (statusBarButton(@src(), "EXIT", .{}, reversed, 1, .exit, true)) {
         return false;
     }
     return true;
@@ -1188,7 +1186,7 @@ pub fn makeTransferDialog() !void {
         static.open_flag = true; // is the dialog open?
         showing_dialog = true;
     }
-    var dialog_win = try dvui.floatingWindow(
+    var dialog_win = dvui.floatingWindow(
         @src(),
         .{ .modal = true, .open_flag = &static.open_flag },
         .{
@@ -1210,8 +1208,8 @@ pub fn makeTransferDialog() !void {
         .close, .exit, .mode, .user, .orient => unreachable,
     };
 
-    try dvui.windowHeader(title, "", &static.open_flag);
-    var outer_vbox = try dvui.box(@src(), .vertical, .{
+    _ = dvui.windowHeader(title, "", &static.open_flag);
+    var outer_vbox = dvui.box(@src(), .vertical, .{
         .expand = .both,
         .min_size_content = .{ .w = 500, .h = 500 },
         .max_size_content = .{ .w = 500, .h = 500 },
@@ -1249,7 +1247,7 @@ pub fn makeTransferDialog() !void {
 
     defer outer_vbox.deinit();
     {
-        var scroll = try dvui.scrollArea(
+        var scroll = dvui.scrollArea(
             @src(),
             .{ .horizontal_bar = .hide, .scroll_info = &static.scroll_info },
             .{
@@ -1262,18 +1260,18 @@ pub fn makeTransferDialog() !void {
         var current_file: *FileStatus = undefined; // We already know there are files by the time wer get here.
         {
             // Display the files.
-            var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal, .background = false });
+            var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal, .background = false });
             defer vbox.deinit();
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
-                var text = try dvui.textLayout(@src(), .{}, .{
+                var text = dvui.textLayout(@src(), .{}, .{
                     .id_extra = i,
                     .background = false,
                     .padding = Rect.all(0),
                     .margin = Rect.all(4),
                 });
                 defer text.deinit();
-                try text.addText(try std.fmt.allocPrint(
+                text.addText(try std.fmt.allocPrint(
                     dvui.currentWindow().arena(),
                     "{s:<12} {s} {s}",
                     .{ basename, if (basename.len > 0) "-->" else "", file.message },
@@ -1286,22 +1284,22 @@ pub fn makeTransferDialog() !void {
 
         var empty_file_selector = false;
         if (CommandState.state == .waiting_for_input) {
-            var button_box = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+            var button_box = dvui.box(@src(), .vertical, .{ .expand = .horizontal });
             defer button_box.deinit();
 
             if (CommandState.buttons.image_selector or CommandState.buttons.save_file_selector or CommandState.buttons.open_file_selector) {
-                var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+                var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal });
                 defer vbox.deinit();
                 {
-                    var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                     defer hbox.deinit();
                     if (CommandState.buttons.image_selector) {
-                        try dvui.labelNoFmt(@src(), "Image name:", .{ .gravity_y = 0.5 });
+                        dvui.labelNoFmt(@src(), "Image name:", .{ .align_y = 0.5 }, .{});
                     } else {
-                        try dvui.labelNoFmt(@src(), "File name:", .{ .gravity_y = 0.5 });
+                        dvui.labelNoFmt(@src(), "File name:", .{ .align_y = 0.5 }, .{});
                     }
 
-                    var entry = try dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
+                    var entry = dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
                     errdefer entry.deinit();
                     if (CommandState.file_selector_buffer == null) {
                         if (CommandState.buttons.image_selector) {
@@ -1329,7 +1327,7 @@ pub fn makeTransferDialog() !void {
                     }
                     empty_file_selector = entry.getText().len == 0;
                     entry.deinit();
-                    if (try dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{}, .{})) {
+                    if (dvui.buttonIcon(@src(), "toggle", folder_icon, .{}, .{}, .{})) {
                         if (CommandState.buttons.image_selector) {
                             if (try dvui.dialogNativeFileSave(dvui.currentWindow().arena(), .{
                                 .title = "Save image as",
@@ -1376,12 +1374,12 @@ pub fn makeTransferDialog() !void {
                 }
 
                 if (CommandState.buttons.type_selector) {
-                    var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                     defer hbox.deinit();
 
-                    try dvui.labelNoFmt(@src(), "Format:    ", .{ .gravity_y = 0.5 });
+                    dvui.labelNoFmt(@src(), "Format:    ", .{ .align_y = 0.5 }, .{});
 
-                    if (try dvui.dropdown(@src(), &ad.all_disk_type_names, &static.choice, .{})) {
+                    if (dvui.dropdown(@src(), &ad.all_disk_type_names, &static.choice, .{})) {
                         CommandState.image_type = &ad.all_disk_types.values[static.choice];
                     }
                 }
@@ -1390,30 +1388,30 @@ pub fn makeTransferDialog() !void {
             if (empty_file_selector) {
                 CommandState.err_message = "Please enter a new image filename";
             } else {
-                var hbox = try dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
                 defer hbox.deinit();
                 if (CommandState.prompt) |prompt| {
-                    try dvui.labelNoFmt(@src(), prompt, .{ .gravity_y = 0.5 });
+                    dvui.labelNoFmt(@src(), prompt, .{ .align_y = 0.5 }, .{});
                 }
 
                 if (CommandState.buttons.yes) {
-                    if (try dvui.button(@src(), "[y] Yes", .{}, .{}) or key_state == .yes) {
+                    if (dvui.button(@src(), "[y] Yes", .{}, .{}) or key_state == .yes) {
                         CommandState.state = .confirm;
                     }
                 }
                 if (CommandState.buttons.no) {
-                    if (try dvui.button(@src(), "[n] No", .{}, .{}) or key_state == .no) {
+                    if (dvui.button(@src(), "[n] No", .{}, .{}) or key_state == .no) {
                         CommandState.state = .cancel;
                     }
                 }
                 if (CommandState.buttons.yes_all) {
-                    if (try dvui.button(@src(), "[Y] Yes to All", .{}, .{}) or key_state == .yes_all) {
+                    if (dvui.button(@src(), "[Y] Yes to All", .{}, .{}) or key_state == .yes_all) {
                         CommandState.confirm_all = .yes_to_all;
                         CommandState.state = .confirm;
                     }
                 }
                 if (CommandState.buttons.no_all) {
-                    if (try dvui.button(@src(), "[N] No to All", .{}, .{}) or key_state == .no_all) {
+                    if (dvui.button(@src(), "[N] No to All", .{}, .{}) or key_state == .no_all) {
                         CommandState.confirm_all = .no_to_all;
                         CommandState.state = .cancel;
                     }
@@ -1422,9 +1420,9 @@ pub fn makeTransferDialog() !void {
 
             {
                 if (CommandState.err_message) |message| {
-                    var text = try dvui.textLayout(@src(), .{}, .{ .expand = .horizontal });
+                    var text = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal });
                     defer text.deinit();
-                    try text.addText(message, .{});
+                    text.addText(message, .{});
                     if (empty_file_selector) {
                         CommandState.err_message = null;
                     }
@@ -1440,17 +1438,17 @@ pub fn makeTransferDialog() !void {
     }
 
     {
-        var vbox = try dvui.box(@src(), .vertical, .{ .expand = .horizontal, .gravity_y = 1.0 });
+        var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal, .gravity_y = 1.0 });
         defer vbox.deinit();
-        try dvui.separator(@src(), .{ .expand = .horizontal });
+        _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
-        var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5 });
+        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5 });
         defer hbox.deinit();
 
         if (CommandState.current_command != .none) {
-            _ = try dvui.button(@src(), "Working...", .{}, .{});
+            _ = dvui.button(@src(), "Working...", .{}, .{});
         } else {
-            if (key_state == .enter or try buttonFocussed(@src(), "Close", .{}, .{})) {
+            if (key_state == .enter or buttonFocussed(@src(), "Close", .{}, .{})) {
                 CommandState.finishCommand();
                 CommandState.freeResources();
                 dialog_win.close(); // can close the dialog this way
@@ -1473,7 +1471,7 @@ pub fn makeTransferDialog() !void {
 }
 
 pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
-    var win = try dvui.floatingWindow(
+    var win = dvui.floatingWindow(
         @src(),
         .{ .modal = true, .window_avoid = .nudge },
         .{ .id_extra = id.asUsize() },
@@ -1481,7 +1479,7 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
     defer win.deinit();
 
     var header_openflag = true;
-    try dvui.windowHeader("About ADGUI", "", &header_openflag);
+    _ = dvui.windowHeader("About ADGUI", "", &header_openflag);
     if (!header_openflag) {
         dvui.dialogRemove(id);
         return;
@@ -1489,18 +1487,18 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
 
     {
         // Add the buttons at the bottom first, so that they are guaranteed to be shown
-        var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
         defer hbox.deinit();
 
-        if (try buttonFocussed(@src(), "OK", .{}, .{ .tab_index = 1 })) {
+        if (buttonFocussed(@src(), "OK", .{}, .{ .tab_index = 1 })) {
             dvui.dialogRemove(id);
             return;
         }
     }
-    try dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
+    dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
     // Now add the scroll area which will get the remaining space
-    var tl = try dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
-    try tl.addText("\n", .{});
+    var tl = dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
+    tl.addText("\n", .{});
 
     // Highlight the underline separator if the text is hovered.
     const evts = dvui.events();
@@ -1518,16 +1516,16 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
     };
     const color_url: dvui.Options.ColorOrName = .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } };
     const url = "https://github.com/phatchman/altair_tools";
-    if (try tl.addTextClick(url, .{
+    if (tl.addTextClick(url, .{
         .color_text = if (!hovered) .text else color_url,
     })) {
-        dvui.openURL(url) catch {};
+        _ = dvui.openURL(url);
     }
     const tl_rect = tl.data().contentRect();
     tl.deinit();
 
     const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
-    try dvui.separator(@src(), .{
+    _ = dvui.separator(@src(), .{
         .rect = underline_rect,
         .color_fill = if (!hovered) .text else color_url,
     });
@@ -1604,17 +1602,24 @@ fn formatNumber(buf: []u8, comptime fmt: []const u8, value: usize, overflow: []c
     }
 }
 
-pub fn labelNoFmtRect(src: std.builtin.SourceLocation, str: []const u8, opts: Options) !dvui.Rect {
-    var lw = dvui.LabelWidget.initNoFmt(src, str, opts);
-    try lw.install();
-    lw.processEvents();
-    try lw.draw();
+pub fn labelNoFmtRect(src: std.builtin.SourceLocation, str: []const u8, opts: Options) dvui.Rect {
+    var lw = dvui.LabelWidget.initNoFmt(src, str, .{}, opts);
+    lw.install();
+    lw.draw();
     const rect = lw.wd.rect;
     lw.deinit();
     return rect;
 }
 
-pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _init_opts: dvui.ButtonWidget.InitOptions, opts: Options, underline_pos: usize, cmd: CommandList, enabled: bool) !bool {
+pub fn statusBarButton(
+    src: std.builtin.SourceLocation,
+    label_str: []const u8,
+    _init_opts: dvui.ButtonWidget.InitOptions,
+    opts: Options,
+    underline_pos: usize,
+    cmd: CommandList,
+    enabled: bool,
+) bool {
     _ = _init_opts;
     const init_opts: dvui.ButtonWidget.InitOptions = .{ .draw_focus = false };
     // If running another command, just show the label.
@@ -1631,7 +1636,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     bw.click = selected;
 
     // make ourselves the new parent
-    try bw.install();
+    bw.install();
 
     // process events (mouse and keyboard) unless another operation is in progress.
     if (CommandState.current_command == .none and !enter_pressed and enabled) {
@@ -1639,7 +1644,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     }
 
     // draw background/border
-    try bw.drawBackground();
+    bw.drawBackground();
 
     // use pressed text color if desired
     const click = bw.clicked();
@@ -1652,7 +1657,7 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     // - gets a rectangle from bw
     // - draws itself
     // - reports its min size to bw
-    const label_rect = try labelNoFmtRect(src, label_str, options);
+    const label_rect = labelNoFmtRect(src, label_str, options);
     const fill_color = color: {
         if (!enabled or bw.hover) {
             break :color opts.color(.fill_press);
@@ -1662,13 +1667,13 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
             break :color opts.color(.fill);
         }
     };
-    try dvui.separator(@src(), .{
+    _ = dvui.separator(@src(), .{
         .rect = .{ .x = label_rect.x + @as(f32, @floatFromInt(underline_pos)) * 8, .y = 15, .w = 10, .h = 2 },
         .color_fill = .{ .color = fill_color },
         .background = true,
     });
     // draw focus
-    try bw.drawFocus();
+    bw.drawFocus();
 
     // restore previous parent
     // send our min size to parent
@@ -1680,25 +1685,25 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     return click;
 }
 
-pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: []const u8, init_opts: dvui.ButtonWidget.InitOptions, opts: Options, id: GridType) !bool {
+pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: []const u8, init_opts: dvui.ButtonWidget.InitOptions, opts: Options, id: GridType) bool {
     const defaults = Options{ .padding = Rect.all(4) };
     var bw = dvui.ButtonWidget.init(src, init_opts, defaults.override(opts));
-    try bw.install();
+    bw.install();
     bw.processEvents();
-    try bw.drawBackground();
+    bw.drawBackground();
 
     // When someone passes min_size_content to buttonIcon, they want the icon
     // to be that size, so we pass it through.
 
-    try dvui.icon(@src(), name, tvg_bytes, .{}, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
+    dvui.icon(@src(), name, tvg_bytes, .{}, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
 
     if (alt_held) {
-        const label_rect = try labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
+        const label_rect = labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
             .color_fill = .{ .name = .text },
             .color_text = .{ .name = .fill_control },
             .background = true,
         });
-        try dvui.separator(src, .{
+        _ = dvui.separator(src, .{
             .id_extra = 1, // Not sure why required.
             .rect = .{ .x = label_rect.x + 5, .y = 20, .w = 10, .h = 2 },
             .color_fill = .{ .name = .fill_control },
@@ -1722,21 +1727,21 @@ pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: 
             }
         }
     } else {
-        try dvui.labelNoFmt(@src(), " ", .{ .font_style = .body, .gravity_x = 0.5, .gravity_y = 0.5 });
+        dvui.labelNoFmt(@src(), " ", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .font_style = .body });
     }
 
     const click = bw.clicked();
-    try bw.drawFocus();
+    bw.drawFocus();
     bw.deinit();
     return click;
 }
 
-pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: dvui.ButtonWidget.InitOptions, opts: Options) !bool {
+pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: dvui.ButtonWidget.InitOptions, opts: Options) bool {
     // initialize widget and get rectangle from parent
     var bw = dvui.ButtonWidget.init(src, init_opts, opts);
 
     // make ourselves the new parent
-    try bw.install();
+    bw.install();
 
     dvui.focusWidget(bw.wd.id, null, null);
 
@@ -1744,7 +1749,7 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     bw.processEvents();
 
     // draw background/border
-    try bw.drawBackground();
+    bw.drawBackground();
 
     // use pressed text color if desired
     const click = bw.clicked();
@@ -1757,10 +1762,10 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     // - gets a rectangle from bw
     // - draws itself
     // - reports its min size to bw
-    try dvui.labelNoFmt(@src(), label_str, options);
+    dvui.labelNoFmt(@src(), label_str, .{}, options);
 
     // draw focus
-    try bw.drawFocus();
+    bw.drawFocus();
 
     // restore previous parent
     // send our min size to parent
@@ -1803,7 +1808,7 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
 
     const maxSize = dvui.dataGet(null, id, "_max_size", dvui.Options.MaxSize);
 
-    var win = try dvui.floatingWindow(
+    var win = dvui.floatingWindow(
         @src(),
         .{ .modal = modal, .center_on = center_on, .window_avoid = .nudge },
         .{ .id_extra = id.asUsize(), .max_size_content = maxSize },
@@ -1811,7 +1816,7 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
     defer win.deinit();
 
     var header_openflag = true;
-    try dvui.windowHeader(title, "", &header_openflag);
+    _ = dvui.windowHeader(title, "", &header_openflag);
     if (!header_openflag) {
         dvui.dialogRemove(id);
         if (callafter) |ca| {
@@ -1822,10 +1827,10 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
 
     {
         // Add the buttons at the bottom first, so that they are guaranteed to be shown
-        var hbox = try dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
         defer hbox.deinit();
 
-        if (try buttonFocussed(@src(), ok_label, .{}, .{ .tab_index = 1 })) {
+        if (buttonFocussed(@src(), ok_label, .{}, .{ .tab_index = 1 })) {
             dvui.dialogRemove(id);
             if (callafter) |ca| {
                 try ca(id, .ok);
@@ -1834,7 +1839,7 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
         }
 
         if (cancel_label) |cl| {
-            if (try dvui.button(@src(), cl, .{}, .{ .tab_index = 2 })) {
+            if (dvui.button(@src(), cl, .{}, .{ .tab_index = 2 })) {
                 dvui.dialogRemove(id);
                 if (callafter) |ca| {
                     try ca(id, .cancel);
@@ -1872,9 +1877,9 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
     }
 
     // Now add the scroll area which will get the remaining space
-    var scroll = try dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .name = .fill_window } });
-    var tl = try dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
-    try tl.addText(message, .{});
+    var scroll = dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .name = .fill_window } });
+    var tl = dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
+    tl.addText(message, .{});
     tl.deinit();
     scroll.deinit();
 }
@@ -2350,9 +2355,7 @@ fn errorDialog(title: []const u8, message: []const u8, opt_err: ?anyerror) void 
         .message = display_message,
         .modal = true,
         .displayFn = dialogDisplay,
-    }) catch |err| {
-        std.debug.panic("Can't open error dialog: {}", .{err});
-    };
+    });
 }
 
 /// finds the next available name in NEWnnn.DSK
@@ -2427,7 +2430,7 @@ pub fn openImageFile(filename: []const u8) void {
                 .modal = true,
                 .callafterFn = dialogFollowup.handleResponse,
                 .displayFn = dialogDisplay,
-            }) catch {};
+            });
             return;
         } else if (image_type == .HDD_5MB) {
             image_type = dialogFollowup.img_type.?;
@@ -2493,7 +2496,7 @@ fn copyFilenamesToClipboard() !void {
         const result = Backend.c.SDL_SetClipboardText(clip_text.ptr);
 
         if (buf_len > 1 and result == 0) {
-            try dvui.dialog(@src(), .{}, .{
+            dvui.dialog(@src(), .{}, .{
                 .title = "Copy Filenames",
                 .message = if (any_selected) "Selected Altair filenames\ncopied to the clipboard." else "All Altair filenames\ncopied to the clipboard.",
                 .default = .ok,
