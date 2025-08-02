@@ -154,14 +154,14 @@ pub const DiskImage = struct {
         const cpm_user = user orelse 0;
 
         const basename = std.fs.path.basename(to_filename);
-        if (self.directory.findByFilename(basename, user)) |existing_entry| {
+        const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
+        if (self.directory.findByFilename(cpm_filename, user)) |existing_entry| {
             if (force) {
                 try self.erase(existing_entry);
             } else {
                 return std.fs.Dir.MakeError.PathAlreadyExists;
             }
         }
-        const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
 
         var sector: DiskSector = .init();
         var alloc_count: u16 = 0;
