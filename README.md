@@ -1,15 +1,11 @@
-# This branch is considered beta-quality software. 
-# There are no known critical issues, however more testing is required before I can recommend regular use.
-
 # Altair Tools 
 
 A collection of utilities for the Altair 8800
 
 * Altairdsk allows the reading and writing of CP/M formatted Altair 8800 floppy disk disk images.
 * *NEW:* adgui provides a graphical user interface for most altairdsk operations.
-
 If you are looking for a utility similar to cpmtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
-It has been tested under Windows and Linux, but would probably work on MacOS as well.
+It has been tested under Windows and Linux, and known to work under MacOS as well.
 
 altairdsk allows you to:
   1. Perform a directory listing
@@ -18,6 +14,8 @@ altairdsk allows you to:
   4. Format an existing disk or create a newly formatted disk.
   5. Create bootable CP/M disk images
   6. Recoverr disk images with directory entry corruption.
+
+_Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
 ## Supported Disk Image Types
 
