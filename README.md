@@ -13,7 +13,7 @@ altairdsk allows you to:
   3. Erase files
   4. Format an existing disk or create a newly formatted disk.
   5. Create bootable CP/M disk images
-  6. Recoverr disk images with directory entry corruption.
+  6. Recover disk images with directory entry corruption.
 
 _Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
