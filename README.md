@@ -66,7 +66,7 @@ There is no install target provided. So copy the executable to your desired inst
 ## GUI
 
 The Altair Disk GUI (adgui) provides access to most of the functionality of the altaridsk tool. The application can be operated entirely by keyboard
-if desired. Keyboard shortcuts and general instructions for using the GUI can be found [here](docs/ADGUI.md).
+if desired.  [Keyboard shortcuts and general instructions for using the GUI](docs/ADGUI.md).
 
 ### Altair Disk GUI
 ![Main Screen](docs/adgui.png)
