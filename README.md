@@ -1,9 +1,12 @@
+# This branch is considered beta-quality software. 
+# There are no known critical issues, however more testing is required before I can recommend regular use.
+
 # Altair Tools 
 
 A collection of utilities for the Altair 8800
 
 * Altairdsk allows the reading and writing of CP/M formatted Altair 8800 floppy disk disk images.
-* If you are looking for the GUI version of altairdsk, please check the "experimental" branch of this repository.
+* *NEW:* adgui provides a graphical user interface for most altairdsk operations.
 
 If you are looking for a utility similar to cpmtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
 It has been tested under Windows and Linux, but would probably work on MacOS as well.
@@ -14,6 +17,7 @@ altairdsk allows you to:
   3. Erase files
   4. Format an existing disk or create a newly formatted disk.
   5. Create bootable CP/M disk images
+  6. Recoverr disk images with directory entry corruption.
 
 ## Supported Disk Image Types
 
@@ -26,61 +30,101 @@ altairdsk allows you to:
 | FDD_1.5MB         | FDC+ 1.5MB images |
 | FDD_8IN_8MB       | FDC+ 8MB "floppy" images |
 
-While every care has been taken to ensure this utility will not corrupt you disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
+While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 
-## Build Instructions
+## Releases
 
-For windows you can get the pre-compiled binary from the windows directory<br>
-For linux and other unix-ish platforms:
-```
-% cmake .
-% make
-```
+Binaries are provided on the Release page for the following architectures:
+
+| OS      | Arch    | cmdline | GUI  |
+|:--------|:--------|:-------:|:----:|
+| Windows | x86_64  | ✅ | ✅ |
+| Linux   | x86_64  | ✅ | ✅ |
+| MacOS   | x86_64  | ✅ | ❌ |
+| Windows | aarch64 | ✅ | ❌ |
+| Linux   | aarch64 | ✅ | ❌ |
+| MacOS   | aarch64 | ✅ | ❌ |
+| Linux   | arm     | ✅ | ❌ |
+
+If you want to use the gui on one of the other platforms, you will need to build from source. 
+
+## Building from Source
+
+This version of altair tools is built using Zig. Zig aims to be a more modern version of C, without all the complications of kitchen-sink languages, like C++ and Rust.
+The C version can be found in the legacy directory and should still build using cmake, but will no longer be supported or developed by me.
+
+One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
+
+1. Install Zig version 0.14.1 from https://ziglang.org/ or from your package manager if available.
+2. zig build --release=safe -Doptimize=ReleaseSafe
+
+Optionally build the GUI.
+1. cd adgui
+2. zig buld --release=safe -Doptimize=ReleaseSafe
+
+The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
+
+## GUI
+
+The Altair Disk GUI (adgui) provides access to most of the functionality of the altaridsk tool. The application can be operated entirely by keyboard
+if desired. Keyboard shortcuts and general instructions for using the GUI can be found [here](docs/ADGUI.md).
+
+### Altair Disk GUI
+![Main Screen](docs/adgui.png)
+
 
 ## Command Line
 ```
-altairdsk: -[d|r|F]v  [-T <type>] [-u <user>] <disk_image>
-altairdsk: -[g|p|e][t|b]v [-T <type>] [-u <user>] <disk_image> <src_filename> [dst_filename]
-altairdsk: -[G|P|E][t|b]v [-T <type>] [-u <user>] <disk_image> <filename ...>
-altairdsk: -[x|s]v        [-T <type>] <disk_image> <system_image>
-altairdsk: -h
-        -d      Directory listing (default)
-        -r      Raw directory listing
-        -F      Format existing or create new disk image. Defaults to FDD_8IN
-        -g      Get - Copy file from Altair disk image to host
-        -G      Get Multiple - Copy multiple files from Altair disk image to host
-                               wildcards * and ? are supported e.g '*.COM'
-        -P      Put Multiple - Copy multiple files from host to Altair disk image
-        -e      Erase a file
-        -E      Erase multiple files - wildcards supported
-        -t      Put/Get a file in text mode
-        -b      Put/Get a file in binary mode
-        -u      User - Restrict operation to CP/M user
-        -x      Extract CP/M system (from a bootable disk image) to a file
-        -s      Write saved CP/M system image to disk image (make disk bootable)
-        -T      Disk image type. Auto-detected if possible. Supported types are:
-                        * FDD_8IN - MITS 8" Floppy Disk (Default)
-                        * HDD_5MB - MITS 5MB Hard Disk
-                        * HDD_5MB_1024 - MITS 5MB, with 1024 directories (!!!)
-                        * FDD_TAR - Tarbell Floppy Disk
-                        * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
-                        * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk
-        -v      Verbose - Prints image type and sector read/write information
-        -h      Help
+USAGE:
+  altairdsk [OPTIONS] <disk_image> [<filename>...]
 
-!!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format,
-otherwise your disk image will auto-detect as the standard 5MB type and could be corrupted.
+Altair Disk Image Utility
+
+ARGUMENTS:
+  disk_image   Filename of Altair disk image
+  filename     List of filesnames. Wildcards * and ? are supported e.g. '*.COM'
+
+OPTIONS:
+  -d, --dir                          Directory listing (default)
+  -r, --raw                          Raw directory listing
+  -i, --info                         Prints disk format information
+  -F, --format                       Format existing or create new disk image. Defaults to FDD_8IN
+  -g, --get                          Copy file from Altair disk image to host
+  -o, --out <outdir>                 Out directory for get and get multiple
+  -G, --get-multiple                 Copy multiple files from Altair disk image to host. Wildcards * and ? are supported e.g '*.COM'
+  -p, --put                          Copy file from host to Altair disk image
+  -P, --put-multiple                 Copy multiple files from host to Altair disk image
+  -e, --erase                        Erase a file
+  -E, --erase-multiple               Erase multiple files - wildcards supported
+  -t, --text                         Put or get a file in text mode
+  -b, --bin                          Put or get a file in binary mode
+  -u, --user <user>                  Restrict operation to this CP/M user
+  -x, --extract-cpm <system_image>   Extract CP/M system (from a bootable disk image) to a file
+  -s, --write-cpm <system_image>     Write saved CP/M system image to disk image (make disk bootable)
+  -R, --recover <new_disk_image>     Try to recover a corrupt image
+  -T, --type <type>                  Disk image type. Auto-detected if possible. Supported types are:
+                                           * FDD_8IN - MITS 8" Floppy Disk  (Default)
+                                           * HDD_5MB - MITS 5MB Hard Disk
+                                           * HDD_5MB_1024 - MITS 5MB, with 1024 directories
+                                           * FDD_TAR - Tarbell Floppy Disk
+                                           * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
+                                           * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk
+                                     !!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.
+  -v, --verbose                      Verbose - Prints information about operations being performed
+  -V, --very-verbose                 Very verbose - Additionally prints sector read/write information
+  -h, --help                         Show this help output.
+      --color <VALUE>                When to use colors (*auto*, never, always).
 ```
 
 ## Some things to note:
-* The 5MB HDD images that come with the Altair-Duino have an invalid directory table. If you do a directory listing on these images, you will see some strange directory entries. See the examples below for details on how to create new, valid disk images with this utility.
-* On linux you have the option of putting the disk image before the options. For example: altairdsk cpm.dsk -g ASM.COM. I find this syntax more convenient.
+* The 5MB HDD images that come with the Altair-Duino have an invalid directory table. altairdsk will print an error and refuse to open these images. Use the -R / --recover option to create a clean version of these disk images.
+* There is no expansion of wildcards in windows. But there is a work-around for powershell. See the get multiple example for more details.
 * altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
 This is only needed when copying a file from the altair disk.<br>
 * If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
 * Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension, and get all files. On CP/M you would use '\*.\*'. You can still use '\*.TXT' and 'ABC.\*' and that will work as expected.
-* As mentioned in the usage, if using the HDD_5MB_1024 format with 1024 directory entries, make sure you always use the -T option.
+* As mentioned in the usage, if using the HDD_5MB_1024 format with 1024 directory entries, make sure you always use the -T option. You *will* corrupt the image if you don't specify the format.
 
 ## Examples
 
@@ -88,7 +132,7 @@ This is only needed when copying a file from the altair disk.<br>
 `./altairdsk -d cpm.dsk`<br>
 `./altairdsk cpm.dsk`<br>
 Restrict the directory listing to a particular user with the -u option<br>
-`./altairdsk -u0 cpm.dsk`
+`./altairdsk -u 0 cpm.dsk`
 
 ```
 Name     Ext  Length Used U At
@@ -125,8 +169,8 @@ At is the file attributes. R - Read only, W - Read/write. S - System
 To format for a specific type<br>
 `./altairdsk -F -T HDD_5MB new.dsk`
 
-Or on linux/unix you can put options in any order<br>
-`./altairdsk new.dsk -FT HDD_5MB`<br>
+You can generally put options in any order<br>
+`./altairdsk new.dsk -F -T HDD_5MB`<br>
 `./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Copy a file from the disk (get)
@@ -151,7 +195,10 @@ If the same file exists for multiple users, the user number is appended to the f
 `./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com`
 
 Copy multiple files to user 1<br>
-`./altairdsk -Pu1 cpm.dsk *.com`
+`./altairdsk -P -u1 cpm.dsk *.com`
+
+Wildcard expansion is not performed on windows. However you can use the following powershell trick instead:<br>
+`altairdsk cpm.dsk -P $(dir *)`
 
 ### Erase a file
 `./altairdsk -e cpm.dsk asm.com`
@@ -172,24 +219,32 @@ To remove all files from user 2<br>
 `./altairdsk -s cpm.dsk boot.img`
 
 ### Fixup Altair Duino 5MB HDSK images
-The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. You can fix this by creating a new image with a copy of the files. Example below.<br>
-Note that you will receive the error message below multiple times during this operation. The error is caused by the invalid directory entries and are expected.
-_Invalid allocation number found in directory table.
-Possible incorrect image type. Use -v to check image type detected or selected._<br>
+The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. 
 
-Create a new directory named _files_ below where you keep the HDSK03.DSK<br>
-`mkdir files`<br>
-Create a new disk image<br>
-`altairdsk -FT HDD_5MB HDSK03_NEW.DSK`<br>
-Copy the CP/M system tracks<br>
-`altairdsk -x HDSK03.DSK hdsk_cpm.bin`<br>
-`altairdsk -s HDSK03_NEW.DSK hdsk_cpm.bin`<br>
-Copy the files from user 0. The directory entries for user 0 are all valid.<br>
-`cd files`<br>
-`altairdsk ../HDSK03.DSK -Gu0 '*'`<br>
-`altairdsk ../HDSK03_NEW.DSK -P *`<br>
-Note that quotes around '*' are used for the Get, but not on the Put.<br>
-You should now have a new bootable image _HDSK03_NEW.DSK_ with all of the files copied.
+This version of altairdsk includes a -R / --recovery option to create a new version of the image. Please be careful with the order you specify the options or you can accidentally overwrite the original image. The new image name must be specified immediately after the -R option. *Always keep a backup before doing any write operations*<br>
+`altairdsk -R HDSDK04_NEW.DSK HDSK04.DSK`
+
+You will see a list of errors while running this command. These are expected.
+
+### Image Information
+Displays track and sector information.
+`./altairdsk -i cpm.dsk`
+```
+Type:         HDD_5MB
+Sector Len:   128
+Data Len:     128
+Num Tracks:   406
+Res Tracks:   1
+Secs / Track: 96
+Block Size:   4096
+Track Len:    12288
+Recs / Ext:   256
+Recs / Alloc: 32
+Dirs / Sect   4
+Dirs / Alloc: 16
+Dir Allocs:   2
+Num Dirs:     256
+```
 
 ### Raw directory listing
 Dumps the CP/M extent information<br>
