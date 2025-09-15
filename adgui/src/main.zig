@@ -97,8 +97,32 @@ var mouse_dir_index: [num_grids]usize = @splat(0);
 var last_mouse_index: [num_grids]usize = @splat(0);
 
 var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
-var sort_column: [num_grids][]const u8 = @splat("Name");
-var sort_asc: [num_grids]bool = @splat(true);
+
+//var sort_column: [num_grids]usize = @splat(GridColumns.Name.toUsize());
+//var sort_asc: [num_grids]bool = @splat(true);
+
+var sort_order: [num_grids][num_columns]dvui.GridWidget.SortDirection = .{ @splat(.unsorted), @splat(.unsorted) };
+
+const GridColumns = enum {
+    @"[_]",
+    Name,
+    Ext,
+    A,
+    Size,
+    Used,
+    U,
+
+    pub const default_sort_col = .Name;
+
+    pub fn toUsize(self: GridColumns) usize {
+        return @intCast(@intFromEnum(self));
+    }
+
+    pub fn fromUsize(val: usize) GridColumns {
+        return @enumFromInt(val);
+    }
+};
+
 var text_box_focused: [num_grids]bool = @splat(false);
 
 // Don't handle keyboard events if a textbvox is focussed.
@@ -111,7 +135,9 @@ fn textBoxFocused() bool {
 
 // Layout information for each column.
 const num_columns = 7;
-const min_sizes = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
+var initial_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
+var image_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
+var local_col_widths = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 25.0;
@@ -146,6 +172,7 @@ const os = @import("builtin").os;
 pub fn main() !void {
     if (os.tag == .windows and os.isAtLeast(.windows, .win10) orelse false) { // optional
         // on windows graphical apps have no console, so output goes to nowhere - attach it manually. related: https://github.com/ziglang/zig/issues/4196
+        std.debug.print("attaching\n", .{});
         _ = winapi.AttachConsole(0xFFFFFFFF);
     }
     std.log.info("SDL version: {}", .{Backend.getSDLVersion()});
@@ -245,7 +272,7 @@ pub fn main() !void {
         backend.renderPresent() catch {};
 
         // waitTime and beginWait combine to achieve variable framerates
-        const wait_event_micros = win.waitTime(end_micros, null);
+        const wait_event_micros = win.waitTime(end_micros);
         interrupted = backend.waitEventTimeout(wait_event_micros) catch false;
     }
 }
@@ -261,51 +288,62 @@ fn handleEvent(event: *const Backend.c.SDL_Event) void {
 }
 var theme_set = false;
 var global_theme: dvui.Theme = undefined;
+var reversed_theme: dvui.Theme = undefined;
+
+const terminal_theme: dvui.Theme.QuickTheme = @import("theme.zon");
 
 fn setTheme() !void {
     if (theme_set)
         return;
 
     // This is a slightly modified Jungle theme
-    const terminal_theme =
-        \\{
-        \\  "name": "Terminal",
-        \\  "font_size": 16,
-        \\  "font_name_body": "VeraMono",
-        \\  "font_name_heading": "VeraMono",
-        \\  "font_name_caption": "VeraMono",
-        \\  "font_name_title": "VeraMono",
-        \\  "color_focus": "#638465",
-        \\  "color_text": "#82a29f",
-        \\  "color_text_press": "#97af81",
-        \\  "color_fill_text": "#2c3332", 
-        \\  "color_fill_container": "#2b3a3a",
-        \\  "color_fill_control": "#2c3334",
-        \\  "color_fill_hover": "#334e57",
-        \\  "color_fill_press": "#3b6357",
-        \\  "color_border": "#60827d"
-        \\}
-    ;
-    const parsed = try dvui.Theme.QuickTheme.fromString(allocator, terminal_theme);
-    defer parsed.deinit();
+    //const terminal_theme =
+    //    \\{
+    //    \\  "name": "Terminal",
+    //    \\  "font_size": 16,
+    //    \\  "font_name_body": "VeraMono",
+    //    \\  "font_name_heading": "VeraMono",
+    //    \\  "font_name_caption": "VeraMono",
+    //    \\  "font_name_title": "VeraMono",
+    //    \\  "color_focus": "#638465",
+    //    \\  "color_text": "#82a29f",
+    //    \\  "color_text_press": "#97af81",
+    //    \\  "color_fill_text": "#2c3332",
+    //    \\  "color_fill_container": "#2b3a3a",
+    //    \\  "color_fill_control": "#2c3334",
+    //    \\  "color_fill_hover": "#334e57",
+    //    \\  "color_fill_press": "#3b6357",
+    //    \\  "color_border": "#60827d"
+    //    \\}
+    //;
+    //const parsed = try dvui.Theme.QuickTheme.fromString(allocator, terminal_theme);
+    //defer parsed.deinit();
+    //
+    //const quick_theme = parsed.value;
+    global_theme = try terminal_theme.toTheme(allocator);
+    global_theme.font_title_4 = .{ .size = 14, .id = global_theme.font_title_4.id };
 
-    const quick_theme = parsed.value;
-    global_theme = try quick_theme.toTheme(allocator);
-    global_theme.font_title_4 = .{ .size = 14, .name = global_theme.font_title_4.name };
+    dvui.themeSet(global_theme);
+    reversed_theme = global_theme;
+    reversed_theme.text = global_theme.control.fill.?;
+    reversed_theme.control.fill = global_theme.text;
+    reversed_theme.fill_press = global_theme.control.fill_hover.?;
+    reversed_theme.fill_hover = global_theme.control.fill_press.?;
 
-    dvui.themeSet(&global_theme);
     theme_set = true;
 }
+
+var resize_image_grid: bool = false;
 
 fn guiFrame() !bool {
     var running = true;
     if (!theme_set)
         try setTheme();
-
+    if (!dvui.currentWindow().debug.open) dvui.toggleDebugWindow();
     if (!try makeMenu()) return false;
 
     // This vbox contains all of the UI below the menu
-    var vbox = dvui.box(@src(), .vertical, .{
+    var vbox = dvui.box(@src(), .{}, .{
         .expand = .both,
         .border = Rect.all(0),
         .background = true,
@@ -315,8 +353,9 @@ fn guiFrame() !bool {
         // We need to contrain how far the scroll area expands so that there is room for the
         // status bar at the bottom of the screen. This vbox contails all of the UI excluding
         // the status bar.
+        // TODO: fix this.
         const location = Rect{ .x = 0, .y = 0, .h = vbox.wd.rect.h - status_bar_height, .w = vbox.wd.rect.w };
-        var inner_vbox = dvui.boxEqual(@src(), .vertical, .{
+        var inner_vbox = dvui.box(@src(), .{}, .{
             .expand = .horizontal,
             .background = true,
             .rect = location,
@@ -340,57 +379,72 @@ fn guiFrame() !bool {
             .background = true,
         });
         defer paned.deinit();
-        {
-
+        if (paned.showFirst()) {
             // Top (or left) half of the pane contaims the files from the Altair disk image.
-            var top_half = dvui.box(@src(), .vertical, .{
+            var top_half = dvui.box(@src(), .{}, .{
                 .expand = .both,
-                .color_border = .{ .name = .text },
+                .color_border = dvui.themeGet().text,
                 .border = dvui.Rect.all(2),
                 .corner_radius = dvui.Rect.all(5),
                 .background = true, // remove
             });
             defer top_half.deinit();
             try makeFileSelector(.image);
-            {
-                // Beneath the file selector is the file grid, with a fixed header
-                // and scroll area for the body. This vbox contains that grid.
-                var grid = dvui.grid(@src(), .numCols(5), .{}, .{ .expand = .both, .background = true });
-                defer grid.deinit();
+            // Beneath the file selector is the file grid, with a fixed header
+            // and scroll area for the body. This vbox contains that grid.
+            // resize_image_grid = false; // TODO:
+            //std.debug.print("RECT = {}\n", .{top_half.data().contentRect().w});
+            //std.debug.print("PRE = {d}\n", .{image_col_widths});
+            //for (image_col_widths[1..], initial_col_widths[1..]) |*w, initial_w| {
+            //    if (w.* < -initial_w) {
+            //        std.debug.print("w = {d}, init = {d}\n", .{ w.*, initial_w });
+            //        w.* = -w.*;
+            //    } else {
+            //        w.* = -initial_w;
+            //    }
+            //}
+            //std.debug.print("POST = {d}\n", .{image_col_widths});
 
-                try makeGridHeader(.image, grid);
-                makeGridBody(.image, grid);
+            for (image_col_widths[1..]) |*w| {
+                if (w.* > 0) w.* = -w.*;
             }
+            //            if (dvui.firstFrame(top_half.data().id)) {
+            dvui.columnLayoutProportional(&image_col_widths, &image_col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
+            //          }
+            std.debug.print("POST PROP = {d}\n", .{image_col_widths});
+
+            var grid = dvui.grid(@src(), .colWidths(&image_col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
+            defer grid.deinit();
+            resize_image_grid = false;
+
+            try makeGridHeader(.image, grid);
+            makeGridBody(.image, grid);
         }
-        {
+        if (paned.showSecond()) {
             // The bottom or right half is for displaying local system files.
-            var bottom_half = dvui.box(@src(), .vertical, .{
+            var bottom_half = dvui.box(@src(), .{}, .{
                 .expand = .both,
                 .border = dvui.Rect.all(2),
                 .corner_radius = dvui.Rect.all(5),
                 .background = true, // remove
             });
             defer bottom_half.deinit();
-            {
-                try makeFileSelector(.local);
-                {
-                    var grid = dvui.box(@src(), .vertical, .{
-                        .background = true,
-                        .expand = .horizontal,
-                    });
-                    defer grid.deinit();
+            try makeFileSelector(.local);
+            var grid = dvui.box(@src(), .{}, .{
+                .background = true,
+                .expand = .horizontal,
+            });
+            defer grid.deinit();
 
-                    // This box is just for padding purposes
-                    var header = dvui.box(@src(), .vertical, .{
-                        .expand = .horizontal,
-                        .background = true,
-                    });
-                    defer header.deinit();
+            // This box is just for padding purposes
+            var header = dvui.box(@src(), .{}, .{
+                .expand = .horizontal,
+                .background = true,
+            });
+            defer header.deinit();
 
-                    //try makeGridHeader(.local);
-                    //try makeGridBody(.local);
-                }
-            }
+            //try makeGridHeader(.local);
+            //try makeGridBody(.local);
         }
     }
     {
@@ -399,14 +453,14 @@ fn guiFrame() !bool {
 
         // Place the status bar at the bottom of the screen.
         const location = Rect{ .y = vbox.wd.rect.h - status_bar_height, .x = 0, .h = status_bar_height, .w = vbox.wd.rect.w };
-        var vbox_inner = dvui.box(@src(), .vertical, .{
+        var vbox_inner = dvui.box(@src(), .{}, .{
             .expand = .vertical,
             .rect = location,
             .margin = Rect{},
         });
         defer vbox_inner.deinit();
         {
-            var stats_box = dvui.box(@src(), .horizontal, .{
+            var stats_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
                 .expand = .horizontal,
                 .gravity_y = 0.0,
                 .border = Rect.all(1),
@@ -420,7 +474,7 @@ fn guiFrame() !bool {
         }
 
         // And below the usage graphs is the status bar menu.
-        var menu_box = dvui.boxEqual(@src(), .horizontal, .{
+        var menu_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
             .background = true,
             .margin = Rect{ .y = 3 },
@@ -512,11 +566,11 @@ fn showShortcuts() !void {
     defer dialog_win.deinit();
     _ = dvui.windowHeader("Keyboard Shortcuts", "", &show_shortcuts);
 
-    var vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+    var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = Rect.all(5) });
     var idx: usize = 0;
     defer vbox.deinit();
     {
-        var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .vertical, .gravity_x = 0.5 });
+        var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .vertical, .gravity_x = 0.5 });
         defer inner_vbox.deinit();
         dvui.labelNoFmt(@src(), "Menu Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
         while (shortcuts[idx].category == .command) : (idx += 1) {
@@ -525,10 +579,10 @@ fn showShortcuts() !void {
         }
     }
     {
-        var hbox = dvui.box(@src(), .horizontal, .{ .expand = .both });
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .both });
         defer hbox.deinit();
         {
-            var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+            var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = Rect.all(5) });
             defer inner_vbox.deinit();
 
             dvui.labelNoFmt(@src(), "Navigation Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
@@ -538,7 +592,7 @@ fn showShortcuts() !void {
             }
         }
         {
-            var inner_vbox = dvui.box(@src(), .vertical, .{ .expand = .both, .margin = Rect.all(5) });
+            var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = Rect.all(5) });
             defer inner_vbox.deinit();
             dvui.labelNoFmt(@src(), "File Shortcuts", .{ .align_x = 0.5 }, .{ .font_style = .title_3 });
             while (idx != shortcuts.len and shortcuts[idx].category == .file) : (idx += 1) {
@@ -567,7 +621,7 @@ fn makeFileSelector(id: GridType) !void {
 
     var file_selector_box = dvui.box(
         @src(),
-        .horizontal,
+        .{ .dir = .horizontal },
         .{
             .id_extra = id.toUSize(),
             .background = true,
@@ -583,7 +637,7 @@ fn makeFileSelector(id: GridType) !void {
         _ = dvui.separator(@src(), .{
             .id_extra = id.toUSize(),
             .rect = .{ .x = 5, .y = 30, .w = 10, .h = 2 },
-            .color_fill = .{ .name = .text },
+            .color_fill = dvui.themeGet().text,
         });
     }
 
@@ -675,17 +729,96 @@ fn makeFileSelector(id: GridType) !void {
     }
 }
 
+// TODO: Convert sorting to use numbers instead of names?
+fn sortDir(id: GridType, col_num: usize) *dvui.GridWidget.SortDirection {
+    return &sort_order[id.toUSize()][col_num];
+}
+
 fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
-    _ = id;
-    var sort_dir: dvui.GridWidget.SortDirection = .unsorted;
+    var col_num: usize = 0;
     {
-        _ = dvui.gridHeadingSortable(@src(), grid, 0, "[_]", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 1, "Name", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 2, "Ext", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 3, "A", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 4, "Size", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 5, "Used", &sort_dir, .fixed, .{});
-        _ = dvui.gridHeadingSortable(@src(), grid, 6, "U", &sort_dir, .fixed, .{});
+        const col_name = "[_]";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+        _ = dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .fixed, CellStyle{ .cell_opts = .{ .size = .{ .w = 45 } } });
+    }
+    {
+        const col_name = "Name";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
+    }
+    {
+        const col_name = "Ext";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
+    }
+    {
+        const col_name = "A";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
+    }
+    {
+        const col_name = "Size";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
+    }
+    {
+        const col_name = "Used";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
+    }
+    {
+        const col_name = "U";
+        const sort_dir = sortDir(id, col_num);
+        defer col_num += 1;
+
+        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
+            .sizes = &image_col_widths,
+            .num = col_num,
+            .min_size = @abs(initial_col_widths[col_num]),
+        }, .{})) {
+            sortDirectories(id, col_num, true);
+        }
     }
 }
 
@@ -699,7 +832,9 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         .local => if (local_directories == null) false else true,
     };
     if (!loaded) {
-        var hbox = dvui.box(@src(), .horizontal, .{ .expand = .both, .id_extra = id.toUSize() });
+        var cell = grid.bodyCell(@src(), .colRow(0, 0), .{});
+        cell.deinit();
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = id.toUSize() });
         defer hbox.deinit();
         switch (id) {
             .image => dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
@@ -746,7 +881,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     }
     if (to_display.items.len == 0) return;
 
-    var background: ?dvui.Options.ColorOrName = null;
+    var background: ?dvui.Color = null;
 
     if (pgdn_pressed and id == focussed_grid) {
         const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / row_height);
@@ -860,7 +995,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         if ((selection_mode == .kb and abs_index == getKbSelectionIndex(id) and id == focussed_grid) or
             (selection_mode == .mouse and abs_index == getMouseSelectionIndex(id) and id == focussed_grid))
         {
-            background = .{ .name = .fill_press };
+            background = dvui.themeGet().fill_press;
         } else {
             background = null;
         }
@@ -870,11 +1005,12 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             .opts = .{ .margin = Rect.all(4), .padding = Rect.all(0) },
         };
         const cell_style_right = cell_style.optionsOverride(.{ .gravity_x = 1.0 });
+        const cell_style_fixed = cell_style.cellOptionsOverride(.{ .size = .{ .w = 45 } });
 
         const invalid_number_display = "####";
         var buf = std.mem.zeroes([256]u8);
         const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style);
+        makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style_fixed);
         cell_num.col_num += 1;
         makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.filename(), &cell_style);
         cell_num.col_num += 1;
@@ -910,43 +1046,43 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     }
 }
 
-fn makeGridHeading(label: []const u8, num: u32, id: GridType) void {
-    var grp = dvui.box(@src(), .horizontal, .{
-        .id_extra = num,
-        .expand = .horizontal,
-    });
-    defer grp.deinit();
-    if (dvui.button(
-        @src(),
-        label,
-        .{ .draw_focus = false },
-        .{
-            .id_extra = num,
-            .corner_radius = Rect{},
-            .margin = Rect{},
-            .expand = .horizontal,
-            .min_size_content = .{ .h = 1, .w = min_sizes[num] },
-        },
-    )) {
-        if (num == 0) {
-            // Select all / none
-            var checked = false;
-            for (getDirectoryById(id)) |dir| {
-                if (!dir.checked) {
-                    checked = true;
-                    break;
-                }
-            }
-            for (getDirectoryById(id)) |*dir| {
-                dir.checked = checked;
-            }
-        } else {
-            sortDirectories(id, label, true);
-        }
-    }
-    _ = dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
-    header_rects[num] = grp.data().rect;
-}
+//fn makeGridHeading(label: []const u8, num: u32, id: GridType) void {
+//    var grp = dvui.box(@src(), .{ .dir = .horizontal }, .{
+//        .id_extra = num,
+//        .expand = .horizontal,
+//    });
+//    defer grp.deinit();
+//    if (dvui.button(
+//        @src(),
+//        label,
+//        .{ .draw_focus = false },
+//        .{
+//            .id_extra = num,
+//            .corner_radius = Rect{},
+//            .margin = Rect{},
+//            .expand = .horizontal,
+//            .min_size_content = .{ .h = 1, .w = min_sizes[num] },
+//        },
+//    )) {
+//        if (num == 0) {
+//            // Select all / none
+//            var checked = false;
+//            for (getDirectoryById(id)) |dir| {
+//                if (!dir.checked) {
+//                    checked = true;
+//                    break;
+//                }
+//            }
+//            for (getDirectoryById(id)) |*dir| {
+//                dir.checked = checked;
+//            }
+//        } else {
+//            sortDirectories(id, label, true);
+//        }
+//    }
+//    _ = dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
+//    header_rects[num] = grp.data().rect;
+//}
 
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
@@ -966,7 +1102,7 @@ fn makeGridDataRow(src: std.builtin.SourceLocation, grid: *GridWidget, cell_num:
 fn makeCapacityUsageGraph() !void {
     dvui.label(@src(), "Capacity:", .{}, .{ .gravity_y = 0.5 });
     {
-        var files_box = dvui.box(@src(), .horizontal, .{
+        var files_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .border = Rect.all(1),
             .background = true,
             .min_size_content = .{ .h = 20, .w = 250 },
@@ -980,8 +1116,8 @@ fn makeCapacityUsageGraph() !void {
             const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
             const width = percentage * 250;
             {
-                var used_box = dvui.box(@src(), .horizontal, .{
-                    .color_fill = .{ .name = .fill_hover },
+                var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                    .color_fill = dvui.themeGet().fill_hover,
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
                 });
@@ -1002,7 +1138,7 @@ fn makeCapacityUsageGraph() !void {
 fn makeDirectoriesUsageGraph() !void {
     dvui.label(@src(), "Directories:", .{}, .{ .gravity_y = 0.5 });
     {
-        var files_box = dvui.box(@src(), .horizontal, .{
+        var files_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .border = Rect.all(1),
             .background = true,
             .min_size_content = .{ .h = 20, .w = 250 },
@@ -1016,8 +1152,8 @@ fn makeDirectoriesUsageGraph() !void {
             const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
             const width = percentage * 250;
             {
-                var used_box = dvui.box(@src(), .horizontal, .{
-                    .color_fill = .{ .name = .fill_hover },
+                var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                    .color_fill = dvui.themeGet().fill_hover,
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
                 });
@@ -1036,100 +1172,106 @@ fn makeDirectoriesUsageGraph() !void {
 }
 
 fn makeStatusBar() !bool {
+    //const theme = dvui.themeGet();
     const reversed = dvui.Options{
-        .color_text = .{ .name = .fill_window },
-        .color_fill = .{ .name = .text },
-        .color_fill_hover = .{ .name = .fill_press }, // Added.
-        .color_fill_press = .{ .name = .fill_hover }, // Added.
+        //        .color_text = theme.window.fill,
+        //        .color_fill = theme.text,
+        //        .color_fill_hover = .{ .name = .fill_press }, // Added.
+        //        .color_fill_press = .{ .name = .fill_hover }, // Added.
         .expand = .horizontal,
         .margin = Rect{ .x = 2, .w = 2, .y = 2, .h = 0 },
         .corner_radius = Rect.all(0),
         .background = true,
     };
 
-    if (statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_directories != null)) {
-        if (CommandState.shouldProcessCommand()) {
-            try getButtonHandler();
-        }
-    }
-    if (statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_directories != null)) {
-        if (CommandState.shouldProcessCommand()) {
-            try putButtonHandler();
-        }
-    }
-    if (statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_directories != null) or
-        CommandState.current_command == .erase)
+    dvui.themeSet(reversed_theme);
     {
-        if (CommandState.shouldProcessCommand()) {
-            try eraseButtonHandler();
-        }
-    }
-    if (statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_directories != null)) {
-        if (CommandState.shouldProcessCommand()) {
-            try getSysButtonHandler();
-        }
-    }
-    if (statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_directories != null)) {
-        if (CommandState.shouldProcessCommand()) {
-            try putSysButtonHandler();
-        }
-    }
-    if (statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
-        commands.closeImage();
-        image_directories = null;
-        CommandState.finishCommand();
-    }
+        defer dvui.themeSet(global_theme);
 
-    if (statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_directories != null)) {
-        if (CommandState.shouldProcessCommand()) {
-            try infoButtonHandler();
+        if (statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try getButtonHandler();
+            }
         }
-    }
+        if (statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try putButtonHandler();
+            }
+        }
+        if (statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_directories != null) or
+            CommandState.current_command == .erase)
+        {
+            if (CommandState.shouldProcessCommand()) {
+                try eraseButtonHandler();
+            }
+        }
+        if (statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try getSysButtonHandler();
+            }
+        }
+        if (statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try putSysButtonHandler();
+            }
+        }
+        if (statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
+            commands.closeImage();
+            image_directories = null;
+            CommandState.finishCommand();
+        }
 
-    var buf: [20]u8 = undefined;
-    var label = if (current_user == 16)
-        try std.fmt.bufPrint(&buf, "USER *", .{})
-    else
-        try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
+        if (statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_directories != null)) {
+            if (CommandState.shouldProcessCommand()) {
+                try infoButtonHandler();
+            }
+        }
 
-    if (statusBarButton(@src(), label, .{}, reversed, 0, .user, true)) {
-        current_user += 1;
-        current_user %= 17;
-        if (current_user != 16) {
-            if (image_directories) |directories| {
-                for (directories) |*entry| {
-                    if (entry.user() != current_user) {
-                        entry.checked = false;
+        var buf: [20]u8 = undefined;
+        var label = if (current_user == 16)
+            try std.fmt.bufPrint(&buf, "USER *", .{})
+        else
+            try std.fmt.bufPrint(&buf, "USER {}", .{current_user});
+
+        if (statusBarButton(@src(), label, .{}, reversed, 0, .user, true)) {
+            current_user += 1;
+            current_user %= 17;
+            if (current_user != 16) {
+                if (image_directories) |directories| {
+                    for (directories) |*entry| {
+                        if (entry.user() != current_user) {
+                            entry.checked = false;
+                        }
                     }
                 }
             }
+            CommandState.finishCommand();
         }
-        CommandState.finishCommand();
-    }
 
-    if (statusBarButton(@src(), "NEW", .{}, reversed, 0, .new, true)) {
-        if (CommandState.shouldProcessCommand()) {
-            try newButtonHandler();
+        if (statusBarButton(@src(), "NEW", .{}, reversed, 0, .new, true)) {
+            if (CommandState.shouldProcessCommand()) {
+                try newButtonHandler();
+            }
         }
-    }
-    label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
-    const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
-    if (statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
-        copy_mode = nextCopyMode(copy_mode);
-        CommandState.finishCommand();
-    }
+        label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
+        const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
+        if (statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
+            copy_mode = nextCopyMode(copy_mode);
+            CommandState.finishCommand();
+        }
 
-    if (statusBarButton(@src(), "ORIENT", .{}, reversed, 1, .orient, true)) {
-        if (pane_orientation == .horizontal) {
-            pane_orientation = .vertical;
-        } else {
-            pane_orientation = .horizontal;
-            dvui.refresh(null, @src(), null);
+        if (statusBarButton(@src(), "ORIENT", .{}, reversed, 1, .orient, true)) {
+            if (pane_orientation == .horizontal) {
+                pane_orientation = .vertical;
+            } else {
+                pane_orientation = .horizontal;
+                dvui.refresh(null, @src(), null);
+            }
+            CommandState.finishCommand();
         }
-        CommandState.finishCommand();
-    }
-    if (statusBarButton(@src(), "EXIT", .{}, reversed, 1, .exit, true)) {
-        return false;
+        if (statusBarButton(@src(), "EXIT", .{}, reversed, 1, .exit, true)) {
+            return false;
+        }
     }
     return true;
 }
@@ -1171,7 +1313,7 @@ pub fn makeTransferDialog() !void {
     };
 
     _ = dvui.windowHeader(title, "", &static.open_flag);
-    var outer_vbox = dvui.box(@src(), .vertical, .{
+    var outer_vbox = dvui.box(@src(), .{}, .{
         .expand = .both,
         .min_size_content = .{ .w = 500, .h = 500 },
         .max_size_content = .{ .w = 500, .h = 500 },
@@ -1222,7 +1364,7 @@ pub fn makeTransferDialog() !void {
         var current_file: *FileStatus = undefined; // We already know there are files by the time wer get here.
         {
             // Display the files.
-            var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal, .background = false });
+            var vbox = dvui.box(@src(), .{}, .{ .expand = .horizontal, .background = false });
             defer vbox.deinit();
             for (CommandState.processed_files.items, 0..) |*file, i| {
                 const basename = std.fs.path.basename(file.filename);
@@ -1246,14 +1388,14 @@ pub fn makeTransferDialog() !void {
 
         var empty_file_selector = false;
         if (CommandState.state == .waiting_for_input) {
-            var button_box = dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+            var button_box = dvui.box(@src(), .{}, .{ .expand = .horizontal });
             defer button_box.deinit();
 
             if (CommandState.buttons.image_selector or CommandState.buttons.save_file_selector or CommandState.buttons.open_file_selector) {
-                var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal });
+                var vbox = dvui.box(@src(), .{}, .{ .expand = .horizontal });
                 defer vbox.deinit();
                 {
-                    var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
                     defer hbox.deinit();
                     if (CommandState.buttons.image_selector) {
                         dvui.labelNoFmt(@src(), "Image name:", .{ .align_y = 0.5 }, .{});
@@ -1336,7 +1478,7 @@ pub fn makeTransferDialog() !void {
                 }
 
                 if (CommandState.buttons.type_selector) {
-                    var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                    var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
                     defer hbox.deinit();
 
                     dvui.labelNoFmt(@src(), "Format:    ", .{ .align_y = 0.5 }, .{});
@@ -1350,7 +1492,7 @@ pub fn makeTransferDialog() !void {
             if (empty_file_selector) {
                 CommandState.err_message = "Please enter a new image filename";
             } else {
-                var hbox = dvui.box(@src(), .horizontal, .{ .expand = .horizontal });
+                var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
                 defer hbox.deinit();
                 if (CommandState.prompt) |prompt| {
                     dvui.labelNoFmt(@src(), prompt, .{ .align_y = 0.5 }, .{});
@@ -1400,11 +1542,11 @@ pub fn makeTransferDialog() !void {
     }
 
     {
-        var vbox = dvui.box(@src(), .vertical, .{ .expand = .horizontal, .gravity_y = 1.0 });
+        var vbox = dvui.box(@src(), .{}, .{ .expand = .horizontal, .gravity_y = 1.0 });
         defer vbox.deinit();
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
-        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5 });
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .gravity_x = 0.5 });
         defer hbox.deinit();
 
         if (CommandState.current_command != .none) {
@@ -1432,7 +1574,7 @@ pub fn makeTransferDialog() !void {
     }
 }
 
-pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
+pub fn aboutDialogDisplay(id: dvui.Id) !void {
     var win = dvui.floatingWindow(
         @src(),
         .{ .modal = true, .window_avoid = .nudge },
@@ -1449,7 +1591,7 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
 
     {
         // Add the buttons at the bottom first, so that they are guaranteed to be shown
-        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
         defer hbox.deinit();
 
         if (buttonFocussed(@src(), "OK", .{}, .{ .tab_index = 1 })) {
@@ -1476,10 +1618,10 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
         }
         break :blk false;
     };
-    const color_url: dvui.Options.ColorOrName = .{ .color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 } };
+    const color_url: dvui.Color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 };
     const url = "https://github.com/phatchman/altair_tools";
     if (tl.addTextClick(url, .{
-        .color_text = if (!hovered) .text else color_url,
+        .color_text = if (!hovered) dvui.themeGet().text else color_url,
     })) {
         _ = dvui.openURL(url);
     }
@@ -1489,46 +1631,69 @@ pub fn aboutDialogDisplay(id: dvui.WidgetId) !void {
     const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
     _ = dvui.separator(@src(), .{
         .rect = underline_rect,
-        .color_fill = if (!hovered) .text else color_url,
+        .color_fill = if (!hovered) dvui.themeGet().text else color_url,
     });
 }
 
-fn sortAsc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
-    if (std.mem.eql(u8, which, "[_]")) return lhs.checked and !rhs.checked;
-    if (std.mem.eql(u8, which, "Name")) return std.mem.order(u8, lhs.filename(), rhs.filename()) == .lt;
-    if (std.mem.eql(u8, which, "Ext")) return std.mem.order(u8, lhs.extension(), rhs.extension()) == .lt;
-    if (std.mem.eql(u8, which, "Size")) return lhs.fileSizeInB() < rhs.fileSizeInB();
-    if (std.mem.eql(u8, which, "Used")) return lhs.fileUsedInKB() < rhs.fileUsedInKB();
-    if (std.mem.eql(u8, which, "A")) return std.mem.order(u8, lhs.attribs(), rhs.attribs()) == .lt;
-    if (std.mem.eql(u8, which, "U")) return lhs.user() < rhs.user();
-    unreachable;
+fn sortAsc(col_num: usize, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
+    return switch (GridColumns.fromUsize(col_num)) {
+        .@"[_]" => lhs.checked and !rhs.checked,
+        .Name => std.mem.order(u8, lhs.filename(), rhs.filename()) == .lt,
+        .Ext => std.mem.order(u8, lhs.extension(), rhs.extension()) == .lt,
+        .Size => lhs.fileSizeInB() < rhs.fileSizeInB(),
+        .Used => lhs.fileUsedInKB() < rhs.fileUsedInKB(),
+        .A => std.mem.order(u8, lhs.attribs(), rhs.attribs()) == .lt,
+        .U => lhs.user() < rhs.user(),
+    };
 }
 
-fn sortDesc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
-    if (std.mem.eql(u8, which, "[_]")) return !lhs.checked and rhs.checked;
-    if (std.mem.eql(u8, which, "Name")) return std.mem.order(u8, lhs.filename(), rhs.filename()) == .gt;
-    if (std.mem.eql(u8, which, "Ext")) return std.mem.order(u8, lhs.extension(), rhs.extension()) == .gt;
-    if (std.mem.eql(u8, which, "Size")) return lhs.fileSizeInB() > rhs.fileSizeInB();
-    if (std.mem.eql(u8, which, "Used")) return lhs.fileUsedInKB() > rhs.fileUsedInKB();
-    if (std.mem.eql(u8, which, "A")) return std.mem.order(u8, lhs.attribs(), rhs.attribs()) == .gt;
-    if (std.mem.eql(u8, which, "U")) return lhs.user() > rhs.user();
-    unreachable;
+fn sortDesc(col_num: usize, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
+    return switch (GridColumns.fromUsize(col_num)) {
+        .@"[_]" => !lhs.checked and rhs.checked,
+        .Name => std.mem.order(u8, lhs.filename(), rhs.filename()) == .gt,
+        .Ext => std.mem.order(u8, lhs.extension(), rhs.extension()) == .gt,
+        .Size => lhs.fileSizeInB() > rhs.fileSizeInB(),
+        .Used => lhs.fileUsedInKB() > rhs.fileUsedInKB(),
+        .A => std.mem.order(u8, lhs.attribs(), rhs.attribs()) == .gt,
+        .U => lhs.user() > rhs.user(),
+    };
 }
 
-fn sortDirectories(id: GridType, sort_by_opt: ?[]const u8, toggle_direction: bool) void {
-    const idx = id.toUSize();
-    const sort_by = sort_by_opt orelse sort_column[idx];
-
-    if (toggle_direction and std.mem.eql(u8, sort_column[idx], sort_by)) {
-        sort_asc[idx] = !sort_asc[idx];
-    } else {
-        sort_column[idx] = sort_by;
+fn currentSortCol(id: GridType) usize {
+    for (sort_order[id.toUSize()], 0..) |order, col_num| {
+        if (order != .unsorted) return col_num;
     }
+    const default_col = GridColumns.Name.toUsize();
+    sort_order[id.toUSize()][default_col] = .ascending;
+    return default_col;
+}
+
+fn sortOrderForCol(id: GridType, col_num: usize) dvui.GridWidget.SortDirection {
+    return sort_order[id.toUSize()][col_num];
+}
+
+fn sortDirectories(id: GridType, sort_by_opt: ?usize, toggle_direction: bool) void {
+    _ = toggle_direction;
+
+    if (sort_by_opt) |new_col| {
+        const current_sort_col = currentSortCol(id);
+
+        if (new_col != current_sort_col) {
+            sort_order[id.toUSize()][current_sort_col] = .unsorted;
+        }
+    }
+    const sort_col = sort_by_opt orelse currentSortCol(id);
+
+    //    if (toggle_direction and std.mem.eql(u8, sort_column[idx], sort_by)) {
+    //        sort_asc[idx] = !sort_asc[idx];
+    //    } else {
+    //        sort_column[idx] = sort_by;
+    //    }
     const to_sort = getDirectoryById(id);
-    if (sort_asc[idx]) {
-        std.mem.sort(DirectoryEntry, to_sort, sort_by, sortAsc);
+    if (sortOrderForCol(id, sort_col) == .ascending) {
+        std.mem.sort(DirectoryEntry, to_sort, sort_col, sortAsc);
     } else {
-        std.mem.sort(DirectoryEntry, to_sort, sort_by, sortDesc);
+        std.mem.sort(DirectoryEntry, to_sort, sort_col, sortDesc);
     }
 }
 
@@ -1589,9 +1754,9 @@ pub fn statusBarButton(
     const selected = CommandState.current_command == cmd;
     var options2 = opts;
     if (selected) {
-        options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_press) } });
+        options2 = options2.override(.{ .color_fill = dvui.themeGet().fill });
     } else if (!enabled) {
-        options2 = options2.override(.{ .color_fill = .{ .color = opts.color(.fill_press) } });
+        options2 = options2.override(.{ .color_fill = opts.color(.fill_press) });
     }
     var bw = dvui.ButtonWidget.init(src, init_opts, options2);
 
@@ -1612,7 +1777,7 @@ pub fn statusBarButton(
     const click = bw.clicked();
     var options = opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.5 });
 
-    if (bw.pressed() or selected) options = options.override(.{ .color_text = .{ .color = opts.color(.text_press) } });
+    if (bw.pressed() or selected) options = options.override(.{ .color_text = opts.color(.text_press) });
 
     // this child widget:
     // - has bw as parent
@@ -1631,7 +1796,7 @@ pub fn statusBarButton(
     };
     _ = dvui.separator(@src(), .{
         .rect = .{ .x = label_rect.x + @as(f32, @floatFromInt(underline_pos)) * 8, .y = 15, .w = 10, .h = 2 },
-        .color_fill = .{ .color = fill_color },
+        .color_fill = fill_color,
         .background = true,
     });
     // draw focus
@@ -1660,15 +1825,16 @@ pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: 
     dvui.icon(@src(), name, tvg_bytes, .{}, opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.0, .min_size_content = opts.min_size_content, .expand = .ratio }));
 
     if (alt_held) {
+        const theme = dvui.themeGet();
         const label_rect = labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
-            .color_fill = .{ .name = .text },
-            .color_text = .{ .name = .fill_control },
+            .color_fill = theme.text,
+            .color_text = theme.control.fill,
             .background = true,
         });
         _ = dvui.separator(src, .{
             .id_extra = 1, // Not sure why required.
             .rect = .{ .x = label_rect.x + 5, .y = 20, .w = 10, .h = 2 },
-            .color_fill = .{ .name = .fill_control },
+            .color_fill = theme.control.fill,
         });
 
         const events = dvui.events();
@@ -1717,7 +1883,7 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     const click = bw.clicked();
     var options = opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.5 });
 
-    if (bw.pressed()) options = options.override(.{ .color_text = .{ .color = opts.color(.text_press) } });
+    if (bw.pressed()) options = options.override(.{ .color_text = opts.color(.text_press) });
 
     // this child widget:
     // - has bw as parent
@@ -1737,7 +1903,7 @@ pub fn buttonFocussed(src: std.builtin.SourceLocation, label_str: []const u8, in
     return click;
 }
 
-pub fn dialogDisplay(id: dvui.WidgetId) !void {
+pub fn dialogDisplay(id: dvui.Id) !void {
     const modal = dvui.dataGet(null, id, "_modal", bool) orelse {
         std.log.err("dialogDisplay lost data for dialog {x}\n", .{id});
         dvui.dialogRemove(id);
@@ -1789,7 +1955,7 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
 
     {
         // Add the buttons at the bottom first, so that they are guaranteed to be shown
-        var hbox = dvui.box(@src(), .horizontal, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .gravity_x = 0.5, .gravity_y = 1.0 });
         defer hbox.deinit();
 
         if (buttonFocussed(@src(), ok_label, .{}, .{ .tab_index = 1 })) {
@@ -1839,7 +2005,7 @@ pub fn dialogDisplay(id: dvui.WidgetId) !void {
     }
 
     // Now add the scroll area which will get the remaining space
-    var scroll = dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .name = .fill_window } });
+    var scroll = dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = dvui.themeGet().control.fill });
     var tl = dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
     tl.addText(message, .{});
     tl.deinit();
@@ -2352,7 +2518,7 @@ pub fn openImageFile(filename: []const u8) void {
     const dialogFollowup = struct {
         var img_type: ?ad.DiskImageTypes = null;
         var selected_filename: ?[]const u8 = null;
-        fn handleResponse(_: dvui.WidgetId, response: dvui.enums.DialogResponse) dvui.Error!void {
+        fn handleResponse(_: dvui.Id, response: dvui.enums.DialogResponse) dvui.Error!void {
             switch (response) {
                 .cancel => img_type = .HDD_5MB_1024,
                 .ok => img_type = .HDD_5MB,
@@ -2407,6 +2573,7 @@ pub fn openImageFile(filename: []const u8) void {
         sortDirectories(.image, null, false);
         success = true;
     }
+    resize_image_grid = true;
     if (!success) {
         commands.closeImage();
         image_directories = null;
@@ -2478,7 +2645,7 @@ const winapi = if (builtin.os.tag == .windows) struct {
 
 pub const std_options: std.Options = .{
     // Set the log level to info
-    .log_level = .err,
+    .log_level = .debug,
 };
 
 const ButtonHandler = @import("ButtonHandler.zig");

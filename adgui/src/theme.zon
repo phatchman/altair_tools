@@ -1,0 +1,30 @@
+.{
+    .name = "Terminal",
+    .font_size = 16,
+    .font_name_body = "VeraMono",
+    .font_name_heading = "VeraMono",
+    .font_name_caption = "VeraMono",
+    .font_name_title = "VeraMono",
+
+    .focus = "#638465",
+    .text = "#82a29f",
+    .border = "#60827d",
+    .fill = "#2c3332",
+
+    .control = .{
+        .fill = "#2c3334",
+        .text_press = "#97af81",
+        .fill_hover = "#334e57",
+        .fill_press = "#3b6357",
+    },
+    .window = .{
+        .fill = "#2b3a3a",
+    },
+    .highlight = .{
+        .fill = "#2c3334",
+        .text_press = "#97af81",
+        .fill_hover = "#334e57",
+        .fill_press = "#3b6357",
+        .text = "#82a29f",
+    },
+}
