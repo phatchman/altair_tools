@@ -49,6 +49,8 @@ pub const allocator = gpa_instance.allocator();
 
 const vsync = false;
 
+const alt_label_margin = Rect.all(4);
+
 // Global key state.
 var alt_held = false;
 var shift_held = false;
@@ -62,22 +64,6 @@ var showing_dialog = false;
 var pane_orientation = dvui.enums.Direction.horizontal;
 const SelectionMode = enum { mouse, kb };
 
-// Image grid for disk image or local for local filesystem.
-const GridType = enum {
-    image,
-    local,
-
-    fn toUSize(self: GridType) usize {
-        return @intFromEnum(self);
-    }
-
-    fn fromUSize(self: *GridType, val: usize) void {
-        self.* = @enumFromInt(val);
-    }
-};
-
-const num_grids = std.meta.fields(GridType).len;
-
 // Which grid has keyboard or mouse focus.
 var focussed_grid: GridType = .image;
 // Whether user is currently selecting by keyboard or mouse.
@@ -90,18 +76,19 @@ var copy_mode = CopyMode.AUTO;
 var image_directories: ?[]DirectoryEntry = null;
 var local_directories: ?[]DirectoryEntry = null;
 
-// Selection indexes. For mouse and keyboard selection.
-// Kept separately for each grid.
-var kb_dir_index: [num_grids]usize = @splat(0);
-var mouse_dir_index: [num_grids]usize = @splat(0);
-var last_mouse_index: [num_grids]usize = @splat(0);
+const GridType = enum {
+    image,
+    local,
 
-var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
+    fn toUSize(self: GridType) usize {
+        return @intFromEnum(self);
+    }
 
-//var sort_column: [num_grids]usize = @splat(GridColumns.Name.toUsize());
-//var sort_asc: [num_grids]bool = @splat(true);
-
-var sort_order: [num_grids][num_columns]dvui.GridWidget.SortDirection = .{ @splat(.unsorted), @splat(.unsorted) };
+    fn fromUSize(self: *GridType, val: usize) void {
+        self.* = @enumFromInt(val);
+    }
+    const num_grids = std.meta.fields(GridType).len;
+};
 
 const GridColumns = enum {
     @"[_]",
@@ -111,6 +98,8 @@ const GridColumns = enum {
     Size,
     Used,
     U,
+
+    const count = std.meta.fields(GridColumns).len;
 
     pub const default_sort_col = .Name;
 
@@ -123,14 +112,45 @@ const GridColumns = enum {
     }
 };
 
-var text_box_focused: [num_grids]bool = @splat(false);
+const FileGridData = struct {
+    // Image grid for disk image or local for local filesystem.
+    const num_cols = GridColumns.count;
+
+    kb_dir_index: usize = 0,
+    mouse_dir_index: usize = 0,
+    last_mouse_index: usize = 0,
+
+    scroll_info: dvui.ScrollInfo = .{}, // TODO
+    sort_order: [num_cols]dvui.GridWidget.SortDirection = @splat(.unsorted),
+};
+
+var grid_data: [GridType.num_grids]FileGridData = .{ .{}, .{} };
+
+fn gridData(id: GridType) *FileGridData {
+    return &grid_data[id.toUSize()];
+}
+
+// Selection indexes. For mouse and keyboard selection.
+// Kept separately for each grid.
+///var kb_dir_index: [num_grids]usize = @splat(0);
+//var mouse_dir_index: [num_grids]usize = @splat(0);
+//var last_mouse_index: [num_grids]usize = @splat(0);
+
+//var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
+
+//var sort_column: [num_grids]usize = @splat(GridColumns.Name.toUsize());
+//var sort_asc: [num_grids]bool = @splat(true);
+
+//var sort_order: [num_grids][num_columns]dvui.GridWidget.SortDirection = .{ @splat(.unsorted), @splat(.unsorted) };
+//var text_box_focused: [num_grids]bool = @splat(false);
 
 // Don't handle keyboard events if a textbvox is focussed.
 fn textBoxFocused() bool {
-    for (text_box_focused) |focused| {
-        if (focused) return true;
-    }
-    return false;
+    return false; // // TODO
+    //    for (text_box_focused) |focused| {
+    //        if (focused) return true;
+    //    }
+    //    return false;
 }
 
 // Layout information for each column.
@@ -235,7 +255,7 @@ pub fn main() !void {
                         errorDialog("Copying file", message, err);
                     };
                     image_directories = commands.directoryListing(allocator) catch null;
-                    sortDirectories(.image, null, false);
+                    sortDirectories(.image, null);
                     Backend.c.SDL_free(dropped_file);
                 },
                 Backend.c.SDL_QUIT => break :main_loop,
@@ -411,12 +431,11 @@ fn guiFrame() !bool {
             //            if (dvui.firstFrame(top_half.data().id)) {
             dvui.columnLayoutProportional(&image_col_widths, &image_col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
             //          }
-            std.debug.print("POST PROP = {d}\n", .{image_col_widths});
+            //std.debug.print("POST PROP = {d}\n", .{image_col_widths});
 
             var grid = dvui.grid(@src(), .colWidths(&image_col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
             defer grid.deinit();
             resize_image_grid = false;
-
             try makeGridHeader(.image, grid);
             makeGridBody(.image, grid);
         }
@@ -630,8 +649,8 @@ fn makeFileSelector(id: GridType) !void {
     );
     defer file_selector_box.deinit();
     switch (id) {
-        .image => dvui.labelNoFmt(@src(), "Image:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize() }),
-        .local => dvui.labelNoFmt(@src(), "Local:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize() }),
+        .image => dvui.labelNoFmt(@src(), "Image:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize(), .margin = alt_label_margin }),
+        .local => dvui.labelNoFmt(@src(), "Local:", .{ .align_x = 0.5 }, .{ .id_extra = id.toUSize(), .margin = alt_label_margin }),
     }
     if (alt_held) {
         _ = dvui.separator(@src(), .{
@@ -646,7 +665,8 @@ fn makeFileSelector(id: GridType) !void {
         .expand = .horizontal,
     });
     errdefer entry.deinit();
-    text_box_focused[id.toUSize()] = entry.wd.id == dvui.focusedWidgetId();
+    // TODO:
+    //text_box_focused[id.toUSize()] = entry.wd.id == dvui.focusedWidgetId();
     if (alt_held) {
         const events = dvui.events();
         for (events) |*evt| {
@@ -731,7 +751,7 @@ fn makeFileSelector(id: GridType) !void {
 
 // TODO: Convert sorting to use numbers instead of names?
 fn sortDir(id: GridType, col_num: usize) *dvui.GridWidget.SortDirection {
-    return &sort_order[id.toUSize()][col_num];
+    return &gridData(id).sort_order[col_num];
 }
 
 fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
@@ -752,7 +772,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
     {
@@ -765,7 +785,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
     {
@@ -778,7 +798,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
     {
@@ -791,7 +811,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
     {
@@ -804,7 +824,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
     {
@@ -817,7 +837,7 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
             .num = col_num,
             .min_size = @abs(initial_col_widths[col_num]),
         }, .{})) {
-            sortDirectories(id, col_num, true);
+            sortDirectories(id, col_num);
         }
     }
 }
@@ -884,39 +904,39 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     var background: ?dvui.Color = null;
 
     if (pgdn_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / row_height);
+        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / row_height);
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
-            if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
+            if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
-            } else if (selection_mode == .kb and item.index == getKbSelectionIndex(id)) {
+            } else if (selection_mode == .kb and item.index == gridData(id).kb_dir_index) {
                 break :idx idx;
             }
         } else {
             break :idx 0;
         };
-        getScrollInfo(id).scrollPageDown(.vertical);
+        gridData(id).scroll_info.scrollPageDown(.vertical);
         const new_index = @min(rel_index + nr_displayed, to_display.items.len - 1);
 
-        setMouseSelectionIndex(id, to_display.items[new_index].index);
-        setKbSelectionIndex(id, to_display.items[new_index].index);
+        gridData(id).mouse_dir_index = to_display.items[new_index].index;
+        gridData(id).kb_dir_index = to_display.items[new_index].index;
     } else if (pgup_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(getScrollInfo(id).viewport.h / row_height);
+        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / row_height);
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
-            if (selection_mode == .mouse and item.index == getMouseSelectionIndex(id)) {
+            if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
-            } else if (selection_mode == .kb and item.index == getKbSelectionIndex(id)) {
+            } else if (selection_mode == .kb and item.index == gridData(id).kb_dir_index) {
                 break :idx idx;
             }
         } else {
             break :idx 0;
         };
-        getScrollInfo(id).scrollPageUp(.vertical);
+        gridData(id).scroll_info.scrollPageUp(.vertical);
         const new_index: usize = @max(rel_index, nr_displayed) - nr_displayed;
-        setMouseSelectionIndex(id, to_display.items[new_index].index);
-        setKbSelectionIndex(id, to_display.items[new_index].index);
+        gridData(id).mouse_dir_index = to_display.items[new_index].index;
+        gridData(id).kb_dir_index = to_display.items[new_index].index;
     } else if (id == focussed_grid and down_pressed) {
         var rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
-            if (item.index == getKbSelectionIndex(id)) {
+            if (item.index == gridData(id).kb_dir_index) {
                 break :idx idx;
             }
         } else {
@@ -926,11 +946,11 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         const dir_len = to_display.items.len;
         if (dir_len > 0 and rel_index < dir_len - 1) {
             rel_index += 1;
-            setKbSelectionIndex(focussed_grid, to_display.items[rel_index].index);
+            gridData(focussed_grid).kb_dir_index = to_display.items[rel_index].index;
         }
     } else if (id == focussed_grid and up_pressed) {
         var rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
-            if (item.index == getKbSelectionIndex(id)) {
+            if (item.index == gridData(id).kb_dir_index) {
                 break :idx idx;
             }
         } else {
@@ -938,7 +958,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         };
         if (rel_index > 0) {
             rel_index -= 1;
-            setKbSelectionIndex(focussed_grid, to_display.items[rel_index].index);
+            gridData(focussed_grid).kb_dir_index = to_display.items[rel_index].index;
         }
     } else {
         //var rel_mouse_index: usize = 0;
@@ -951,7 +971,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         //
         //            switch (e.evt) {
         //                .mouse => |me| {
-        //                    const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
+        //                    const first_displayed_f: f32 = gridData(id).scroll_info.viewport.y / row_height;
         //                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
         //                    const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
         //                    rel_mouse_index = @intFromFloat(rel_mouse_index_f);
@@ -965,7 +985,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         //                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
         //                            setLastMouseSelectedIndex(id, abs_mouse_index);
         //                        } else {
-        //                            const prev_index = getLastMouseSelectedIndex(id);
+        //                            const prev_index = getLastMouseSelectedindex;
         //                            const prev_checked = dirs[prev_index].checked;
         //                            const first_idx = @min(prev_index, abs_mouse_index);
         //                            const last_idx = @max(prev_index, abs_mouse_index);
@@ -992,8 +1012,8 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         // TODO: Make this nicer
         const abs_index = to_display.items[rel_idx].index;
 
-        if ((selection_mode == .kb and abs_index == getKbSelectionIndex(id) and id == focussed_grid) or
-            (selection_mode == .mouse and abs_index == getMouseSelectionIndex(id) and id == focussed_grid))
+        if ((selection_mode == .kb and abs_index == gridData(id).kb_dir_index and id == focussed_grid) or
+            (selection_mode == .mouse and abs_index == gridData(id).mouse_dir_index and id == focussed_grid))
         {
             background = dvui.themeGet().fill_press;
         } else {
@@ -1031,16 +1051,16 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
         cell_num.col_num += 1;
 
-        const nr_displayed = getScrollInfo(id).viewport.h / row_height - 2;
-        if (id == focussed_grid and selection_mode == .kb and getKbSelectionIndex(id) == abs_index) {
+        const nr_displayed = gridData(id).scroll_info.viewport.h / row_height - 2;
+        if (id == focussed_grid and selection_mode == .kb and gridData(id).kb_dir_index == abs_index) {
             const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * row_height; // relative pos
-            const viewport_btm = getScrollInfo(id).viewport.y + getScrollInfo(id).viewport.h - 40;
+            const viewport_btm = gridData(id).scroll_info.viewport.y + gridData(id).scroll_info.viewport.h - 40;
             if (viewport_btm < my_pos) {
                 const scroll_pos: f32 = my_pos - (nr_displayed * row_height);
-                getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
-            } else if (my_pos < getScrollInfo(id).viewport.y + 40) {
+                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
+            } else if (my_pos < gridData(id).scroll_info.viewport.y + 40) {
                 const scroll_pos: f32 = my_pos - row_height;
-                getScrollInfo(id).scrollToOffset(.vertical, scroll_pos);
+                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
             }
         }
     }
@@ -1558,11 +1578,11 @@ pub fn makeTransferDialog() !void {
                 dialog_win.close(); // can close the dialog this way
                 if (local_directories != null) {
                     local_directories = commands.localDirectoryListing(allocator) catch null;
-                    sortDirectories(.local, null, false);
+                    sortDirectories(.local, null);
                 }
                 if (image_directories != null) {
                     image_directories = commands.directoryListing(allocator) catch null;
-                    sortDirectories(.image, null, false);
+                    sortDirectories(.image, null);
                 }
             }
         }
@@ -1660,36 +1680,29 @@ fn sortDesc(col_num: usize, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
 }
 
 fn currentSortCol(id: GridType) usize {
-    for (sort_order[id.toUSize()], 0..) |order, col_num| {
+    for (gridData(id).sort_order, 0..) |order, col_num| {
         if (order != .unsorted) return col_num;
     }
     const default_col = GridColumns.Name.toUsize();
-    sort_order[id.toUSize()][default_col] = .ascending;
+    gridData(id).sort_order[default_col] = .ascending;
     return default_col;
 }
 
 fn sortOrderForCol(id: GridType, col_num: usize) dvui.GridWidget.SortDirection {
-    return sort_order[id.toUSize()][col_num];
+    return gridData(id).sort_order[col_num];
 }
 
-fn sortDirectories(id: GridType, sort_by_opt: ?usize, toggle_direction: bool) void {
-    _ = toggle_direction;
-
+fn sortDirectories(id: GridType, sort_by_opt: ?usize) void {
     if (sort_by_opt) |new_col| {
         const current_sort_col = currentSortCol(id);
 
         if (new_col != current_sort_col) {
-            sort_order[id.toUSize()][current_sort_col] = .unsorted;
+            gridData(id).sort_order[current_sort_col] = .unsorted;
         }
     }
     const sort_col = sort_by_opt orelse currentSortCol(id);
-
-    //    if (toggle_direction and std.mem.eql(u8, sort_column[idx], sort_by)) {
-    //        sort_asc[idx] = !sort_asc[idx];
-    //    } else {
-    //        sort_column[idx] = sort_by;
-    //    }
     const to_sort = getDirectoryById(id);
+
     if (sortOrderForCol(id, sort_col) == .ascending) {
         std.mem.sort(DirectoryEntry, to_sort, sort_col, sortAsc);
     } else {
@@ -2035,7 +2048,7 @@ pub fn processEvents() void {
                 switch (ke.action) {
                     .down => {
                         var dirs = getDirectoryById(focussed_grid);
-                        const current_selection = getKbSelectionIndex(focussed_grid);
+                        const current_selection = gridData(focussed_grid).kb_dir_index;
                         if (current_selection < dirs.len)
                             dirs[current_selection].checked = !dirs[current_selection].checked;
                     },
@@ -2233,37 +2246,37 @@ pub fn getDirectoryById(id: GridType) []DirectoryEntry {
     }
 }
 
-pub fn getScrollInfo(id: GridType) *dvui.ScrollInfo {
-    return &scroll_info[id.toUSize()];
-}
+//pub fn getScrollInfo(id: GridType) *dvui.ScrollInfo {
+//    return &scroll_info[id.toUSize()];
+//}
 
-pub fn getKbSelectionIndex(id: GridType) usize {
-    return kb_dir_index[id.toUSize()];
-}
+//pub fn getKbSelectionIndex(id: GridType) usize {
+//    return kb_dir_index[id.toUSize()];
+//}
 
-pub fn setKbSelectionIndex(id: GridType, value: usize) void {
-    kb_dir_index[id.toUSize()] = value;
-}
+//pub fn setKbSelectionIndex(id: GridType, value: usize) void {
+//    kb_dir_index[id.toUSize()] = value;
+//}
 
-pub fn setLastMouseSelectedIndex(id: GridType, value: usize) void {
-    last_mouse_index[id.toUSize()] = value;
-}
-
-pub fn getLastMouseSelectedIndex(id: GridType) usize {
-    return last_mouse_index[id.toUSize()];
-}
-
-pub fn getMouseSelectionIndex(id: GridType) usize {
-    return mouse_dir_index[id.toUSize()];
-}
-
-pub fn setMouseSelectionIndex(id: GridType, value: usize) void {
-    mouse_dir_index[id.toUSize()] = value;
-}
-
-pub fn getLastMouseSelectionIndex(id: GridType) usize {
-    return last_mouse_index[id.toUSize()];
-}
+//pub fn setLastMouseSelectedIndex(id: GridType, value: usize) void {
+//    last_mouse_index[id.toUSize()] = value;
+//}
+//
+//pub fn getLastMouseSelectedIndex(id: GridType) usize {
+//    return last_mouse_index[id.toUSize()];
+//}
+//
+//pub fn getMouseSelectionIndex(id: GridType) usize {
+//    return mouse_dir_index[id.toUSize()];
+//}
+//
+//pub fn setMouseSelectionIndex(id: GridType, value: usize) void {
+//    mouse_dir_index[id.toUSize()] = value;
+//}
+//
+//pub fn getLastMouseSelectionIndex(id: GridType) usize {
+//    return last_mouse_index[id.toUSize()];
+//}
 
 pub fn swapFocussedGrid() void {
     switch (focussed_grid) {
@@ -2384,7 +2397,7 @@ fn newButtonHandler() !void {
             try commands.createNewImage(image_path, image_type);
             try setImagePath(image_path);
             image_directories = try commands.directoryListing(allocator);
-            sortDirectories(.image, null, false);
+            sortDirectories(.image, null);
         }
     }.createNewImage, struct {
         pub fn errorHandler(_: *FileStatus, _: anyerror) bool {
@@ -2570,7 +2583,7 @@ pub fn openImageFile(filename: []const u8) void {
         image_directories = commands.directoryListing(allocator) catch |err| {
             break :main errorDialog(error_title, "Could not open directory table.", err);
         };
-        sortDirectories(.image, null, false);
+        sortDirectories(.image, null);
         success = true;
     }
     resize_image_grid = true;
@@ -2593,7 +2606,7 @@ pub fn openLocalDirectory(path: []const u8) void {
         local_directories = commands.localDirectoryListing(allocator) catch |err| {
             break :main errorDialog(error_title, "Could not get directtory listing.", err);
         };
-        sortDirectories(.local, null, false);
+        sortDirectories(.local, null);
         success = true;
     }
     if (!success) {
