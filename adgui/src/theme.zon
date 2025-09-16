@@ -10,6 +10,7 @@
     .text = "#82a29f",
     .border = "#60827d",
     .fill = "#2c3332",
+    .fill_press = "#3b6357",
 
     .control = .{
         .fill = "#2c3334",

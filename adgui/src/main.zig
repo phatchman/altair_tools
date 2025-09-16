@@ -340,6 +340,7 @@ fn setTheme() !void {
     //defer parsed.deinit();
     //
     //const quick_theme = parsed.value;
+
     global_theme = try terminal_theme.toTheme(allocator);
     global_theme.font_title_4 = .{ .size = 14, .id = global_theme.font_title_4.id };
 
@@ -353,7 +354,7 @@ fn setTheme() !void {
     theme_set = true;
 }
 
-var resize_image_grid: bool = false;
+var resize_image_grid: bool = false; // TODO: Should not be required anymore?
 
 fn guiFrame() !bool {
     var running = true;
@@ -961,51 +962,48 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             gridData(focussed_grid).kb_dir_index = to_display.items[rel_index].index;
         }
     } else {
-        //var rel_mouse_index: usize = 0;
+        var rel_mouse_index: usize = 0;
 
-        //        const evts = dvui.events();
-        //        for (evts) |*e| {
-        //            if (!dvui.eventMatchSimple(e, scroll.data())) {
-        //                continue;
-        //            }
-        //
-        //            switch (e.evt) {
-        //                .mouse => |me| {
-        //                    const first_displayed_f: f32 = gridData(id).scroll_info.viewport.y / row_height;
-        //                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
-        //                    const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
-        //                    rel_mouse_index = @intFromFloat(rel_mouse_index_f);
-        //                    rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
-        //                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
-        //
-        //                    if (me.action == .press and me.button.pointer()) {
-        //                        e.handled = true;
-        //                        var dirs = getDirectoryById(id);
-        //                        if (!shift_held) {
-        //                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
-        //                            setLastMouseSelectedIndex(id, abs_mouse_index);
-        //                        } else {
-        //                            const prev_index = getLastMouseSelectedindex;
-        //                            const prev_checked = dirs[prev_index].checked;
-        //                            const first_idx = @min(prev_index, abs_mouse_index);
-        //                            const last_idx = @max(prev_index, abs_mouse_index);
-        //                            for (first_idx..last_idx + 1) |idx| {
-        //                                dirs[idx].checked = prev_checked;
-        //                            }
-        //                        }
-        //                    } else if (selection_mode == .mouse and me.action == .position) {
-        //                        dvui.focusWidget(null, scroll.data().id, e.num);
-        //                        setMouseSelectionIndex(id, abs_mouse_index);
-        //                        setKbSelectionIndex(id, abs_mouse_index);
-        //                        focussed_grid = id;
-        //                        selection_mode = .mouse;
-        //                    } else if (me.action == .motion) {
-        //                        selection_mode = .mouse;
-        //                    }
-        //                },
-        //                else => {},
-        //            }
-        //        }
+        const evts = dvui.events();
+        for (evts) |*e| {
+            //            if (!dvui.eventMatchSimple(e, grid.data())) {
+            //                continue;
+            //            }
+
+            switch (e.evt) {
+                .mouse => |me| {
+                    var dirs = getDirectoryById(id);
+                    rel_mouse_index = if (grid.pointToCell(me.p)) |cell| cell.row_num else 0;
+                    rel_mouse_index = @min(rel_mouse_index, dirs.len - 1);
+                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
+
+                    if (me.action == .press and me.button.pointer()) {
+                        e.handled = true;
+                        if (!shift_held) {
+                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
+                            gridData(id).last_mouse_index = abs_mouse_index;
+                        } else {
+                            const prev_index = gridData(id).last_mouse_index;
+                            const prev_checked = dirs[prev_index].checked;
+                            const first_idx = @min(prev_index, abs_mouse_index);
+                            const last_idx = @max(prev_index, abs_mouse_index);
+                            for (first_idx..last_idx + 1) |idx| {
+                                dirs[idx].checked = prev_checked;
+                            }
+                        }
+                    } else if (selection_mode == .mouse and me.action == .position) {
+                        dvui.focusWidget(null, grid.data().id, e.num);
+                        gridData(id).mouse_dir_index = abs_mouse_index;
+                        gridData(id).kb_dir_index = abs_mouse_index;
+                        focussed_grid = id;
+                        selection_mode = .mouse;
+                    } else if (me.action == .motion) {
+                        selection_mode = .mouse;
+                    }
+                },
+                else => {},
+            }
+        }
     }
 
     for (to_display.items, 0..) |entry, rel_idx| {
@@ -1015,6 +1013,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         if ((selection_mode == .kb and abs_index == gridData(id).kb_dir_index and id == focussed_grid) or
             (selection_mode == .mouse and abs_index == gridData(id).mouse_dir_index and id == focussed_grid))
         {
+            std.debug.print("Setting background for {d} to fill press\n", .{abs_index});
             background = dvui.themeGet().fill_press;
         } else {
             background = null;
