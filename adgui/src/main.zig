@@ -130,20 +130,6 @@ fn gridData(id: GridType) *FileGridData {
     return &grid_data[id.toUSize()];
 }
 
-// Selection indexes. For mouse and keyboard selection.
-// Kept separately for each grid.
-///var kb_dir_index: [num_grids]usize = @splat(0);
-//var mouse_dir_index: [num_grids]usize = @splat(0);
-//var last_mouse_index: [num_grids]usize = @splat(0);
-
-//var scroll_info: [num_grids]dvui.ScrollInfo = @splat(.{});
-
-//var sort_column: [num_grids]usize = @splat(GridColumns.Name.toUsize());
-//var sort_asc: [num_grids]bool = @splat(true);
-
-//var sort_order: [num_grids][num_columns]dvui.GridWidget.SortDirection = .{ @splat(.unsorted), @splat(.unsorted) };
-//var text_box_focused: [num_grids]bool = @splat(false);
-
 // Don't handle keyboard events if a textbvox is focussed.
 fn textBoxFocused() bool {
     return false; // // TODO
@@ -411,28 +397,11 @@ fn guiFrame() !bool {
             });
             defer top_half.deinit();
             try makeFileSelector(.image);
-            // Beneath the file selector is the file grid, with a fixed header
-            // and scroll area for the body. This vbox contains that grid.
-            // resize_image_grid = false; // TODO:
-            //std.debug.print("RECT = {}\n", .{top_half.data().contentRect().w});
-            //std.debug.print("PRE = {d}\n", .{image_col_widths});
-            //for (image_col_widths[1..], initial_col_widths[1..]) |*w, initial_w| {
-            //    if (w.* < -initial_w) {
-            //        std.debug.print("w = {d}, init = {d}\n", .{ w.*, initial_w });
-            //        w.* = -w.*;
-            //    } else {
-            //        w.* = -initial_w;
-            //    }
-            //}
-            //std.debug.print("POST = {d}\n", .{image_col_widths});
 
             for (image_col_widths[1..]) |*w| {
                 if (w.* > 0) w.* = -w.*;
             }
-            //            if (dvui.firstFrame(top_half.data().id)) {
             dvui.columnLayoutProportional(&image_col_widths, &image_col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
-            //          }
-            //std.debug.print("POST PROP = {d}\n", .{image_col_widths});
 
             var grid = dvui.grid(@src(), .colWidths(&image_col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
             defer grid.deinit();
