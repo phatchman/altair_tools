@@ -35,7 +35,7 @@
 //              1) From windows into app
 //              2) From app to local OS (SDL doesn't currently support this)
 //              2) Between application grids - "Phase 2"
-//       [_]
+//       [_] There is some bug with resizing. Need to grab the handle twice or drag it a long way. Something nto inited corectly?
 //
 
 const adgui_version = "0.9.5";
@@ -969,7 +969,7 @@ fn makeCapacityUsageGraph() !void {
             const width = percentage * 250;
             {
                 var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                    .color_fill = dvui.themeGet().fill_hover,
+                    .color_fill = dvui.themeGet().control.fill_hover,
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
                 });
@@ -1005,7 +1005,7 @@ fn makeDirectoriesUsageGraph() !void {
             const width = percentage * 250;
             {
                 var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                    .color_fill = dvui.themeGet().fill_hover,
+                    .color_fill = dvui.themeGet().control.fill_hover,
                     .background = true,
                     .min_size_content = .{ .h = 20, .w = width },
                 });
@@ -1636,9 +1636,9 @@ pub fn statusBarButton(
         if (!enabled or bw.hover) {
             break :color theme.control.fill_press;
         } else if (alt_held) {
-            break :color theme.control.text;
+            break :color theme.control.fill_press;
         } else {
-            break :color theme.control.fill; // TODO: Or window fill?
+            break :color theme.control.fill;
         }
     };
     _ = dvui.separator(@src(), .{
