@@ -122,6 +122,12 @@ const FileGridData = struct {
     path_initialized: bool = false,
     path_selection: ?[]const u8 = null,
     directories: ?[]DirectoryEntry = null,
+
+    select_all_state: dvui.selection.SelectAllState = .select_none,
+
+    pub fn directoriesOrEmpty(self: *const FileGridData) []DirectoryEntry {
+        return self.directories orelse &empty_directory_list;
+    }
 };
 
 var grid_data: [GridType.num_grids]FileGridData = @splat(.{});
@@ -142,11 +148,7 @@ fn textBoxFocused() bool {
 // Layout information for each column.
 const num_columns = 7;
 const initial_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
-//var image_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
-var local_col_widths = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
-var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
-const row_height: f32 = 25.0;
 const status_bar_height = 35 * 2;
 
 fn setPath(id: GridType, path: []const u8) !void {
@@ -322,7 +324,7 @@ fn setTheme() !void {
 
     dvui.themeSet(global_theme);
     reversed_theme = global_theme;
-    reversed_theme.text = global_theme.control.fill.?;
+    reversed_theme.text = global_theme.window.fill.?;
     reversed_theme.control.fill = global_theme.text;
     reversed_theme.fill_press = global_theme.control.fill_hover.?;
     reversed_theme.fill_hover = global_theme.control.fill_press.?;
@@ -334,9 +336,10 @@ var resize_image_grid: bool = false; // TODO: Should not be required anymore?
 
 fn guiFrame() !bool {
     var running = true;
-    if (!theme_set)
+    if (!theme_set) {
+        if (!dvui.currentWindow().debug.open) dvui.toggleDebugWindow();
         try setTheme();
-    if (!dvui.currentWindow().debug.open) dvui.toggleDebugWindow();
+    }
     if (!try makeMenu()) return false;
 
     // This vbox contains all of the UI below the menu
@@ -352,7 +355,7 @@ fn guiFrame() !bool {
         // the status bar.
         // TODO: fix this.
         const location = Rect{ .x = 0, .y = 0, .h = vbox.wd.rect.h - status_bar_height, .w = vbox.wd.rect.w };
-        var inner_vbox = dvui.box(@src(), .{}, .{
+        var inner_vbox = dvui.box(@src(), .{ .equal_space = true }, .{
             .expand = .horizontal,
             .background = true,
             .rect = location,
@@ -393,9 +396,12 @@ fn guiFrame() !bool {
                 for (col_widths[1..]) |*w| {
                     if (w.* > 0) w.* = -w.*;
                 }
-                dvui.columnLayoutProportional(&col_widths, &col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
+                dvui.columnLayoutProportional(&col_widths, &col_widths, top_half.data().contentRect().w);
 
-                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
+                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{ .resize_cols = resize_image_grid }, .{
+                    .expand = .both,
+                    .background = true,
+                });
                 defer grid.deinit();
                 resize_image_grid = false;
                 try makeGridHeader(grid_type, grid);
@@ -430,7 +436,7 @@ fn guiFrame() !bool {
         }
 
         // And below the usage graphs is the status bar menu.
-        var menu_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+        var menu_box = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{
             .expand = .horizontal,
             .background = true,
             .margin = Rect{ .y = 3 },
@@ -674,13 +680,38 @@ fn makeFileSelector(id: GridType) !void {
 fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
     inline for (std.meta.fields(GridColumns), 0..) |col, col_num| {
         {
-            // TODO: Fix this for col 1, which is a select / unselect all column. Wonder if we could use the selectable logic?
-            if (dvui.gridHeadingSortable(@src(), grid, col_num, col.name, &gridData(id).sort_order[col_num], .{
-                .sizes = &gridData(id).col_widths,
-                .num = col_num,
-                .min_size = @abs(initial_col_widths[col_num]),
-            }, .{})) {
-                sortDirectories(id, col_num);
+            if (col_num == 0) {
+                if (gridHeadingCheckbox(
+                    @src(),
+                    grid,
+                    col_num,
+                    &gridData(id).select_all_state,
+                    CellStyle{ .cell_opts = .{ .color_fill = dvui.themeGet().fill, .background = true } },
+                )) {
+                    // TODO: This needs fixing. Currently it works out if it is selecting all or none based on whether things are selected or not
+                    // But this doesn't let us show the select all in the heading.
+                    // needs to change the grid data select all state based on selection.
+                    // Select all / none
+                    var checked = false;
+                    for (gridData(id).directoriesOrEmpty()) |dir| {
+                        if (!dir.checked) {
+                            checked = true;
+                            break;
+                        }
+                    }
+                    for (gridData(id).directoriesOrEmpty()) |*dir| {
+                        dir.checked = checked;
+                    }
+                }
+            } else {
+                // TODO: Fix this for col 1, which is a select / unselect all column. Wonder if we could use the selectable logic?
+                if (dvui.gridHeadingSortable(@src(), grid, col_num, col.name, &gridData(id).sort_order[col_num], .{
+                    .sizes = &gridData(id).col_widths,
+                    .num = col_num,
+                    .min_size = @abs(initial_col_widths[col_num]),
+                }, CellStyle{ .cell_opts = .{ .color_fill = dvui.themeGet().fill, .background = true } })) {
+                    sortDirectories(id, col_num);
+                }
             }
         }
     }
@@ -703,7 +734,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         return;
     }
 
-    const directory_list = gridData(id).directories orelse &empty_directory_list;
+    const directory_list = gridData(id).directoriesOrEmpty();
 
     // Don't display the body if:
     // 1) There are no directory entries
@@ -746,7 +777,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     var background: ?dvui.Color = null;
 
     if (pgdn_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / row_height);
+        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / @min(grid.row_height, 1));
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
             if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
@@ -762,7 +793,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         gridData(id).mouse_dir_index = to_display.items[new_index].index;
         gridData(id).kb_dir_index = to_display.items[new_index].index;
     } else if (pgup_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / row_height);
+        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / @min(grid.row_height, 1));
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
             if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
@@ -807,12 +838,14 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
 
         const evts = dvui.events();
         for (evts) |*e| {
-            // eventMatch doesn't work here because the mouse is outside the clip region. I'm not sure why that should be?
+            // TODO: FIX FIX: eventMatch doesn't work here because the mouse is outside the clip region.
+            // I'm not sure why that should be?
             if (e.evt != .mouse) continue;
             const me = e.evt.mouse;
+            if (me.floating_win != dvui.subwindowCurrentId()) continue;
             if (!grid.data().borderRectScale().r.contains(me.p)) continue;
 
-            var dirs = gridData(id).directories orelse &empty_directory_list;
+            var dirs = gridData(id).directoriesOrEmpty();
             rel_mouse_index = if (grid
                 .pointToCell(me.p)) |cell| cell.row_num else break;
             if (rel_mouse_index >= to_display.items.len) break;
@@ -887,6 +920,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
         cell_num.col_num += 1;
 
+        const row_height = @min(grid.row_height, 1);
         const nr_displayed = gridData(id).scroll_info.viewport.h / row_height - 2;
         if (id == focussed_grid and selection_mode == .kb and gridData(id).kb_dir_index == abs_index) {
             const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * row_height; // relative pos
@@ -990,10 +1024,10 @@ fn makeDirectoriesUsageGraph() !void {
 }
 
 fn makeStatusBar() !bool {
-    //const theme = dvui.themeGet();
+    const theme = dvui.themeGet();
     const reversed = dvui.Options{
-        //        .color_text = theme.window.fill,
-        //        .color_fill = theme.text,
+        .color_text = theme.window.fill,
+        .color_fill = theme.text,
         //        .color_fill_hover = .{ .name = .fill_press }, // Added.
         //        .color_fill_press = .{ .name = .fill_hover }, // Added.
         .expand = .horizontal,
@@ -1500,7 +1534,7 @@ fn sortDirectories(id: GridType, sort_by_opt: ?usize) void {
         }
     }
     const sort_col = sort_by_opt orelse currentSortCol(id);
-    const to_sort = gridData(id).directories orelse &empty_directory_list;
+    const to_sort = gridData(id).directoriesOrEmpty();
 
     if (sortOrderForCol(id, sort_col) == .ascending) {
         std.mem.sort(DirectoryEntry, to_sort, sort_col, sortAsc);
@@ -1562,13 +1596,14 @@ pub fn statusBarButton(
     _ = _init_opts;
     const init_opts: dvui.ButtonWidget.InitOptions = .{ .draw_focus = false };
     // If running another command, just show the label.
+    const theme = dvui.themeGet();
 
     const selected = CommandState.current_command == cmd;
     var options2 = opts;
     if (selected) {
-        options2 = options2.override(.{ .color_fill = dvui.themeGet().fill });
+        options2 = options2.override(.{ .color_fill = theme.control.fill_press });
     } else if (!enabled) {
-        options2 = options2.override(.{ .color_fill = opts.color(.fill_press) });
+        options2 = options2.override(.{ .color_fill = theme.control.fill_press });
     }
     var bw = dvui.ButtonWidget.init(src, init_opts, options2);
 
@@ -1589,7 +1624,7 @@ pub fn statusBarButton(
     const click = bw.clicked();
     var options = opts.strip().override(.{ .gravity_x = 0.5, .gravity_y = 0.5 });
 
-    if (bw.pressed() or selected) options = options.override(.{ .color_text = opts.color(.text_press) });
+    if (bw.pressed() or selected) options = options.override(.{ .color_text = theme.control.text_press });
 
     // this child widget:
     // - has bw as parent
@@ -1599,11 +1634,11 @@ pub fn statusBarButton(
     const label_rect = labelNoFmtRect(src, label_str, options);
     const fill_color = color: {
         if (!enabled or bw.hover) {
-            break :color opts.color(.fill_press);
+            break :color theme.control.fill_press;
         } else if (alt_held) {
-            break :color opts.color(.text);
+            break :color theme.control.text;
         } else {
-            break :color opts.color(.fill);
+            break :color theme.control.fill; // TODO: Or window fill?
         }
     };
     _ = dvui.separator(@src(), .{
@@ -1846,7 +1881,7 @@ pub fn processEvents() void {
                 e.handled = true;
                 switch (ke.action) {
                     .down => {
-                        var dirs = gridData(focussed_grid).directories orelse &empty_directory_list;
+                        var dirs = gridData(focussed_grid).directoriesOrEmpty();
                         const current_selection = gridData(focussed_grid).kb_dir_index;
                         if (current_selection < dirs.len)
                             dirs[current_selection].checked = !dirs[current_selection].checked;
@@ -1929,7 +1964,7 @@ pub fn processEvents() void {
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
                     if (textBoxFocused()) break;
 
-                    const dir_list = gridData(focussed_grid).directories orelse &empty_directory_list;
+                    const dir_list = gridData(focussed_grid).directoriesOrEmpty();
                     // if everything is selected, then select none.
                     var select_all = false;
                     for (dir_list) |entry| {
@@ -2033,49 +2068,6 @@ pub fn processEvents() void {
         }
     }
 }
-
-//pub fn getDirectoryById(id: GridType) []DirectoryEntry {
-//    switch (id) {
-//        .image => {
-//            return image_directories orelse &empty_directory_list;
-//        },
-//        .local => {
-//            return local_directories orelse &empty_directory_list;
-//        },
-//    }
-//}
-//
-//pub fn getScrollInfo(id: GridType) *dvui.ScrollInfo {
-//    return &scroll_info[id.toUSize()];
-//}
-
-//pub fn getKbSelectionIndex(id: GridType) usize {
-//    return kb_dir_index[id.toUSize()];
-//}
-
-//pub fn setKbSelectionIndex(id: GridType, value: usize) void {
-//    kb_dir_index[id.toUSize()] = value;
-//}
-
-//pub fn setLastMouseSelectedIndex(id: GridType, value: usize) void {
-//    last_mouse_index[id.toUSize()] = value;
-//}
-//
-//pub fn getLastMouseSelectedIndex(id: GridType) usize {
-//    return last_mouse_index[id.toUSize()];
-//}
-//
-//pub fn getMouseSelectionIndex(id: GridType) usize {
-//    return mouse_dir_index[id.toUSize()];
-//}
-//
-//pub fn setMouseSelectionIndex(id: GridType, value: usize) void {
-//    mouse_dir_index[id.toUSize()] = value;
-//}
-//
-//pub fn getLastMouseSelectionIndex(id: GridType) usize {
-//    return last_mouse_index[id.toUSize()];
-//}
 
 pub fn swapFocussedGrid() void {
     switch (focussed_grid) {
@@ -2464,6 +2456,42 @@ pub const std_options: std.Options = .{
     // Set the log level to info
     .log_level = .debug,
 };
+
+pub fn gridHeadingCheckbox(
+    src: std.builtin.SourceLocation,
+    g: *GridWidget,
+    col_num: usize,
+    select_state: *dvui.selection.SelectAllState,
+    cell_style: anytype, // GridWidget.CellStyle
+) bool {
+    const header_defaults: Options = .{
+        .background = true,
+        .expand = .both,
+        .gravity_x = 0.5,
+        .gravity_y = 0.5,
+    };
+
+    const opts = if (@TypeOf(cell_style) == @TypeOf(.{})) GridWidget.CellStyle.none else cell_style;
+
+    const header_options = header_defaults.override(opts.options(.col(col_num)));
+
+    var cell = g.headerCell(src, col_num, opts.cellOptions(.col(col_num)));
+    defer cell.deinit();
+
+    var is_clicked = false;
+    const selected = select_state.* == .select_all;
+    {
+        _ = dvui.separator(@src(), .{ .expand = .vertical, .gravity_x = 1.0 });
+        is_clicked = if (selected)
+            dvui.button(@src(), "[X]", .{ .draw_focus = false }, header_options)
+        else
+            dvui.button(@src(), "[_]", .{ .draw_focus = false }, header_options);
+    }
+    if (is_clicked) {
+        select_state.* = if (selected) .select_all else .select_none;
+    }
+    return is_clicked;
+}
 
 const ButtonHandler = @import("ButtonHandler.zig");
 const CommandState = @import("CommandState.zig");
