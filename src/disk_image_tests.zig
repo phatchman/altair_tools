@@ -213,6 +213,21 @@ test "8in duplicate filenames" {
     try disk_image._copyToImage(&test_stream, "PINBALL.TXT", 0, true);
 }
 
+test "8in duplicate CPM filenames" {
+    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
+    var test_stream = makeStream(&test_file);
+
+    var image_file: [FDD_8IN.image_size]u8 = undefined;
+    var disk_image = try newFormattedMemoryDiskImage(&image_file, FDD_8IN);
+    defer disk_image.deinit();
+
+    try disk_image._copyToImage(&test_stream, "PINBALL2.TXT2", 0, false);
+    try std.testing.expectError(
+        std.fs.File.OpenError.PathAlreadyExists,
+        disk_image._copyToImage(&test_stream, "PINBALL22.TXT", 0, false),
+    );
+}
+
 test "test force overwrite" {
     var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream = makeStream(&test_file);
