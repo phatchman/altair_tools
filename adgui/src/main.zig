@@ -73,7 +73,6 @@ var current_user: usize = 16; // 16 = all users. 0-15 = individual user.
 var copy_mode = CopyMode.AUTO;
 
 // The list of directory entries for the image and local filesystems
-var image_directories: ?[]DirectoryEntry = null;
 var local_directories: ?[]DirectoryEntry = null;
 
 const GridType = enum {
@@ -120,11 +119,15 @@ const FileGridData = struct {
     mouse_dir_index: usize = 0,
     last_mouse_index: usize = 0,
 
-    scroll_info: dvui.ScrollInfo = .{}, // TODO
+    scroll_info: dvui.ScrollInfo = .{},
     sort_order: [num_cols]dvui.GridWidget.SortDirection = @splat(.unsorted),
+    col_widths: [num_cols]f32 = initial_col_widths,
+    path_initialized: bool = false,
+    path_selection: ?[]const u8 = null,
+    directories: ?[]DirectoryEntry = null,
 };
 
-var grid_data: [GridType.num_grids]FileGridData = .{ .{}, .{} };
+var grid_data: [GridType.num_grids]FileGridData = @splat(.{});
 
 fn gridData(id: GridType) *FileGridData {
     return &grid_data[id.toUSize()];
@@ -141,36 +144,23 @@ fn textBoxFocused() bool {
 
 // Layout information for each column.
 const num_columns = 7;
-var initial_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
-var image_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
+const initial_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
+//var image_col_widths = [num_columns]f32{ 45, -70, -30, -20, -70, -40, -20 };
 var local_col_widths = [num_columns]f32{ 10, 70, 30, 20, 70, 40, 10 };
 // Used for column widths. Note is shared by both grids as used sequentially.
 var header_rects: [num_columns]dvui.Rect = @splat(dvui.Rect.all(0));
 const row_height: f32 = 25.0;
 const status_bar_height = 35 * 2;
 
-var image_path_initialized = false;
-var image_path_selection: ?[]const u8 = null;
-
-var local_path_initialized = false;
-var local_path_selection: ?[]const u8 = null;
-
-fn setLocalPath(path: []const u8) !void {
-    if (local_path_selection) |local_path| {
-        allocator.free(local_path);
-    }
-    local_path_selection = try allocator.dupe(u8, path);
-    local_path_initialized = false;
-}
-
-fn setImagePath(path: []const u8) !void {
-    if (image_path_selection) |image_path| {
+fn setPath(id: GridType, path: []const u8) !void {
+    const gd = gridData(id);
+    if (gd.path_selection) |image_path| {
         allocator.free(image_path);
     }
-    image_path_selection = try allocator.dupe(u8, path);
-    image_path_initialized = false;
+    gd.path_selection = try allocator.dupe(u8, path);
+    gd.path_initialized = false;
 }
-const empty_directory_list: [0]DirectoryEntry = .{};
+var empty_directory_list: [0]DirectoryEntry = .{};
 
 var commands = Commands{};
 
@@ -200,10 +190,13 @@ pub fn main() !void {
     defer backend.deinit();
     Backend.c.SDL_SetWindowMinimumSize(backend.window, 900, 600);
 
-    try setImagePath("");
-    defer allocator.free(image_path_selection.?);
-    try setLocalPath(".");
-    defer allocator.free(local_path_selection.?);
+    try setPath(.image, "");
+    try setPath(.local, ".");
+    defer {
+        for (&grid_data) |*gd| {
+            allocator.free(gd.path_selection.?); // TODO: Yeah this doesn;t seem to need to be optional?
+        }
+    }
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
@@ -214,10 +207,10 @@ pub fn main() !void {
     }
 
     open_local: {
-        commands.openLocalDirectory(local_path_selection.?) catch {
+        commands.openLocalDirectory(gridData(.local).path_selection.?) catch {
             break :open_local;
         };
-        local_directories = commands.localDirectoryListing(allocator) catch null;
+        gridData(.local).directories = commands.localDirectoryListing(allocator) catch null;
     }
 
     _ = Backend.c.SDL_EventState(Backend.c.SDL_DROPFILE, Backend.c.SDL_ENABLE);
@@ -240,7 +233,7 @@ pub fn main() !void {
                         const message = try std.fmt.allocPrint(dvui.currentWindow().arena(), "Unable to Put file {s}\n", .{filename});
                         errorDialog("Copying file", message, err);
                     };
-                    image_directories = commands.directoryListing(allocator) catch null;
+                    gridData(.image).directories = commands.directoryListing(allocator) catch null;
                     sortDirectories(.image, null);
                     Backend.c.SDL_free(dropped_file);
                 },
@@ -386,54 +379,31 @@ fn guiFrame() !bool {
             .background = true,
         });
         defer paned.deinit();
-        if (paned.showFirst()) {
-            // Top (or left) half of the pane contaims the files from the Altair disk image.
-            var top_half = dvui.box(@src(), .{}, .{
-                .expand = .both,
-                .color_border = dvui.themeGet().text,
-                .border = dvui.Rect.all(2),
-                .corner_radius = dvui.Rect.all(5),
-                .background = true, // remove
-            });
-            defer top_half.deinit();
-            try makeFileSelector(.image);
+        for (std.enums.values(GridType)) |grid_type| {
+            if (if (grid_type == .image) paned.showFirst() else paned.showSecond()) {
+                // Top (or left) half of the pane contaims the files from the Altair disk image.
+                var top_half = dvui.box(@src(), .{}, .{
+                    .expand = .both,
+                    .color_border = dvui.themeGet().text,
+                    .border = dvui.Rect.all(2),
+                    .corner_radius = dvui.Rect.all(5),
+                    .background = true, // remove
+                    .id_extra = @intFromEnum(grid_type),
+                });
+                defer top_half.deinit();
+                try makeFileSelector(grid_type);
+                var col_widths = gridData(grid_type).col_widths;
+                for (col_widths[1..]) |*w| {
+                    if (w.* > 0) w.* = -w.*;
+                }
+                dvui.columnLayoutProportional(&col_widths, &col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
 
-            for (image_col_widths[1..]) |*w| {
-                if (w.* > 0) w.* = -w.*;
+                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
+                defer grid.deinit();
+                resize_image_grid = false;
+                try makeGridHeader(grid_type, grid);
+                makeGridBody(grid_type, grid);
             }
-            dvui.columnLayoutProportional(&image_col_widths, &image_col_widths, top_half.data().contentRect().w - GridWidget.scrollbar_padding_defaults.w);
-
-            var grid = dvui.grid(@src(), .colWidths(&image_col_widths), .{ .resize_cols = resize_image_grid }, .{ .expand = .both, .background = true });
-            defer grid.deinit();
-            resize_image_grid = false;
-            try makeGridHeader(.image, grid);
-            makeGridBody(.image, grid);
-        }
-        if (paned.showSecond()) {
-            // The bottom or right half is for displaying local system files.
-            var bottom_half = dvui.box(@src(), .{}, .{
-                .expand = .both,
-                .border = dvui.Rect.all(2),
-                .corner_radius = dvui.Rect.all(5),
-                .background = true, // remove
-            });
-            defer bottom_half.deinit();
-            try makeFileSelector(.local);
-            var grid = dvui.box(@src(), .{}, .{
-                .background = true,
-                .expand = .horizontal,
-            });
-            defer grid.deinit();
-
-            // This box is just for padding purposes
-            var header = dvui.box(@src(), .{}, .{
-                .expand = .horizontal,
-                .background = true,
-            });
-            defer header.deinit();
-
-            //try makeGridHeader(.local);
-            //try makeGridBody(.local);
         }
     }
     {
@@ -597,16 +567,8 @@ fn showShortcuts() !void {
 }
 
 fn makeFileSelector(id: GridType) !void {
-    const path = switch (id) {
-        .image,
-        => &image_path_selection,
-        .local => &local_path_selection,
-    };
-
-    const is_initialised = switch (id) {
-        .image => &image_path_initialized,
-        .local => &local_path_initialized,
-    };
+    const path = &gridData(id).path_selection;
+    const is_initialised = &gridData(id).path_initialized; // TODO: Still need to investigate this is_initialized stuff.
 
     var file_selector_box = dvui.box(
         @src(),
@@ -661,31 +623,24 @@ fn makeFileSelector(id: GridType) !void {
         dvui.refresh(null, @src(), null);
     }
     if (entry.enter_pressed) {
-        switch (id) {
-            .image => {
-                try setImagePath(entry.getText());
-                openImageFile(entry.getText());
-            },
-            .local => {
-                try setLocalPath(entry.getText());
-                openLocalDirectory(entry.getText());
-            },
-        }
+        try setPath(id, entry.getText());
+        openPath(id, entry.getText());
         dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
     }
     entry.deinit();
 
     if (buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = id.toUSize() }, id)) {
+        // TODO: Can these be merged by using gridDatA()?
         if (id == .image) {
             const path_to_use = path: {
-                if (image_path_selection) |image_path| {
+                if (gridData(.image).path_selection) |image_path| {
                     break :path std.fs.cwd().realpathAlloc(allocator, image_path) catch defaultPath();
                 } else {
                     break :path std.fs.cwd().realpathAlloc(allocator, ".") catch defaultPath();
                 }
             };
             defer allocator.free(path_to_use);
-            try setImagePath(path_to_use);
+            try setPath(id, path_to_use);
             const filename = try dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
                 .title = "Select disk image",
                 .filters = &.{ "*.dsk", "*.img" },
@@ -693,134 +648,52 @@ fn makeFileSelector(id: GridType) !void {
                 .path = path_to_use,
             });
             if (filename) |f| {
-                image_directories = null;
+                gridData(.image).directories = null;
                 openImageFile(f);
-                try setImagePath(f);
+                try setPath(id, f);
                 is_initialised.* = false;
             }
         } else {
             const path_to_use = path: {
-                if (local_path_selection) |local_path| {
+                if (gridData(.local).path_selection) |local_path| {
                     break :path std.fs.cwd().realpathAlloc(allocator, local_path) catch defaultPath();
                 } else {
                     break :path std.fs.cwd().realpathAlloc(allocator, ".") catch defaultPath();
                 }
             };
             defer allocator.free(path_to_use);
-            try setLocalPath(path_to_use);
+            try setPath(.local, path_to_use);
 
             const dirname =
                 try dvui.dialogNativeFolderSelect(dvui.currentWindow().arena(), .{ .title = "Select a Folder", .path = path_to_use });
             if (dirname) |dir| {
                 openLocalDirectory(dir);
-                try setLocalPath(dir);
+                try setPath(.local, dir);
             }
         }
     }
 }
 
-// TODO: Convert sorting to use numbers instead of names?
-fn sortDir(id: GridType, col_num: usize) *dvui.GridWidget.SortDirection {
-    return &gridData(id).sort_order[col_num];
-}
-
 fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
-    var col_num: usize = 0;
-    {
-        const col_name = "[_]";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-        _ = dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .fixed, CellStyle{ .cell_opts = .{ .size = .{ .w = 45 } } });
-    }
-    {
-        const col_name = "Name";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
-        }
-    }
-    {
-        const col_name = "Ext";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
-        }
-    }
-    {
-        const col_name = "A";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
-        }
-    }
-    {
-        const col_name = "Size";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
-        }
-    }
-    {
-        const col_name = "Used";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
-        }
-    }
-    {
-        const col_name = "U";
-        const sort_dir = sortDir(id, col_num);
-        defer col_num += 1;
-
-        if (dvui.gridHeadingSortable(@src(), grid, col_num, col_name, sort_dir, .{
-            .sizes = &image_col_widths,
-            .num = col_num,
-            .min_size = @abs(initial_col_widths[col_num]),
-        }, .{})) {
-            sortDirectories(id, col_num);
+    inline for (std.meta.fields(GridColumns), 0..) |col, col_num| {
+        {
+            // TODO: Fix this for col 1, which is a select / unselect all column. Wonder if we could use the selectable logic?
+            if (dvui.gridHeadingSortable(@src(), grid, col_num, col.name, &gridData(id).sort_order[col_num], .{
+                .sizes = &gridData(id).col_widths,
+                .num = col_num,
+                .min_size = @abs(initial_col_widths[col_num]),
+            }, .{})) {
+                sortDirectories(id, col_num);
+            }
         }
     }
 }
 
 // TODO: Thius needs some cleanup / refactoring. Especially for the guard / return cases.
 fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
-    const directory_list = getDirectoryById(id);
     var should_display = true;
 
-    const loaded = switch (id) {
-        .image => if (image_directories == null) false else true,
-        .local => if (local_directories == null) false else true,
-    };
+    const loaded = gridData(id).directories != null;
     if (!loaded) {
         var cell = grid.bodyCell(@src(), .colRow(0, 0), .{});
         cell.deinit();
@@ -832,6 +705,8 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         }
         return;
     }
+
+    const directory_list = gridData(id).directories orelse &empty_directory_list;
 
     // Don't display the body if:
     // 1) There are no directory entries
@@ -935,54 +810,50 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
 
         const evts = dvui.events();
         for (evts) |*e| {
-            //            if (!dvui.eventMatchSimple(e, grid.data())) {
-            //                continue;
-            //            }
+            // eventMatch doesn't work here because the mouse is outside the clip region. I'm not sure why that should be?
+            if (e.evt != .mouse) continue;
+            const me = e.evt.mouse;
+            if (!grid.data().borderRectScale().r.contains(me.p)) continue;
 
-            switch (e.evt) {
-                .mouse => |me| {
-                    var dirs = getDirectoryById(id);
-                    rel_mouse_index = if (grid.pointToCell(me.p)) |cell| cell.row_num else 0;
-                    rel_mouse_index = @min(rel_mouse_index, dirs.len - 1);
-                    const abs_mouse_index = to_display.items[rel_mouse_index].index;
+            var dirs = gridData(id).directories orelse &empty_directory_list;
+            rel_mouse_index = if (grid
+                .pointToCell(me.p)) |cell| cell.row_num else break;
+            if (rel_mouse_index >= dirs.len) break;
 
-                    if (me.action == .press and me.button.pointer()) {
-                        e.handled = true;
-                        if (!shift_held) {
-                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
-                            gridData(id).last_mouse_index = abs_mouse_index;
-                        } else {
-                            const prev_index = gridData(id).last_mouse_index;
-                            const prev_checked = dirs[prev_index].checked;
-                            const first_idx = @min(prev_index, abs_mouse_index);
-                            const last_idx = @max(prev_index, abs_mouse_index);
-                            for (first_idx..last_idx + 1) |idx| {
-                                dirs[idx].checked = prev_checked;
-                            }
-                        }
-                    } else if (selection_mode == .mouse and me.action == .position) {
-                        dvui.focusWidget(null, grid.data().id, e.num);
-                        gridData(id).mouse_dir_index = abs_mouse_index;
-                        gridData(id).kb_dir_index = abs_mouse_index;
-                        focussed_grid = id;
-                        selection_mode = .mouse;
-                    } else if (me.action == .motion) {
-                        selection_mode = .mouse;
+            const abs_mouse_index = to_display.items[rel_mouse_index].index;
+
+            if (me.action == .press and me.button.pointer()) {
+                e.handled = true;
+                if (!shift_held) {
+                    dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
+                    gridData(id).last_mouse_index = abs_mouse_index;
+                } else {
+                    const prev_index = gridData(id).last_mouse_index;
+                    const prev_checked = dirs[prev_index].checked;
+                    const first_idx = @min(prev_index, abs_mouse_index);
+                    const last_idx = @max(prev_index, abs_mouse_index);
+                    for (first_idx..last_idx + 1) |idx| {
+                        dirs[idx].checked = prev_checked;
                     }
-                },
-                else => {},
+                }
+            } else if (selection_mode == .mouse and me.action == .position) {
+                dvui.focusWidget(null, grid.data().id, e.num);
+                gridData(id).mouse_dir_index = abs_mouse_index;
+                gridData(id).kb_dir_index = abs_mouse_index;
+                focussed_grid = id;
+                selection_mode = .mouse;
+            } else if (me.action == .motion) {
+                selection_mode = .mouse;
             }
         }
     }
 
     for (to_display.items, 0..) |entry, rel_idx| {
-        // TODO: Make this nicer
         const abs_index = to_display.items[rel_idx].index;
 
         if ((selection_mode == .kb and abs_index == gridData(id).kb_dir_index and id == focussed_grid) or
             (selection_mode == .mouse and abs_index == gridData(id).mouse_dir_index and id == focussed_grid))
         {
-            std.debug.print("Setting background for {d} to fill press\n", .{abs_index});
             background = dvui.themeGet().fill_press;
         } else {
             background = null;
@@ -997,7 +868,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
 
         const invalid_number_display = "####";
         var buf = std.mem.zeroes([256]u8);
-        const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
+        const checked_value = if (gridData(id).directories.?[abs_index].checked) "[X]" else "[ ]";
         makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style_fixed);
         cell_num.col_num += 1;
         makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.filename(), &cell_style);
@@ -1033,44 +904,6 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         }
     }
 }
-
-//fn makeGridHeading(label: []const u8, num: u32, id: GridType) void {
-//    var grp = dvui.box(@src(), .{ .dir = .horizontal }, .{
-//        .id_extra = num,
-//        .expand = .horizontal,
-//    });
-//    defer grp.deinit();
-//    if (dvui.button(
-//        @src(),
-//        label,
-//        .{ .draw_focus = false },
-//        .{
-//            .id_extra = num,
-//            .corner_radius = Rect{},
-//            .margin = Rect{},
-//            .expand = .horizontal,
-//            .min_size_content = .{ .h = 1, .w = min_sizes[num] },
-//        },
-//    )) {
-//        if (num == 0) {
-//            // Select all / none
-//            var checked = false;
-//            for (getDirectoryById(id)) |dir| {
-//                if (!dir.checked) {
-//                    checked = true;
-//                    break;
-//                }
-//            }
-//            for (getDirectoryById(id)) |*dir| {
-//                dir.checked = checked;
-//            }
-//        } else {
-//            sortDirectories(id, label, true);
-//        }
-//    }
-//    _ = dvui.separator(@src(), .{ .id_extra = num, .expand = .vertical, .margin = Rect.all(1) });
-//    header_rects[num] = grp.data().rect;
-//}
 
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
@@ -1175,41 +1008,42 @@ fn makeStatusBar() !bool {
     dvui.themeSet(reversed_theme);
     {
         defer dvui.themeSet(global_theme);
+        const image_opened = gridData(.image).directories != null;
 
-        if (statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_directories != null)) {
+        if (statusBarButton(@src(), "GET", .{}, reversed, 0, .get, image_opened)) {
             if (CommandState.shouldProcessCommand()) {
                 try getButtonHandler();
             }
         }
-        if (statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_directories != null)) {
+        if (statusBarButton(@src(), "PUT", .{}, reversed, 0, .put, image_opened)) {
             if (CommandState.shouldProcessCommand()) {
                 try putButtonHandler();
             }
         }
-        if (statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_directories != null) or
+        if (statusBarButton(@src(), "ERASE", .{}, reversed, 0, .erase, image_opened) or
             CommandState.current_command == .erase)
         {
             if (CommandState.shouldProcessCommand()) {
                 try eraseButtonHandler();
             }
         }
-        if (statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_directories != null)) {
+        if (statusBarButton(@src(), "GET SYS", .{}, reversed, 4, .getsys, image_opened)) {
             if (CommandState.shouldProcessCommand()) {
                 try getSysButtonHandler();
             }
         }
-        if (statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_directories != null)) {
+        if (statusBarButton(@src(), "PUT SYS", .{}, reversed, 5, .putsys, image_opened)) {
             if (CommandState.shouldProcessCommand()) {
                 try putSysButtonHandler();
             }
         }
-        if (statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
+        if (statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_opened)) {
             commands.closeImage();
-            image_directories = null;
+            gridData(.image).directories = null;
             CommandState.finishCommand();
         }
 
-        if (statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_directories != null)) {
+        if (statusBarButton(@src(), "INFO", .{}, reversed, 2, .info, image_opened)) {
             if (CommandState.shouldProcessCommand()) {
                 try infoButtonHandler();
             }
@@ -1225,7 +1059,7 @@ fn makeStatusBar() !bool {
             current_user += 1;
             current_user %= 17;
             if (current_user != 16) {
-                if (image_directories) |directories| {
+                if (gridData(.image).directories) |directories| {
                     for (directories) |*entry| {
                         if (entry.user() != current_user) {
                             entry.checked = false;
@@ -1395,7 +1229,7 @@ pub fn makeTransferDialog() !void {
                     errdefer entry.deinit();
                     if (CommandState.file_selector_buffer == null) {
                         if (CommandState.buttons.image_selector) {
-                            if (image_path_selection) |image_path| {
+                            if (gridData(.image).path_selection) |image_path| {
                                 const dir_path = std.fs.path.dirname(image_path) orelse ".";
                                 const image_name = try findNewImageName(CommandState.arena.allocator(), dir_path);
                                 try CommandState.setFileSelectorBuffer(image_name);
@@ -1548,8 +1382,8 @@ pub fn makeTransferDialog() !void {
                     local_directories = commands.localDirectoryListing(allocator) catch null;
                     sortDirectories(.local, null);
                 }
-                if (image_directories != null) {
-                    image_directories = commands.directoryListing(allocator) catch null;
+                if (gridData(.image).directories != null) {
+                    gridData(.image).directories = commands.directoryListing(allocator) catch null;
                     sortDirectories(.image, null);
                 }
             }
@@ -1669,7 +1503,7 @@ fn sortDirectories(id: GridType, sort_by_opt: ?usize) void {
         }
     }
     const sort_col = sort_by_opt orelse currentSortCol(id);
-    const to_sort = getDirectoryById(id);
+    const to_sort = gridData(id).directories orelse &empty_directory_list;
 
     if (sortOrderForCol(id, sort_col) == .ascending) {
         std.mem.sort(DirectoryEntry, to_sort, sort_col, sortAsc);
@@ -2015,7 +1849,7 @@ pub fn processEvents() void {
                 e.handled = true;
                 switch (ke.action) {
                     .down => {
-                        var dirs = getDirectoryById(focussed_grid);
+                        var dirs = gridData(focussed_grid).directories orelse &empty_directory_list;
                         const current_selection = gridData(focussed_grid).kb_dir_index;
                         if (current_selection < dirs.len)
                             dirs[current_selection].checked = !dirs[current_selection].checked;
@@ -2098,7 +1932,7 @@ pub fn processEvents() void {
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
                     if (textBoxFocused()) break;
 
-                    const dir_list = getDirectoryById(focussed_grid);
+                    const dir_list = gridData(focussed_grid).directories orelse &empty_directory_list;
                     // if everything is selected, then select none.
                     var select_all = false;
                     for (dir_list) |entry| {
@@ -2176,7 +2010,7 @@ pub fn processEvents() void {
 
                 if (ke.action == .down) {
                     swapFocussedGrid();
-                    if (getDirectoryById(focussed_grid).len == 0) {
+                    if (gridData(focussed_grid).directories != null and gridData(focussed_grid).directories.?.len == 0) {
                         // swap back if other grid is empty.
                         // Note there is a bug here when the user filter is on.. hmph!
                         swapFocussedGrid();
@@ -2203,17 +2037,17 @@ pub fn processEvents() void {
     }
 }
 
-pub fn getDirectoryById(id: GridType) []DirectoryEntry {
-    switch (id) {
-        .image => {
-            return image_directories orelse &empty_directory_list;
-        },
-        .local => {
-            return local_directories orelse &empty_directory_list;
-        },
-    }
-}
-
+//pub fn getDirectoryById(id: GridType) []DirectoryEntry {
+//    switch (id) {
+//        .image => {
+//            return image_directories orelse &empty_directory_list;
+//        },
+//        .local => {
+//            return local_directories orelse &empty_directory_list;
+//        },
+//    }
+//}
+//
 //pub fn getScrollInfo(id: GridType) *dvui.ScrollInfo {
 //    return &scroll_info[id.toUSize()];
 //}
@@ -2261,21 +2095,27 @@ pub fn nextCopyMode(mode: CopyMode) CopyMode {
     };
 }
 
+fn checkImageFileIsOpened() bool {
+    const image_grid_data = gridData(.image);
+    if (image_grid_data.directories == null or image_grid_data.path_selection == null) {
+        CommandState.finishCommand();
+        CommandState.freeResources();
+        return false;
+    }
+    return true;
+}
+
 /// Get selected files from image to local
 /// Should be called each frame until CommandState.current_command != .get
 /// Handles at most 1 file per frame.
 fn getButtonHandler() !void {
-    if (image_directories == null or local_path_selection == null) {
-        CommandState.finishCommand();
-        CommandState.freeResources();
-        return;
-    }
+    if (!checkImageFileIsOpened()) return;
     CommandState.current_command = .get;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
             pub fn getFile(file: *DirectoryEntry) !void {
-                const local_path = local_path_selection.?;
+                const local_path = gridData(.local).path_selection.?;
                 try commands.getFile(file, local_path, copy_mode, CommandState.state == .confirm);
             }
         }.getFile,
@@ -2286,21 +2126,17 @@ fn getButtonHandler() !void {
         }.handleError,
         .{},
     );
-    try handler.process(image_directories.?);
+    try handler.process(gridData(.image).directories orelse &empty_directory_list);
 }
 
 fn putButtonHandler() !void {
-    if (local_path_selection == null or local_directories == null) {
-        CommandState.finishCommand();
-        CommandState.freeResources();
-        return;
-    }
+    if (!checkImageFileIsOpened()) return;
     CommandState.current_command = .put;
 
     const handler = ButtonHandler.newDirectoryListHandler(
         struct {
             pub fn putFile(file: *DirectoryEntry) !void {
-                const local_path = local_path_selection.?;
+                const local_path = gridData(.local).path_selection.?;
                 try commands.putFile(file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm);
                 // TODO: Think of a way to make the grid get filled as files are copied.
             }
@@ -2322,15 +2158,11 @@ fn putButtonHandler() !void {
         }.handleError,
         .{},
     );
-    try handler.process(local_directories.?);
+    try handler.process(local_directories orelse &empty_directory_list);
 }
 
 fn eraseButtonHandler() !void {
-    if (image_path_selection == null) {
-        CommandState.finishCommand();
-        CommandState.freeResources();
-        return;
-    }
+    if (!checkImageFileIsOpened()) return;
     CommandState.current_command = .erase;
 
     const handler = ButtonHandler.newDirectoryListHandler(
@@ -2352,7 +2184,7 @@ fn eraseButtonHandler() !void {
             .skip_when_no_to_all = true,
         },
     );
-    try handler.process(image_directories.?);
+    try handler.process(gridData(.image).directories orelse &empty_directory_list);
 }
 
 fn newButtonHandler() !void {
@@ -2360,11 +2192,11 @@ fn newButtonHandler() !void {
 
     const handler = ButtonHandler.newPromptForFileHandler(struct {
         pub fn createNewImage(image_path: []const u8, _: ButtonHandler.Options) !void {
-            image_directories = null;
+            gridData(.image).directories = null;
             const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
             try commands.createNewImage(image_path, image_type);
-            try setImagePath(image_path);
-            image_directories = try commands.directoryListing(allocator);
+            try setPath(.image, image_path);
+            gridData(.image).directories = try commands.directoryListing(allocator);
             sortDirectories(.image, null);
         }
     }.createNewImage, struct {
@@ -2544,11 +2376,11 @@ pub fn openImageFile(filename: []const u8) void {
         } else if (image_type == .HDD_5MB) {
             image_type = dialogFollowup.img_type.?;
         }
-        image_directories = null;
+        gridData(.image).directories = null;
         commands.openExistingImage(filename, image_type) catch |err| {
             break :main errorDialog(error_title, "Could not open image file.", err);
         };
-        image_directories = commands.directoryListing(allocator) catch |err| {
+        gridData(.image).directories = commands.directoryListing(allocator) catch |err| {
             break :main errorDialog(error_title, "Could not open directory table.", err);
         };
         sortDirectories(.image, null);
@@ -2557,9 +2389,16 @@ pub fn openImageFile(filename: []const u8) void {
     resize_image_grid = true;
     if (!success) {
         commands.closeImage();
-        image_directories = null;
+        gridData(.image).directories = null;
     }
     dialogFollowup.deinit();
+}
+
+pub fn openPath(id: GridType, path: []const u8) void {
+    switch (id) {
+        .image => openImageFile(path),
+        .local => openLocalDirectory(path),
+    }
 }
 
 pub fn openLocalDirectory(path: []const u8) void {
@@ -2586,7 +2425,7 @@ pub fn openLocalDirectory(path: []const u8) void {
 fn copyFilenamesToClipboard() !void {
     var buf_len: usize = 1; // For the null
     var any_selected: bool = false;
-    if (image_directories) |dirs| {
+    if (gridData(.image).directories) |dirs| {
         for (dirs) |*entry| {
             buf_len += entry.filenameAndExtension().len + 1;
             any_selected = any_selected or entry.isSelected();
