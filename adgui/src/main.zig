@@ -72,9 +72,6 @@ var selection_mode = SelectionMode.mouse;
 var current_user: usize = 16; // 16 = all users. 0-15 = individual user.
 var copy_mode = CopyMode.AUTO;
 
-// The list of directory entries for the image and local filesystems
-var local_directories: ?[]DirectoryEntry = null;
-
 const GridType = enum {
     image,
     local,
@@ -818,7 +815,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             var dirs = gridData(id).directories orelse &empty_directory_list;
             rel_mouse_index = if (grid
                 .pointToCell(me.p)) |cell| cell.row_num else break;
-            if (rel_mouse_index >= dirs.len) break;
+            if (rel_mouse_index >= to_display.items.len) break;
 
             const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
@@ -1378,8 +1375,8 @@ pub fn makeTransferDialog() !void {
                 CommandState.finishCommand();
                 CommandState.freeResources();
                 dialog_win.close(); // can close the dialog this way
-                if (local_directories != null) {
-                    local_directories = commands.localDirectoryListing(allocator) catch null;
+                if (gridData(.local).directories != null) {
+                    gridData(.local).directories = commands.localDirectoryListing(allocator) catch null;
                     sortDirectories(.local, null);
                 }
                 if (gridData(.image).directories != null) {
@@ -2158,7 +2155,7 @@ fn putButtonHandler() !void {
         }.handleError,
         .{},
     );
-    try handler.process(local_directories orelse &empty_directory_list);
+    try handler.process(gridData(.local).directories orelse &empty_directory_list);
 }
 
 fn eraseButtonHandler() !void {
@@ -2406,18 +2403,18 @@ pub fn openLocalDirectory(path: []const u8) void {
 
     main: {
         const error_title = "Error opening directory";
-        local_directories = null;
+        gridData(.local).directories = null;
         commands.openLocalDirectory(path) catch |err| {
             break :main errorDialog(error_title, "Could not open directory.", err);
         };
-        local_directories = commands.localDirectoryListing(allocator) catch |err| {
+        gridData(.local).directories = commands.localDirectoryListing(allocator) catch |err| {
             break :main errorDialog(error_title, "Could not get directtory listing.", err);
         };
         sortDirectories(.local, null);
         success = true;
     }
     if (!success) {
-        local_directories = null;
+        gridData(.local).directories = null;
     }
 }
 
