@@ -189,7 +189,7 @@ pub fn main() !void {
     defer backend.deinit();
     Backend.c.SDL_SetWindowMinimumSize(backend.window, 900, 600);
 
-    try setPath(.image, "");
+    try setPath(.image, "C:\\src\\altair_tools\\adgui\\tst\\HDSK04_NEW.DSK");
     try setPath(.local, ".");
     defer {
         for (&grid_data) |*gd| {
@@ -332,8 +332,6 @@ fn setTheme() !void {
     theme_set = true;
 }
 
-var resize_image_grid: bool = false; // TODO: Should not be required anymore?
-
 fn guiFrame() !bool {
     var running = true;
     if (!theme_set) {
@@ -367,7 +365,6 @@ fn guiFrame() !bool {
         // alt key being pressed etc.
         // TODO: This needs to be split up to events that should happen before widgets can handle them and
         // those that should be handled after all widgets.
-        processEvents();
 
         // Paned widget containts the two scrolling file grids.
         // User can select horizontal or vertial orientation.
@@ -379,7 +376,14 @@ fn guiFrame() !bool {
             .background = true,
         });
         defer paned.deinit();
+
+        // Grid is considered to have focus if:
+        // 1) There is no dialog window showing
+        // 2) The file selectors do not have focus.
+
         for (std.enums.values(GridType)) |grid_type| {
+            var grid_focused = false;
+
             if (if (grid_type == .image) paned.showFirst() else paned.showSecond()) {
                 // Top (or left) half of the pane contaims the files from the Altair disk image.
                 var top_half = dvui.box(@src(), .{}, .{
@@ -391,21 +395,47 @@ fn guiFrame() !bool {
                     .id_extra = @intFromEnum(grid_type),
                 });
                 defer top_half.deinit();
+                // Check the the file selector does not have focus.
+                const focused_widget = dvui.lastFocusedIdInFrame();
                 try makeFileSelector(grid_type);
+                if (focussed_grid == grid_type) {
+                    grid_focused = dvui.lastFocusedIdInFrameSince(focused_widget) == null;
+                }
+                //std.debug.print("hocus focus {s}:{s}:{}:{?}\n", .{ @tagName(focussed_grid), @tagName(grid_type), focused_widget, dvui.lastFocusedIdInFrameSince(focused_widget) });
+
                 var col_widths = gridData(grid_type).col_widths;
                 for (col_widths[1..]) |*w| {
                     if (w.* > 0) w.* = -w.*;
                 }
                 dvui.columnLayoutProportional(&col_widths, &col_widths, top_half.data().contentRect().w);
 
-                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{ .resize_cols = resize_image_grid }, .{
+                //                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{ .scroll_opts = .{ .scroll_info = &gridData(grid_type).scroll_info } }, .{
+                var grid = dvui.grid(@src(), .colWidths(&col_widths), .{}, .{
                     .expand = .both,
                     .background = true,
+                    .padding = Rect.all(0),
                 });
                 defer grid.deinit();
-                resize_image_grid = false;
+
+                std.debug.print("grid_focussed = {}\n", .{grid_focused});
+                processEvents(grid_focused and !showing_dialog);
+
                 try makeGridHeader(grid_type, grid);
-                makeGridBody(grid_type, grid);
+                const cell_to_focus = makeGridBody(grid_type, grid);
+
+                // TODO: This still isn;t quite working when the window is tabbed.
+                if (grid_focused and focussed_grid == grid_type) {
+                    if (cell_to_focus) |cell_id| {
+                        dvui.focusWidget(cell_id, null, null);
+                    }
+                } else if (dvui.lastFocusedIdInFrame() == .zero) {
+                    if (grid.bscroll) |*bscroll| {
+                        dvui.focusWidget(bscroll.data().id, null, null);
+                    }
+                }
+
+                // If return is non null, can pass to `eventMatch` .focus_id to match key
+                // events the focused widget got but didn't handle.
             }
         }
     }
@@ -633,7 +663,7 @@ fn makeFileSelector(id: GridType) !void {
     entry.deinit();
 
     if (buttonIcon(@src(), "toggle", folder_icon, .{ .draw_focus = false }, .{ .id_extra = id.toUSize() }, id)) {
-        // TODO: Can these be merged by using gridDatA()?
+        dvui.focusWidget(null, null, null); // Don't leave the focus on the button as we want it to be on the grid.
         if (id == .image) {
             const path_to_use = path: {
                 if (gridData(.image).path_selection) |image_path| {
@@ -718,8 +748,9 @@ fn makeGridHeader(id: GridType, grid: *dvui.GridWidget) !void {
 }
 
 // TODO: Thius needs some cleanup / refactoring. Especially for the guard / return cases.
-fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
+fn makeGridBody(id: GridType, grid: *dvui.GridWidget) ?dvui.Id {
     var should_display = true;
+    var focused_cell: ?dvui.Id = null;
 
     const loaded = gridData(id).directories != null;
     if (!loaded) {
@@ -731,7 +762,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             .image => dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
             .local => dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
         }
-        return;
+        return null;
     }
 
     const directory_list = gridData(id).directoriesOrEmpty();
@@ -756,7 +787,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     }
 
     if (!should_display) {
-        return;
+        return null;
     }
 
     // Filter out any files that shouldn't be displayed.
@@ -764,7 +795,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         entry: *DirectoryEntry,
         index: usize, // Real index of the entry in the unfiltered "directory_list"
     };
-    var to_display = std.ArrayListUnmanaged(DisplayedFile).initCapacity(dvui.currentWindow().arena(), directory_list.len) catch return;
+    var to_display = std.ArrayListUnmanaged(DisplayedFile).initCapacity(dvui.currentWindow().arena(), directory_list.len) catch return null;
     // No need to deinit, as using arena.
 
     for (directory_list, 0..) |*entry, i| {
@@ -772,13 +803,15 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         if (id == .image and current_user != 16 and current_user != entry.user()) continue;
         to_display.appendAssumeCapacity(.{ .entry = entry, .index = i });
     }
-    if (to_display.items.len == 0) return;
+    if (to_display.items.len == 0) return null;
 
     var background: ?dvui.Color = null;
 
     if (pgdn_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / @min(grid.row_height, 1));
+        const nr_displayed: usize = @intFromFloat(grid.bsi.viewport.h / @max(grid.row_height, 10));
+        std.debug.print("nr_displayed = {d} row height = {d}, bsi = {}\n", .{ nr_displayed, grid.row_height, grid.bsi });
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
+            // TODO: Surely this can just be "give me the active selection index"?
             if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
             } else if (selection_mode == .kb and item.index == gridData(id).kb_dir_index) {
@@ -787,13 +820,13 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         } else {
             break :idx 0;
         };
-        gridData(id).scroll_info.scrollPageDown(.vertical);
         const new_index = @min(rel_index + nr_displayed, to_display.items.len - 1);
+        std.debug.print("rel_idx = {}, nr_displayed = {}, len = {}\n", .{ rel_index, nr_displayed, to_display.items.len });
 
         gridData(id).mouse_dir_index = to_display.items[new_index].index;
         gridData(id).kb_dir_index = to_display.items[new_index].index;
     } else if (pgup_pressed and id == focussed_grid) {
-        const nr_displayed: usize = @intFromFloat(gridData(id).scroll_info.viewport.h / @min(grid.row_height, 1));
+        const nr_displayed: usize = @intFromFloat(grid.bsi.viewport.h / @max(grid.row_height, 10));
         const rel_index: usize = idx: for (to_display.items, 0..) |item, idx| {
             if (selection_mode == .mouse and item.index == gridData(id).mouse_dir_index) {
                 break :idx idx;
@@ -803,7 +836,6 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
         } else {
             break :idx 0;
         };
-        gridData(id).scroll_info.scrollPageUp(.vertical);
         const new_index: usize = @max(rel_index, nr_displayed) - nr_displayed;
         gridData(id).mouse_dir_index = to_display.items[new_index].index;
         gridData(id).kb_dir_index = to_display.items[new_index].index;
@@ -846,8 +878,7 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             if (!grid.data().borderRectScale().r.contains(me.p)) continue;
 
             var dirs = gridData(id).directoriesOrEmpty();
-            rel_mouse_index = if (grid
-                .pointToCell(me.p)) |cell| cell.row_num else break;
+            rel_mouse_index = if (grid.pointToCell(me.p)) |cell| cell.row_num else break;
             if (rel_mouse_index >= to_display.items.len) break;
 
             const abs_mouse_index = to_display.items[rel_mouse_index].index;
@@ -867,7 +898,8 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
                     }
                 }
             } else if (selection_mode == .mouse and me.action == .position) {
-                dvui.focusWidget(null, grid.data().id, e.num);
+                // TODO: This shouldbe be needed anymore?
+                //                dvui.focusWidget(null, grid.data().id, e.num);
                 gridData(id).mouse_dir_index = abs_mouse_index;
                 gridData(id).kb_dir_index = abs_mouse_index;
                 focussed_grid = id;
@@ -879,11 +911,14 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
     }
 
     for (to_display.items, 0..) |entry, rel_idx| {
+        var focus_cell = false;
+
         const abs_index = to_display.items[rel_idx].index;
 
         if ((selection_mode == .kb and abs_index == gridData(id).kb_dir_index and id == focussed_grid) or
             (selection_mode == .mouse and abs_index == gridData(id).mouse_dir_index and id == focussed_grid))
         {
+            focus_cell = true;
             background = dvui.themeGet().fill_press;
         } else {
             background = null;
@@ -894,61 +929,73 @@ fn makeGridBody(id: GridType, grid: *dvui.GridWidget) void {
             .opts = .{ .margin = Rect.all(4), .padding = Rect.all(0) },
         };
         const cell_style_right = cell_style.optionsOverride(.{ .gravity_x = 1.0 });
-        const cell_style_fixed = cell_style.cellOptionsOverride(.{ .size = .{ .w = 45 } });
+        const cell_style_fixed = cell_style.optionsOverride(.{
+            .gravity_x = 0.5,
+            .gravity_y = 0.5,
+        }).cellOptionsOverride(.{ .size = .{
+            .w = 45,
+        } });
 
         const invalid_number_display = "####";
         var buf = std.mem.zeroes([256]u8);
         const checked_value = if (gridData(id).directories.?[abs_index].checked) "[X]" else "[ ]";
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style_fixed);
+        const cell_id = makeGridDataRow(@src(), grid, cell_num, rel_idx, checked_value, &cell_style_fixed);
+        // TODO: Bleagh
+        if (focus_cell) {
+            focused_cell = cell_id;
+        }
         cell_num.col_num += 1;
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.filename(), &cell_style);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.filename(), &cell_style);
         cell_num.col_num += 1;
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.extension(), &cell_style);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.extension(), &cell_style);
         cell_num.col_num += 1;
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.attribs(), &cell_style);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, entry.entry.attribs(), &cell_style);
         cell_num.col_num += 1;
 
         var text = formatNumber(&buf, "{}B", entry.entry.fileSizeInB(), "####,###B") catch invalid_number_display;
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
         cell_num.col_num += 1;
 
         text = formatNumber(&buf, "{}K", entry.entry.fileUsedInKB(), "#,###K") catch invalid_number_display;
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
         cell_num.col_num += 1;
 
         text = std.fmt.bufPrint(&buf, "{}", .{entry.entry.user()}) catch "##";
-        makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
+        _ = makeGridDataRow(@src(), grid, cell_num, rel_idx, text, &cell_style_right);
         cell_num.col_num += 1;
 
-        const row_height = @min(grid.row_height, 1);
-        const nr_displayed = gridData(id).scroll_info.viewport.h / row_height - 2;
-        if (id == focussed_grid and selection_mode == .kb and gridData(id).kb_dir_index == abs_index) {
-            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * row_height; // relative pos
-            const viewport_btm = gridData(id).scroll_info.viewport.y + gridData(id).scroll_info.viewport.h - 40;
-            if (viewport_btm < my_pos) {
-                const scroll_pos: f32 = my_pos - (nr_displayed * row_height);
-                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
-            } else if (my_pos < gridData(id).scroll_info.viewport.y + 40) {
-                const scroll_pos: f32 = my_pos - row_height;
-                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
-            }
-        }
+        // TODO: Will replace this with focusing on the cell for the row that is selected?
+        //        const row_height = @min(grid.row_height, 1);
+        //        const nr_displayed = grid.bsi.viewport.h / row_height - 2;
+        //        if (id == focussed_grid and selection_mode == .kb and gridData(id).kb_dir_index == abs_index) {
+        //            const my_pos: f32 = @as(f32, @floatFromInt(rel_idx)) * row_height; // relative pos
+        //            const viewport_btm = grid.bsi.viewport.y + gridData(id).scroll_info.viewport.h - 40;
+        //            if (viewport_btm < my_pos) {
+        //                const scroll_pos: f32 = my_pos - (nr_displayed * row_height);
+        //                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
+        //            } else if (my_pos < gridData(id).scroll_info.viewport.y + 40) {
+        //                const scroll_pos: f32 = my_pos - row_height;
+        //                gridData(id).scroll_info.scrollToOffset(.vertical, scroll_pos);
+        //            }
+        //        }
     }
+    return focused_cell;
 }
 
 /// Creates one row in the grid.
 /// Note the use of the cols_rects array to make sure the scolling columns
 /// are kept the same size as the header columns.
-fn makeGridDataRow(src: std.builtin.SourceLocation, grid: *GridWidget, cell_num: Cell, item_num: usize, value: []const u8, cell_style: *const CellStyle) void {
+fn makeGridDataRow(src: std.builtin.SourceLocation, grid: *GridWidget, cell_num: Cell, item_num: usize, value: []const u8, cell_style: *const CellStyle) dvui.Id {
     // Can comfortably handle the max 1024 entries in ReleaseSafe mode.
     // TODO: Handle scolling ourselves, so that we just render the number of entries required, rather than the
     // whole area. This way we can handle an "unlimited" number of directory entries.
-    if (item_num > 1024) {
-        return;
+    if (item_num > 4096) {
+        return .zero;
     }
     var cell = grid.bodyCell(src, cell_num, cell_style.cell_opts);
     defer cell.deinit();
     dvui.labelNoFmt(@src(), value, .{ .align_y = 0.5, .align_x = cell_style.opts.gravityGet().x }, cell_style.opts);
+    return cell.data().id;
 }
 
 fn makeCapacityUsageGraph() !void {
@@ -1859,7 +1906,7 @@ pub fn dialogDisplay(id: dvui.Id) !void {
     scroll.deinit();
 }
 
-pub fn processEvents() void {
+pub fn processEvents(grid_focused: bool) void {
     const evts = dvui.events();
     pgdn_pressed = false;
     pgup_pressed = false;
@@ -1873,11 +1920,15 @@ pub fn processEvents() void {
     }
 
     for (evts) |*e| {
-        if (e.handled or e.evt != .key) continue;
+        // TODO: REally need to fix this.
+        if (e.evt == .key and e.evt.key.code == .page_down) {
+            std.debug.print("pgdn\n", .{});
+            e.handled = false;
+        } else if (e.handled or e.evt != .key) continue;
         const ke = e.evt.key;
         switch (ke.code) {
             .space => {
-                if (textBoxFocused()) break;
+                if (!grid_focused) break;
                 e.handled = true;
                 switch (ke.action) {
                     .down => {
@@ -1890,9 +1941,10 @@ pub fn processEvents() void {
                 }
             },
             .down => {
+                if (!grid_focused) break;
                 selection_mode = .kb;
                 e.handled = true;
-                dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
+                dvui.focusWidget(dvui.currentWindow().wd.id, null, null); // TODO: Why?
                 switch (ke.action) {
                     .down, .repeat => {
                         down_pressed = true;
@@ -1901,9 +1953,10 @@ pub fn processEvents() void {
                 }
             },
             .up => {
+                if (!grid_focused) break;
                 selection_mode = .kb;
                 e.handled = true;
-                dvui.focusWidget(dvui.currentWindow().wd.id, null, null);
+                dvui.focusWidget(dvui.currentWindow().wd.id, null, null); // TODO: Why?
                 switch (ke.action) {
                     .down, .repeat => {
                         up_pressed = true;
@@ -1934,7 +1987,7 @@ pub fn processEvents() void {
                 }
             },
             .enter => {
-                if (textBoxFocused()) break;
+                if (!grid_focused) break;
                 switch (ke.action) {
                     .down => {
                         enter_pressed = true;
@@ -1962,7 +2015,7 @@ pub fn processEvents() void {
                     e.handled = true;
                     CommandState.current_command = .mode;
                 } else if (ke.action == .down and (ke.mod == .lcontrol or ke.mod == .rcontrol)) {
-                    if (textBoxFocused()) break;
+                    if (!grid_focused) break;
 
                     const dir_list = gridData(focussed_grid).directoriesOrEmpty();
                     // if everything is selected, then select none.
@@ -2051,14 +2104,17 @@ pub fn processEvents() void {
                 }
             },
             .page_down => {
-                e.handled = true;
+                std.debug.print("in page down event\n", .{});
+                //if (!grid_focused) break;
+                //e.handled = true;
                 if (ke.action == .down) {
                     pgdn_pressed = true;
                     selection_mode = .kb;
                 }
             },
             .page_up => {
-                e.handled = true;
+                //if (!grid_focused) break;
+                //e.handled = true;
                 if (ke.action == .down) {
                     pgup_pressed = true;
                     selection_mode = .kb;
@@ -2375,7 +2431,6 @@ pub fn openImageFile(filename: []const u8) void {
         sortDirectories(.image, null);
         success = true;
     }
-    resize_image_grid = true;
     if (!success) {
         commands.closeImage();
         gridData(.image).directories = null;
@@ -2467,7 +2522,7 @@ pub fn gridHeadingCheckbox(
     const header_defaults: Options = .{
         .background = true,
         .expand = .both,
-        .gravity_x = 0.5,
+        .gravity_x = 0.0,
         .gravity_y = 0.5,
     };
 
