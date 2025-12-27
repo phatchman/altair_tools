@@ -345,6 +345,25 @@ pub const DirectoryTable = struct {
             self.raw_directories.appendSliceAssumeCapacity(entries);
         }
 
+        // Creation of CookedDirectories in buildCookedEntries, relies on the raw entires being sorted.
+        std.mem.sort(RawDirEntry, self.raw_directories.items, {}, struct {
+            fn lessThan(_: void, lhs: RawDirEntry, rhs: RawDirEntry) bool {
+                if (std.mem.eql(u8, &lhs.filename, &rhs.filename)) {
+                    if (std.mem.eql(u8, &lhs.filetype, &rhs.filetype)) {
+                        if (lhs.user == rhs.user) {
+                            return lhs.extentGet() < rhs.extentGet();
+                        } else {
+                            return lhs.user < rhs.user;
+                        }
+                    } else {
+                        return std.mem.lessThan(u8, &lhs.filetype, &rhs.filetype);
+                    }
+                } else {
+                    return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
+                }
+            }
+        }.lessThan);
+
         // Create the CookedDirEntries and remove any used allocations from the free alocations set.
         for (self.raw_directories.items, 0..) |dir, i| {
             if (!dir.isDeleted()) {
