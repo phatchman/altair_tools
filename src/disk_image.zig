@@ -103,6 +103,15 @@ pub const DiskImage = struct {
             // This protects against trying to copy files from CDOS.
             const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
             if (alloc_idx >= entry.allocations.items.len) {
+                std.debug.print("num_record = {}, total_rec_nr = {}, rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {}\n", .{
+                    num_records,
+                    total_rec_nr,
+                    rec_nr,
+                    alloc_idx,
+                    self.image_type.recs_per_alloc,
+                    entry.allocations.items.len,
+                    self.image_type.total_allocs,
+                });
                 return error.InvalidRecordNumber;
             }
             const alloc = entry.allocations.items[alloc_idx];
@@ -189,7 +198,7 @@ pub const DiskImage = struct {
                 // Note: extent is undefined until here on first loop.
                 dir_entry = try self.directory.rawEntryGetFree(&extent_nr);
                 dir_entry.filenameAndExtensionSet(cpm_filename);
-                dir_entry.user = cpm_user;
+                dir_entry.entry.user = cpm_user;
                 alloc_count = 0;
             }
 
@@ -322,8 +331,8 @@ pub const DiskImage = struct {
                 raw_dir.validate(self.image_type, @intCast(i)) catch |err| {
                     switch (err) {
                         RawDirError.InvalidUser => {
-                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.user });
-                            raw_dir.user = 0;
+                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.entry.user });
+                            raw_dir.entry.user = 0;
                             continue;
                         },
                         else => {

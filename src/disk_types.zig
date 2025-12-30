@@ -334,10 +334,6 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
         result.init();
         return result;
     }
-
-    fn format() void {
-        return;
-    }
 };
 
 /// MITS 5MB HDD Format
@@ -485,6 +481,41 @@ pub const DiskImageTypes = enum(usize) {
     FDD_TAR,
     @"FDD_1.5MB",
     FDD_8IN_8MB,
+    CDOS_8IN,
+};
+
+// CDOS Small?
+pub const DiskImageType_CDOS_8IN = struct {
+    const _skew_table = [_]u16{
+        0,  6,  12, 18, 24, 4,  10, 16,
+        22, 2,  8,  14, 20, 1,  7,  13,
+        19, 25, 5,  11, 17, 23, 3,  9,
+        15, 21,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_8IN,
+            .type_name = "CDOS_8IN",
+            .description = "CDOS 8IN Floppy Disk",
+            .tracks = 77,
+            .reserved_tracks = 2,
+            .sectors_per_track = 26,
+            .sector_size = 128,
+            .block_size = 1024,
+            .directories = 64,
+            .directory_allocs = 2,
+            .image_size = 256256,
+            .detect_conditions = .none,
+            .varying_sector_format = false,
+            .skew_fn = DiskImageType._defaultSkewFn,
+            .skew_table = &_skew_table,
+            .format_fn = DiskImageType._defaultFormattedSectorGet,
+            .offset_fn = null,
+        };
+        result.init();
+        return result;
+    }
 };
 
 /// all available disk image formats.
@@ -495,9 +526,10 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_TAR = DiskImageType_TARBELL_FDD.init(),
     .@"FDD_1.5MB" = @"DiskImageType_FDD_1.5MB".init(),
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(&mits_raw_sector),
+    .CDOS_8IN = DiskImageType_CDOS_8IN.init(),
 });
 // Anyone reading this and from a C background, think about what the above actually does.
-// Zig creates this array at _compilation time_, including setting up the dynamic function calls
+// Zig creates this array at _compilation time_, including setting up the function calls
 // for the different image types, performs all of the calculations in the init functions and
 // initializes the array with these values.
 // Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names,
@@ -509,7 +541,7 @@ pub const all_disk_type_names = initDiskTypeNames();
 /// Return an array of just the image type names
 fn initDiskTypeNames() [all_disk_types.values.len][]const u8 {
     var result: [all_disk_types.values.len][]const u8 = undefined;
-    inline for (0..all_disk_types.values.len) |i| {
+    for (0..all_disk_types.values.len) |i| {
         result[i] = all_disk_types.values[i].type_name;
     }
     return result;

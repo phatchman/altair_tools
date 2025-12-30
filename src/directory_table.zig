@@ -24,25 +24,28 @@ pub const RawDirError = error{
 };
 
 /// Raw on-disk version of the directory entry
-pub const RawDirEntry = extern struct {
-    user: u8,
-    filename: [8]u8,
-    filetype: [3]u8,
-    extent_low: u8,
-    reserved: u8,
-    extent_hi: u8,
-    num_records: u8,
-    _allocations: [DiskImageType.allocs_per_extent]u8,
+pub const RawDirEntry = struct {
+    const Raw = extern struct {
+        user: u8,
+        filename: [8]u8,
+        filetype: [3]u8,
+        extent_low: u8,
+        reserved: u8,
+        extent_hi: u8,
+        num_records: u8,
+        _allocations: [DiskImageType.allocs_per_extent]u8,
+    };
+    entry: Raw,
 
-    pub const empty: RawDirEntry = std.mem.zeroes(RawDirEntry);
+    pub const empty: RawDirEntry = .{ .entry = std.mem.zeroes(Raw) };
     pub const filename_len = 8;
     pub const filetype_len = 3;
 
     pub fn validate(self: *const RawDirEntry, image_type: *const DiskImageType, extent_nr: u16) RawDirError!void {
-        if (self.user > DiskImageType.max_user and self.user != 0xe5) {
+        if (self.entry.user > DiskImageType.max_user and self.entry.user != 0xe5) {
             log.err(
                 "Invalid directory entry: {} [Invalid user: {}. Must be 0-{} or {}]",
-                .{ extent_nr, self.user, DiskImageType.max_user, 0xe5 },
+                .{ extent_nr, self.entry.user, DiskImageType.max_user, 0xe5 },
             );
             return RawDirError.InvalidUser;
         }
@@ -56,10 +59,10 @@ pub const RawDirEntry = extern struct {
             return RawDirError.InvalidExtent;
         }
 
-        if (self.num_records > image_type.recs_per_extent) {
+        if (self.entry.num_records > image_type.recs_per_extent) {
             log.err(
                 "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
-                .{ extent_nr, self.num_records, image_type.recs_per_extent },
+                .{ extent_nr, self.entry.num_records, image_type.recs_per_extent },
             );
             return RawDirError.InvalidRecordNumber;
         }
@@ -76,35 +79,35 @@ pub const RawDirEntry = extern struct {
     }
 
     pub fn isDeleted(self: *const RawDirEntry) bool {
-        return self.user > DiskImageType.max_user;
+        return self.entry.user > DiskImageType.max_user;
     }
 
     pub fn setDeleted(self: *RawDirEntry) void {
-        self.user = 0xe5;
+        self.entry.user = 0xe5;
     }
 
     /// Set num_records field.
     pub fn numRecordsSet(self: *RawDirEntry, record_nr: u16) void {
-        self.num_records = @intCast((record_nr % 128) + 1);
+        self.entry.num_records = @intCast((record_nr % 128) + 1);
     }
 
     /// Get extent as 16 bit value
     pub fn extentGet(self: *const RawDirEntry) u16 {
-        return @as(u16, self.extent_hi) * 32 + self.extent_low;
+        return @as(u16, self.entry.extent_hi) * 32 + self.entry.extent_low;
     }
 
     /// Set extent from 16 bit value
     pub fn extentSet(self: *RawDirEntry, extent_count: u16) void {
-        self.extent_low = @intCast(extent_count % 32);
-        self.extent_hi = @intCast(extent_count / 32);
+        self.entry.extent_low = @intCast(extent_count % 32);
+        self.entry.extent_hi = @intCast(extent_count / 32);
     }
 
     pub fn attribReadOnly(self: *const RawDirEntry) bool {
-        return self.filename[0] & 0x80 != 0;
+        return self.entry.filename[0] & 0x80 != 0;
     }
 
     pub fn attribSystem(self: *const RawDirEntry) bool {
-        return self.filename[1] & 0x80 != 0;
+        return self.entry.filename[1] & 0x80 != 0;
     }
 
     /// Set allocation as controlled by this extent
@@ -114,13 +117,13 @@ pub const RawDirEntry = extern struct {
         }
         if (image_type.total_allocs <= 256) {
             // 8 bit allocations
-            self._allocations[entry_nr] = @intCast(record_nr & 0xff);
+            self.entry._allocations[entry_nr] = @intCast(record_nr & 0xff);
         } else {
             // 16 bit allocations.
             var alloc: [2]u8 = undefined;
             std.mem.writeInt(u16, &alloc, record_nr, .little);
-            self._allocations[entry_nr * 2] = alloc[0];
-            self._allocations[entry_nr * 2 + 1] = alloc[1];
+            self.entry._allocations[entry_nr * 2] = alloc[0];
+            self.entry._allocations[entry_nr * 2 + 1] = alloc[1];
         }
     }
 
@@ -130,9 +133,9 @@ pub const RawDirEntry = extern struct {
             return RawDirError.InvalidEntryNumber;
         }
         if (image_type.total_allocs <= 256) {
-            return self._allocations[entry_nr];
+            return self.entry._allocations[entry_nr];
         } else {
-            const alloc: [2]u8 = .{ self._allocations[entry_nr * 2], self._allocations[entry_nr * 2 + 1] };
+            const alloc: [2]u8 = .{ self.entry._allocations[entry_nr * 2], self.entry._allocations[entry_nr * 2 + 1] };
             return std.mem.readInt(u16, &alloc, .little);
         }
     }
@@ -140,22 +143,24 @@ pub const RawDirEntry = extern struct {
     /// How many allocations are controlled by this extent?
     pub fn allocationsCount(self: *const RawDirEntry) u16 {
         _ = self;
-        return DiskImageType.allocs_per_extent / 2;
+        // TODO: /2
+        //        return DiskImageType.allocs_per_extent / 2;
+        return DiskImageType.allocs_per_extent;
     }
 
     pub fn filenameAndExtensionSet(self: *RawDirEntry, filename: []const u8) void {
         const dot_pos = std.mem.indexOfScalar(u8, filename, '.') orelse filename.len;
-        self.filename = @splat(' ');
-        self.filetype = @splat(' ');
-        @memcpy(self.filename[0..dot_pos], filename[0..dot_pos]);
+        self.entry.filename = @splat(' ');
+        self.entry.filetype = @splat(' ');
+        @memcpy(self.entry.filename[0..dot_pos], filename[0..dot_pos]);
         if (dot_pos != filename.len) {
-            const type_len = @min(self.filetype.len + 1, filename.len - dot_pos - 1);
-            @memcpy(self.filetype[0..type_len], filename[dot_pos + 1 .. dot_pos + type_len + 1]);
+            const type_len = @min(self.entry.filetype.len + 1, filename.len - dot_pos - 1);
+            @memcpy(self.entry.filetype[0..type_len], filename[dot_pos + 1 .. dot_pos + type_len + 1]);
         }
     }
 
     pub fn isFirstEntryForFile(self: *const RawDirEntry, image_type: *const DiskImageType) bool {
-        if (image_type.recs_per_extent > 128 and self._allocations[4] != 0 and self.extentGet() == 1) {
+        if (image_type.recs_per_extent > 128 and self.entry._allocations[4] != 0 and self.extentGet() == 1) {
             return true;
         }
         return self.extentGet() == 0;
@@ -177,18 +182,18 @@ pub const CookedDirEntry = struct {
     pub fn init(arena: std.mem.Allocator, raw_dir: *const RawDirEntry, raw_index: u16, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var _filename: [12]u8 = @splat(' '); // space terminated strings!
 
-        var filename_len = rawStrlen(&raw_dir.filename);
-        @memcpy(_filename[0..filename_len], raw_dir.filename[0..filename_len]);
+        var filename_len = rawStrlen(&raw_dir.entry.filename);
+        @memcpy(_filename[0..filename_len], raw_dir.entry.filename[0..filename_len]);
 
         // Remove status bits, encoded in bit 8 of first 2 chars
         for (_filename[0..2], 0..) |c, i| {
             _filename[i] = c & 0x7f;
         }
 
-        if (raw_dir.filetype[0] != ' ') {
+        if (raw_dir.entry.filetype[0] != ' ') {
             _filename[filename_len] = '.';
             filename_len += 1;
-            @memcpy(_filename[filename_len .. filename_len + 3], &raw_dir.filetype);
+            @memcpy(_filename[filename_len .. filename_len + 3], &raw_dir.entry.filetype);
 
             if (filename_len + 3 < 12)
                 _filename[filename_len + 3] = ' ';
@@ -196,13 +201,13 @@ pub const CookedDirEntry = struct {
 
         var result = CookedDirEntry{
             .raw_indexes = .empty,
-            .user = raw_dir.user,
+            .user = raw_dir.entry.user,
             .extent_nr = raw_dir.extentGet(),
             .attribs = [_]u8{
                 if (raw_dir.attribReadOnly()) 'R' else 'W',
                 if (raw_dir.attribSystem()) 'S' else ' ',
             },
-            .num_records = raw_dir.num_records,
+            .num_records = raw_dir.entry.num_records,
             .num_allocs = 0,
             .allocations = .empty,
             ._filename = _filename,
@@ -218,7 +223,7 @@ pub const CookedDirEntry = struct {
 
     pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const RawDirEntry, raw_index: u16, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
         try self.raw_indexes.append(arena, raw_index);
-        self.num_records += raw_dir.num_records;
+        self.num_records += raw_dir.entry.num_records;
         const num_allocs = try self.copyAllocations(arena, raw_dir, image_type);
         self.num_allocs += num_allocs;
         if (image_type.recs_per_extent > 128 and num_allocs > 4) {
@@ -251,13 +256,17 @@ pub const CookedDirEntry = struct {
     /// Add any new allocations to teh list of used allocations.
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
-        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent / 2);
+        // TODO: /2
+        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent);
+        //        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent / 2);
         for (0..raw.allocationsCount()) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
             if (allocation == 0) {
+                std.debug.print("Breaking on 0\n", .{});
                 break;
             }
+            std.debug.print("copying allocation {d} for {s}\n", .{ allocation, cooked.filenameAndExtension() });
             cooked.allocations.appendAssumeCapacity(allocation);
             alloc_count += 1;
         }
@@ -348,18 +357,18 @@ pub const DirectoryTable = struct {
         // Creation of CookedDirectories in buildCookedEntries, relies on the raw entires being sorted.
         std.mem.sort(RawDirEntry, self.raw_directories.items, {}, struct {
             fn lessThan(_: void, lhs: RawDirEntry, rhs: RawDirEntry) bool {
-                if (std.mem.eql(u8, &lhs.filename, &rhs.filename)) {
-                    if (std.mem.eql(u8, &lhs.filetype, &rhs.filetype)) {
-                        if (lhs.user == rhs.user) {
+                if (std.mem.eql(u8, &lhs.entry.filename, &rhs.entry.filename)) {
+                    if (std.mem.eql(u8, &lhs.entry.filetype, &rhs.entry.filetype)) {
+                        if (lhs.entry.user == rhs.entry.user) {
                             return lhs.extentGet() < rhs.extentGet();
                         } else {
-                            return lhs.user < rhs.user;
+                            return lhs.entry.user < rhs.entry.user;
                         }
                     } else {
-                        return std.mem.lessThan(u8, &lhs.filetype, &rhs.filetype);
+                        return std.mem.lessThan(u8, &lhs.entry.filetype, &rhs.entry.filetype);
                     }
                 } else {
-                    return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
+                    return std.mem.lessThan(u8, &lhs.entry.filename, &rhs.entry.filename);
                 }
             }
         }.lessThan);
@@ -411,11 +420,13 @@ pub const DirectoryTable = struct {
         const entry = &self.raw_directories.items[raw_entry_nr];
         try entry.validate(image_type, raw_entry_nr);
         if (entry.isFirstEntryForFile(image_type)) {
+            std.debug.print("First entry for file\n", .{});
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
         } else {
             // Note: Requires that we always add in order and we can rely on ther prev entry
             // being the last entry
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
+            std.debug.print("Extending {s}\n", .{prev.filenameAndExtension()});
             try prev.extend(self.allocator(), entry, raw_entry_nr, image_type);
         }
     }

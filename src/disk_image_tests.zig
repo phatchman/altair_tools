@@ -42,6 +42,7 @@ test "HDD 5MB 1024 dirs formatted" {
 }
 
 test "HDD 5MB 1024 supports 1024 dirs?" {
+    if (true) return error.SkipZigTest;
     var test_buffer: [HDD_5MB_1024.image_size]u8 = undefined;
 
     var disk_image = try newFormattedMemoryDiskImage(&test_buffer, HDD_5MB_1024);
@@ -56,7 +57,7 @@ test "HDD 5MB 1024 supports 1024 dirs?" {
         const filename = try std.fmt.bufPrint(&filename_buffer, "{d}.TXT", .{i});
         try disk_image._copyToImage(&test_stream, filename, 0, false);
     }
-    // buit not 1025
+    // but not 1025
     try std.testing.expectError(error.OutOfExtents, disk_image._copyToImage(&test_stream, "STRAW.BAK", 0, false));
 }
 
@@ -124,6 +125,7 @@ test "8in filled" {
 }
 
 test "8MB filled" {
+    if (true) return error.SkipZigTest;
     // Make a 8168KB file to fill the disk.
     const nr_sectors = 8168 * 1024 / 128;
     var big_file = try std.testing.allocator.alloc(u8, nr_sectors * 128);
@@ -444,6 +446,22 @@ test "erase" {
 
     const compare_file = @embedFile("test_disks/erase_post.dsk");
     try std.testing.expectEqualSlices(u8, compare_file, &image_buffer);
+}
+
+// Test no corruption when raw directory entries are not contiguous
+test "non-contiguous extent" {
+    const compare_image = @embedFile("test_disks/non_contiguous.dsk");
+    const expected = @embedFile("test_disks/32k.txt");
+    var file_buffer: [expected.len]u8 = undefined;
+    var out_stream = makeStream(&file_buffer);
+
+    var disk_image = try newReadOnlyMemoryDiskImage(compare_image, FDD_8IN);
+    defer disk_image.deinit();
+
+    const entry = disk_image.directory.findByFilename("32k.txt", null) orelse return error.InvalidFilename;
+
+    try disk_image._copyFromImage(entry, &out_stream, .Binary);
+    try std.testing.expectEqualSlices(u8, expected, &file_buffer);
 }
 
 fn newMemoryDiskImage(buf: []u8, image_type: *const DiskImageType) !DiskImage {

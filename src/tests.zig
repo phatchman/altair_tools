@@ -16,8 +16,8 @@ test "simple filename" {
 
     var raw = std.mem.zeroes(RawDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.filename);
-    try std.testing.expectEqualStrings("COM", &raw.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
+    try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -32,8 +32,8 @@ test "filename no extension" {
 
     var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.filename);
-    try std.testing.expectEqualStrings("   ", &raw.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
+    try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -48,8 +48,8 @@ test "extension no filename" {
 
     var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.filename);
-    try std.testing.expectEqualStrings("COM", &raw.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.entry.filename);
+    try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -64,8 +64,8 @@ test "short filename no extension" {
 
     var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("X       ", &raw.filename);
-    try std.testing.expectEqualStrings("   ", &raw.filetype);
+    try std.testing.expectEqualStrings("X       ", &raw.entry.filename);
+    try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -80,8 +80,8 @@ test "short extension no filename" {
 
     var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.filename);
-    try std.testing.expectEqualStrings("X  ", &raw.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.entry.filename);
+    try std.testing.expectEqualStrings("X  ", &raw.entry.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

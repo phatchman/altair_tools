@@ -167,16 +167,16 @@ pub fn directoryListRaw(disk_image: *DiskImage, options: CommandLineOptions) !vo
     try Console.stdout.print("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n", .{});
 
     for (disk_image.directory.raw_directories.items, 0..) |entry, extent_nr| {
-        if (!entry.isDeleted()) {
+        if (true or !entry.isDeleted()) {
             const attribs = [2]u8{
                 if (entry.attribReadOnly()) 'R' else 'W',
                 if (entry.attribSystem()) 'S' else ' ',
             };
 
             try Console.stdout.print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
-                extent_nr,         entry.user, entry.filename,
-                entry.filetype,    attribs,    entry.extentGet(),
-                entry.num_records,
+                extent_nr,               entry.entry.user, entry.entry.filename,
+                entry.entry.filetype,    attribs,          entry.extentGet(),
+                entry.entry.num_records,
             });
 
             // The allocations are really little endian u16's
