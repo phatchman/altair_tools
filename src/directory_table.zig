@@ -222,6 +222,8 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const RawDirEntry, raw_index: u16, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
+        std.debug.assert(self.raw_indexes.items.len > 0);
+
         try self.raw_indexes.append(arena, raw_index);
         self.num_records += raw_dir.entry.num_records;
         const num_allocs = try self.copyAllocations(arena, raw_dir, image_type);
@@ -229,6 +231,17 @@ pub const CookedDirEntry = struct {
         if (image_type.recs_per_extent > 128 and num_allocs > 4) {
             self.num_records += 128;
         }
+
+        // TODO:!
+        // Ensure all raw entires are for the same file
+        //if (@import("builtin").mode == .Debug) {
+        //    const filename = self.raw_indexes.items[0].filename;
+        //    const filetype = self.raw_indexes.items[0].filetype;
+        //    for (self.raw_indexes[1..]) |raw| {
+        //        std.debug.assert(std.mem.eql(filename, raw.filename));
+        //        std.debug.assert(std.mem.eql(filetype, raw.filetype));
+        //    }
+        //}
     }
 
     pub fn filenameAndExtension(self: *const CookedDirEntry) []const u8 {
@@ -355,6 +368,9 @@ pub const DirectoryTable = struct {
         }
 
         // Creation of CookedDirectories in buildCookedEntries, relies on the raw entires being sorted.
+        // TODO: Would prefer to keep the raw entries in the same order as on-disk.
+        // Either sort based on pointers here, so the raw indexes are stable.
+        // OR remove requirement for cooked entries to be sorted.
         std.mem.sort(RawDirEntry, self.raw_directories.items, {}, struct {
             fn lessThan(_: void, lhs: RawDirEntry, rhs: RawDirEntry) bool {
                 if (std.mem.eql(u8, &lhs.entry.filename, &rhs.entry.filename)) {
@@ -374,6 +390,8 @@ pub const DirectoryTable = struct {
         }.lessThan);
 
         // Create the CookedDirEntries and remove any used allocations from the free alocations set.
+        // TODO: This does assume that the "first" extent always appears in the raw entry before the
+        // later extents. Is that always true?
         for (self.raw_directories.items, 0..) |dir, i| {
             if (!dir.isDeleted()) {
                 self.buildCookedEntry(@intCast(i), image_type) catch |err| {
@@ -423,10 +441,9 @@ pub const DirectoryTable = struct {
             std.debug.print("First entry for file\n", .{});
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
         } else {
-            // Note: Requires that we always add in order and we can rely on ther prev entry
-            // being the last entry
+            // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
+            // Consider changing this to a name lookup instead?
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
-            std.debug.print("Extending {s}\n", .{prev.filenameAndExtension()});
             try prev.extend(self.allocator(), entry, raw_entry_nr, image_type);
         }
     }
