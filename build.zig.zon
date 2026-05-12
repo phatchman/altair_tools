@@ -13,6 +13,7 @@
     // In a future version of Zig it will be used for package deduplication.
     .version = "0.0.0",
     .root = "src/lib.zig",
+    .minimum_zig_version = "0.16.0",
 
     // This field is optional.
     // This is currently advisory only; Zig does not yet do anything
@@ -26,8 +27,8 @@
     // internet connectivity.
     .dependencies = .{
         .cli = .{
-            .url = "https://github.com/sam701/zig-cli/archive/fda36e04c4b2170d5a2e6c9139da9b090009c05e.tar.gz",
-            .hash = "cli-0.9.0-2eKe_xb3AAAYv3UiejaYsP0AdxdoIFmcxQ_4TYhBqJXX",
+            .url = "git+https://github.com/sam701/zig-cli.git#4841cdaed94b920c91ea171beed159976264270a",
+            .hash = "cli-0.10.0-2eKe_1sIAQDecE0Bz5gAm7aLcWz5wBAc8KxlP1YQPEWr",
         },
     },
     .paths = .{

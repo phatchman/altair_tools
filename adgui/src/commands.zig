@@ -179,14 +179,14 @@ pub fn detectImageType(_: *Self, filename: []const u8) !?DiskImageTypes {
 }
 
 pub fn openExistingImage(self: *Self, filename: []const u8, img_type: DiskImageTypes) !void {
-    var cwd = std.fs.cwd();
+    var cwd = std.Io.Dir.cwd();
 
     if (self.disk_image) |*existing| {
         existing.deinit();
     }
     const image_file = try cwd.openFile(filename, .{ .mode = .read_write });
     const image_type = ad.all_disk_types.getPtrConst(img_type);
-    self.disk_image = DiskImage.init(allocator, image_file, image_type) catch |err| {
+    self.disk_image = .init(allocator, image_file, image_type) catch |err| {
         image_file.close();
         return err;
     };
@@ -201,7 +201,7 @@ pub fn closeImage(self: *Self) void {
 }
 
 pub fn createNewImage(self: *Self, filename: []const u8, image_type: *const ad.DiskImageType) !void {
-    var cwd = std.fs.cwd();
+    var cwd = std.Io.Dir.cwd();
 
     self.closeImage();
     const image_file = try cwd.createFile(filename, .{ .read = true });

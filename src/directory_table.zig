@@ -276,10 +276,8 @@ pub const CookedDirEntry = struct {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
             if (allocation == 0) {
-                std.debug.print("Breaking on 0\n", .{});
                 break;
             }
-            std.debug.print("copying allocation {d} for {s}\n", .{ allocation, cooked.filenameAndExtension() });
             cooked.allocations.appendAssumeCapacity(allocation);
             alloc_count += 1;
         }
@@ -438,7 +436,6 @@ pub const DirectoryTable = struct {
         const entry = &self.raw_directories.items[raw_entry_nr];
         try entry.validate(image_type, raw_entry_nr);
         if (entry.isFirstEntryForFile(image_type)) {
-            std.debug.print("First entry for file\n", .{});
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
         } else {
             // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
@@ -580,7 +577,7 @@ pub const DirectoryTable = struct {
             self.free_allocations.unset(free_alloc);
             return @intCast(free_alloc);
         } else {
-            return DirectoryError.OutOfAllocs;
+            return error.OutOfAllocs;
         }
     }
 
@@ -593,7 +590,7 @@ pub const DirectoryTable = struct {
                 return dir;
             }
         }
-        return DirectoryError.OutOfExtents;
+        return error.OutOfExtents;
     }
 
     /// Number of free CPM directory entries

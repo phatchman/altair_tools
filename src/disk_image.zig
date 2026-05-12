@@ -15,11 +15,86 @@ pub const LogicalAddress = struct {
     record: u8,
 };
 
+pub const SeekableReader = union(enum) {
+    on_disk: *std.Io.File.Reader,
+    in_memory: *std.Io.Reader,
+
+    pub fn initWithDiskFile(file_reader: std.Io.File.Reader) SeekableReader {
+        return .{ .on_disk = file_reader };
+    }
+
+    pub fn initWithMemoryFile(fixed_reader: std.Io.Reader) SeekableReader {
+        return .{ .in_memory = fixed_reader };
+    }
+
+    pub fn seekTo(self: SeekableReader, offset: u64) File.Reader.SeekError!void {
+        switch (self) {
+            .on_disk => |file| try file.seekTo(offset),
+            .in_memory => |mem| {
+                std.debug.assert(offset <= mem.buffer.len);
+                mem.seek = offset;
+            },
+        }
+    }
+
+    pub fn interface(self: SeekableReader) *std.Io.Reader {
+        return switch (self) {
+            .on_disk => |file| &file.interface,
+            .in_memory => |mem| mem,
+        };
+    }
+};
+
+pub const SeekableWriter = union(enum) {
+    on_disk: *std.Io.File.Writer,
+    in_memory: *std.Io.Writer,
+
+    pub fn initWithDiskFile(file_reader: *std.Io.File.Writer) SeekableWriter {
+        return .{ .on_disk = file_reader };
+    }
+
+    pub fn initWithMemoryFile(fixed_reader: *std.Io.Reader) SeekableWriter {
+        return .{ .in_memory = fixed_reader };
+    }
+
+    pub fn seekTo(self: SeekableWriter, offset: u64) (File.Writer.SeekError || Io.Writer.Error)!void {
+        switch (self) {
+            .on_disk => |file| try file.seekTo(offset),
+            .in_memory => |mem| {
+                std.debug.assert(offset <= mem.buffer.len);
+                mem.end = offset;
+                //@panic("TODO"); // Can't seek a writer?
+            },
+        }
+    }
+
+    pub fn interface(self: SeekableWriter) *std.Io.Writer {
+        return switch (self) {
+            .on_disk => |file| &file.interface,
+            .in_memory => |mem| mem,
+        };
+    }
+
+    pub fn truncate(self: SeekableWriter) (File.Writer.EndError || File.Writer.SeekError || Io.Writer.Error)!void {
+        return switch (self) {
+            .on_disk => |file| {
+                try file.seekTo(0);
+                try file.end();
+            },
+            .in_memory => {
+                // TODO: This can't be supported. Ignoring for now.
+                //@panic("TODO"); // Need that seek behaviour here to seek to 0.
+            },
+        };
+    }
+};
+
 /// Interface for opening and maniplating various Altair CPM disk images.
 pub const DiskImage = struct {
     const Self = @This();
 
-    image_file: std.io.StreamSource, // The file backing the disk image
+    reader: SeekableReader,
+    writer: SeekableWriter,
     image_type: *const DiskImageType,
     directory: DirectoryTable,
     _filename_conversion_buf: [12]u8, // Used to convert local to CPM filenames 8.3 = 12 chars.
@@ -28,15 +103,11 @@ pub const DiskImage = struct {
     /// Image file must at least have read permissions if the loadDirectory() is called.
     /// Note that DiskImage is not fully initialized until loadDirectories is called.
     /// DiskImage takes ownership of the passed in file and will close it on deinit()
-    pub fn init(gpa: std.mem.Allocator, file: std.fs.File, image_type: *const DiskImageType) !DiskImage {
-        return _init(gpa, .{ .file = file }, image_type);
-    }
-
-    /// Init with a StreamSource.
-    /// Note that DiskImage does not take ownership of the stream source and will not close it on deinit()
-    pub fn _init(gpa: std.mem.Allocator, stream: std.io.StreamSource, image_type: *const DiskImageType) !DiskImage {
+    /// TODO: Allow writer to be optional for read-only?
+    pub fn init(gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter, image_type: *const DiskImageType) !DiskImage {
         return .{
-            .image_file = stream,
+            .reader = reader,
+            .writer = writer,
             .image_type = image_type,
             .directory = try .init(gpa, image_type),
             ._filename_conversion_buf = @splat(0),
@@ -45,9 +116,10 @@ pub const DiskImage = struct {
 
     /// Close the existing image file and open a new one.
     /// closes any files before an error is returned.
-    pub fn reinit(self: *Self, gpa: std.mem.Allocator, file: File) !void {
+    pub fn reinit(self: *Self, gpa: std.mem.Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
         self.deinit();
-        self.image_file = std.io.StreamSource{ .file = file };
+        self.reader = reader;
+        self.writer = writer;
         self.directory = try .init(gpa, self.image_type);
     }
 
@@ -56,9 +128,10 @@ pub const DiskImage = struct {
         self.directory.deinit();
         // Close file if initialized with a file.
         // If initialized with a stream, caller must close.
-        if (self.image_file == .file) {
-            self.image_file.file.close();
-        }
+
+        // TODO: Callers are now responsible for closing the file.
+        // put a panic in here when testing that all paths close fhe file.
+
     }
 
     /// Load the directory table.
@@ -86,12 +159,8 @@ pub const DiskImage = struct {
     }
 
     pub const TextMode = enum { Auto, Text, Binary };
-    pub fn copyFromImage(self: *Self, entry: *const CookedDirEntry, out_file: File, text_mode: TextMode) !void {
-        var stream: std.io.StreamSource = .{ .file = out_file };
-        return _copyFromImage(self, entry, &stream, text_mode);
-    }
 
-    pub fn _copyFromImage(self: *Self, entry: *const CookedDirEntry, out_file: *std.io.StreamSource, text_mode: TextMode) !void {
+    pub fn copyFromImage(self: *Self, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
         var sector: DiskSector = .init();
         const num_records = entry.num_records;
         // Check for empty file.
@@ -139,14 +208,14 @@ pub const DiskImage = struct {
                 }
             }
 
-            try out_file.writer().writeAll(sector.data[0..data_len]);
+            try out_writer.writeAll(sector.data[0..data_len]);
         }
     }
 
     /// Try and auto-detect what type of disk image this is
-    pub fn detectImageType(image_file: File, is_unique: *bool) ?*const DiskImageType {
+    pub fn detectImageType(io: std.Io, image_file: File, is_unique: *bool) ?*const DiskImageType {
         for (&all_disk_types.values) |*dt| {
-            if (dt.isCorrectFormat(image_file)) {
+            if (dt.isCorrectFormat(io, image_file)) {
                 is_unique.* = dt.detect_conditions != .duplicate_size;
                 return dt;
             }
@@ -154,12 +223,7 @@ pub const DiskImage = struct {
         return null;
     }
 
-    pub fn copyToImage(self: *Self, in_file: File, to_filename: []const u8, user: ?u8, force: bool) !void {
-        var stream: std.io.StreamSource = .{ .file = in_file };
-        return _copyToImage(self, &stream, to_filename, user, force);
-    }
-
-    pub fn _copyToImage(self: *Self, stream: *std.io.StreamSource, to_filename: []const u8, user: ?u8, force: bool) !void {
+    pub fn copyToImage(self: *Self, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
         const cpm_user = user orelse 0;
 
         const basename = std.fs.path.basename(to_filename);
@@ -168,7 +232,7 @@ pub const DiskImage = struct {
             if (force) {
                 try self.erase(existing_entry);
             } else {
-                return std.fs.Dir.MakeError.PathAlreadyExists;
+                return std.Io.File.OpenError.PathAlreadyExists;
             }
         }
 
@@ -180,18 +244,33 @@ pub const DiskImage = struct {
         var extent_count: usize = 0;
         var alloc_nr: u16 = undefined;
         var record_nr: u16 = 0;
+        var eof: bool = false;
 
-        // load the data to be stored in this record
-        var nbytes = try stream.reader().readAll(&sector.data);
+        // TODO: This whole thing needs a big cleanup!!!
+        while (!eof) {
+            var nbytes: usize = sector.data.len;
+            // // std.debug.print("about to read\n", .{});
+            file_reader.readSliceAll(&sector.data) catch |read_err| {
+                switch (read_err) {
+                    error.EndOfStream => {
+                        // std.debug.print("EOS buffer = {s}\n", .{file_reader.buffered()});
+                        nbytes = file_reader.buffered().len;
+                        @memcpy(sector.data[0..nbytes], file_reader.buffered());
+                        eof = true;
+                    },
+                    error.ReadFailed => return read_err,
+                }
+            };
 
-        while (nbytes != 0 or first_extent) : ({
-            nbytes = try stream.reader().readAll(&sector.data);
-        }) {
+            // std.debug.print("next\n", .{});
+
             // Is this a new extent? (i.e. needs a new directory entry)
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (!first_extent) {
+                    // std.debug.print("new extent\n", .{});
                     try self.rawEntryWrite(extent_nr);
                     try self.directory.buildCookedEntry(extent_nr, self.image_type);
+                    // std.debug.print("wrote entries\n", .{});
                 } else {
                     first_extent = false;
                 }
@@ -206,8 +285,10 @@ pub const DiskImage = struct {
             if (record_nr % self.image_type.recs_per_alloc == 0) {
                 // Note alloc_nr is undefined until here on first loop.
                 alloc_nr = if (nbytes > 0) self.directory.allocationGetFree() catch |err| {
+                    // std.debug.print("got free alloc\n", .{});
                     try self.rawEntryWrite(@intCast(extent_nr));
                     try self.directory.buildCookedEntry(extent_nr, self.image_type);
+                    // std.debug.print("wrote entries\n", .{});
                     return err;
                 } else 0;
 
@@ -217,6 +298,7 @@ pub const DiskImage = struct {
             dir_entry.numRecordsSet(record_nr);
             dir_entry.extentSet(@intCast(extent_count));
             if (nbytes > 0) {
+                // std.debug.print("write sector\n", .{});
                 try self.writeSector(.{ .allocation = alloc_nr, .record = @intCast(record_nr % 256) }, &sector);
                 sector = .init(); // Re-fill with ^Z
             }
@@ -255,41 +337,41 @@ pub const DiskImage = struct {
         return self.directory.eraseEntry(to_erase, self);
     }
 
-    pub fn extractCPM(self: *Self, out_file: File) !void {
+    pub fn extractCPM(self: *Self, io: std.Io, out_file: File) !void {
         var sector: DiskSector = .init();
 
-        try self.image_file.seekTo(0);
+        try self.reader.seekTo(0);
 
         for (0..self.image_type.reserved_tracks) |_| {
             for (0..self.image_type.sectors_per_track) |_| {
-                const nbytes = try self.image_file.reader().readAll(&sector.data);
-                if (nbytes != sector.data.len) {
-                    return error.InvalidImageFile;
-                }
-                try out_file.writeAll(&sector.data);
+                // TODO: Log error here?
+                self.reader.interface().readSliceAll(&sector.data) catch return error.InvalidImageFile;
+                var writer = out_file.writer(io, &.{});
+                try writer.interface.writeAll(&sector.data);
             }
         }
     }
 
-    pub fn installCPM(self: *Self, in_file: File) !void {
-        const in_size = try in_file.getEndPos();
+    pub fn installCPM(self: *Self, io: std.Io, in_file: File) !void {
+        const in_size = try in_file.length(io);
         const expected_size = self.image_type.reserved_tracks * self.image_type.track_size;
         if (in_size != expected_size) {
             return error.InvalidImageFile;
         }
 
-        var sector: DiskSector = .init();
-        try self.image_file.seekTo(0);
+        @panic("TODO"); // turn this into readers and writers
+        //    var sector: DiskSector = .init();
+        //  try self.writer.seekTo(0);
 
-        for (0..self.image_type.reserved_tracks) |_| {
-            for (0..self.image_type.sectors_per_track) |_| {
-                const nbytes = try in_file.readAll(&sector.data);
-                if (nbytes != sector.data.len) {
-                    return error.InvalidImageFile;
-                }
-                try self.image_file.writer().writeAll(&sector.data);
-            }
-        }
+        //     for (0..self.image_type.reserved_tracks) |_| {
+        //         for (0..self.image_type.sectors_per_track) |_| {
+        //             const nbytes = try in_file.readAll(&sector.data);
+        //             if (nbytes != sector.data.len) {
+        //                 return error.InvalidImageFile;
+        //             }
+        //             try self.image_file.writer().writeAll(&sector.data);
+        //         }
+        //     }
     }
 
     pub fn formatImage(self: *Self) !void {
@@ -297,10 +379,7 @@ pub const DiskImage = struct {
         const varying_sector_format = self.image_type.varying_sector_format;
 
         // Just in case formatting an existing image file from larger to smaller format.
-        if (self.image_file == .file) {
-            try self.image_file.file.setEndPos(0);
-        }
-        try self.image_file.seekTo(0);
+        try self.writer.truncate();
 
         var write_sector: []u8 = undefined;
         if (!varying_sector_format) {
@@ -315,7 +394,7 @@ pub const DiskImage = struct {
                         &disk_sector.data,
                     );
                 }
-                try self.image_file.writer().writeAll(write_sector);
+                try self.writer.interface().writeAll(write_sector);
             }
         }
     }
@@ -396,7 +475,8 @@ pub const DiskImage = struct {
         }
     }
 
-    pub const ReadSectorError = File.ReadError || File.SeekError;
+    // TODO: Check all of the errors.
+    pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
     /// Read a single 128bytes sector
     pub fn readSector(self: *Self, location: LogicalAddress, data: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
@@ -405,20 +485,20 @@ pub const DiskImage = struct {
 
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
-        try self.image_file.seekTo(@intCast(data_offset));
-        _ = try self.image_file.reader().readAll(&data.data);
+        try self.reader.seekTo(@intCast(data_offset));
+        _ = try self.reader.interface().readSliceAll(&data.data);
         try data.dump();
     }
 
-    const WriteSectorError = File.WriteError || File.SeekError;
+    const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single 128 byte sector.
     pub fn writeSector(self: *Self, location: LogicalAddress, data: *DiskSector) WriteSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
 
         const sector_data = self.image_type.writeableSectorGet(physical_location, &data.data);
         const sector_offset = self.seekLocationGetWrite(physical_location);
-        try self.image_file.seekTo(sector_offset);
-        try self.image_file.writer().writeAll(sector_data);
+        try self.writer.seekTo(sector_offset);
+        try self.writer.interface().writeAll(sector_data);
 
         log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
     }
@@ -458,7 +538,7 @@ pub const DiskSector = struct {
     pub fn dump(self: DiskSector) !void {
         if (!DUMP)
             return;
-        std.debug.print("Disk Sector: \n", .{});
+        // std.debug.print("Disk Sector: \n", .{});
         std.debug.dumpHex(self.data);
     }
 };
@@ -472,4 +552,5 @@ const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 const DirectoryLoadError = DirectoryTable.DirectoryLoadError;
 const RawDirEntry = @import("directory_table.zig").RawDirEntry;
 const RawDirError = @import("directory_table.zig").RawDirError;
-const File = std.fs.File;
+const File = std.Io.File;
+const Io = std.Io;

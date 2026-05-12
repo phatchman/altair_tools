@@ -154,8 +154,8 @@ pub const DiskImageType = struct {
     }
 
     /// Retruns true if supplied image_file is supported by this image type.
-    pub fn isCorrectFormat(self: *const DiskImageType, image_file: std.fs.File) bool {
-        const image_size = image_file.getEndPos() catch {
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        const image_size = image_file.length(io) catch {
             return false;
         };
         const alt_size = if (self.detect_conditions == .padded) ((self.image_size + 127) / 128) * 128 else self.image_size;

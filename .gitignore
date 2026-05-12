@@ -2,6 +2,8 @@
 .zig-cache/
 zig-cli/
 zig-out/
+zig-pkg/
+adgui/zig-pkg/
 *.exe
 *.pdb
 *.DSK

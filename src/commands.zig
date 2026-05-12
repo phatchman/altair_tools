@@ -6,8 +6,6 @@ const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 
-const global_allocator = @import("main.zig").global_allocator;
-
 const log = std.log.scoped(.altair_disk);
 const Commands = @This();
 
@@ -15,7 +13,7 @@ pub const Command = struct {
     option: []const u8,
     name: []const u8,
     write: bool,
-    action: fn (disk_image: *DiskImage, options: CommandLineOptions) anyerror!void,
+    action: fn (context: Context, disk_image: *DiskImage, options: CommandLineOptions) anyerror!void,
 };
 
 const command_list = [_]Command{
@@ -36,8 +34,13 @@ const command_list = [_]Command{
 
 var current_command: []const u8 = undefined;
 
+const Context = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+};
+
 /// Dispatch the correct command based on the supplied command line options.
-pub fn dispatch(options: CommandLineOptions) !void {
+pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions) !void {
     var write_access: bool = undefined;
 
     // Create a table that sets write_access and last_command_description
@@ -50,15 +53,15 @@ pub fn dispatch(options: CommandLineOptions) !void {
         }
     }
 
-    var file = openDiskImage(options.image_file, write_access, options.do_format) catch |err| {
+    var file = openDiskImage(io, options.image_file, write_access, options.do_format) catch |err| {
         printErrorMessage(current_command, .open_image, .{options.image_file}, err);
         return error.CommandFailed;
     };
-    const existing_file = (file.getEndPos() catch 0) != 0;
+    const existing_file = (file.length(io) catch 0) != 0;
 
     // Get or detect this image type.
     const image_type: *const DiskImageType = image_type: {
-        errdefer file.close();
+        errdefer file.close(io);
         var trial_image_type: *const DiskImageType = undefined;
         var requested_disk_image_type = options.disk_image_type;
         // Default format to FDD_8IN unless it's an existing image file.
@@ -70,12 +73,12 @@ pub fn dispatch(options: CommandLineOptions) !void {
             trial_image_type = all_disk_types.getPtrConst(requested_type);
         } else {
             var unique = false;
-            trial_image_type = DiskImage.detectImageType(file, &unique) orelse {
+            trial_image_type = DiskImage.detectImageType(io, file, &unique) orelse {
                 printErrorMessage(current_command, .image_type_detect, .{}, error.CantDetectImage);
                 return error.CommandFailed;
             };
             if (!unique) {
-                try Console.stderr.print(
+                try Console.stderr().print(
                     "WARNING: {s} and {s} formats cannot be distinuished with autodection. Assuming {s}. Use -T to set correct image type.\n",
                     .{
                         all_disk_type_names[@intFromEnum(DiskImageTypes.HDD_5MB)],
@@ -86,23 +89,28 @@ pub fn dispatch(options: CommandLineOptions) !void {
             }
         }
 
-        if (!options.do_format and !trial_image_type.isCorrectFormat(file)) {
+        if (!options.do_format and !trial_image_type.isCorrectFormat(io, file)) {
             printErrorMessage(current_command, .image_type_set, .{}, error.None);
             return error.CommandFailed;
         }
         break :image_type trial_image_type;
     };
     log.info("Image type set to or detected as: {s}", .{image_type.type_name});
+    // TODO: Respect read-only and don;t have a writer?
+
+    // We do out own buffering.
+    var image_reader = file.reader(io, &.{});
+    var image_writer = file.writer(io, &.{});
 
     var disk_image = disk_image: {
-        errdefer file.close();
-        break :disk_image DiskImage.init(global_allocator, file, image_type) catch |err| {
+        errdefer file.close(io);
+        break :disk_image DiskImage.init(gpa, .{ .on_disk = &image_reader }, .{ .on_disk = &image_writer }, image_type) catch |err| {
             printErrorMessage(current_command, .image_init, .{options.image_file}, err);
             return error.CommandFailed;
         };
     };
-    // Once the file is given to disk_image, it will look after closing the file in deinit()
     defer disk_image.deinit();
+    defer file.close(io);
 
     if (!options.do_format and !options.do_recover) {
         disk_image.loadDirectories(options.do_raw_dir) catch |err| {
@@ -117,18 +125,18 @@ pub fn dispatch(options: CommandLineOptions) !void {
         // If there is a field in options with the same name as command.option
         if (@field(options, command.option)) {
             defer Console.flushOut() catch {};
-            try command.action(&disk_image, options);
+            try command.action(.{ .io = io, .gpa = gpa }, &disk_image, options);
             return;
         }
     }
 }
 
 /// Do a standard directory listing.
-pub fn directoryList(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     var file_count: u32 = 0;
     var kb_used: u32 = 0;
 
-    try Console.stdout.print("Name     Ext   Length Used U At\n", .{});
+    try Console.stdout().print("Name     Ext   Length Used U At\n", .{});
 
     for (disk_image.directory.cooked_directories.items) |entry| {
         if (options.cpm_user) |user| {
@@ -136,7 +144,7 @@ pub fn directoryList(disk_image: *DiskImage, options: CommandLineOptions) !void 
         }
         const this_kb = entry.allocsUsedInKB();
         kb_used += this_kb;
-        try Console.stdout.print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
+        try Console.stdout().print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
             entry.filenameOnly(),
             entry.extension(),
             entry.recordsUsedInB(),
@@ -149,11 +157,11 @@ pub fn directoryList(disk_image: *DiskImage, options: CommandLineOptions) !void 
     const kb_free = disk_image.capacityFreeInKB();
     const kb_total = disk_image.capacityTotalInKB();
 
-    try Console.stdout.print(
+    try Console.stdout().print(
         "{} file(s), occupying {}K of {}K total capacity\n",
         .{ file_count, kb_used, kb_total },
     );
-    try Console.stdout.print(
+    try Console.stdout().print(
         "{} directory entries and {}K bytes remain\n",
         .{ disk_image.directoryFreeCount(), kb_free },
     );
@@ -162,9 +170,9 @@ pub fn directoryList(disk_image: *DiskImage, options: CommandLineOptions) !void 
 }
 
 /// Show the raw CPM directory entries
-pub fn directoryListRaw(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn directoryListRaw(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     _ = options;
-    try Console.stdout.print("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n", .{});
+    try Console.stdout().print("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n", .{});
 
     for (disk_image.directory.raw_directories.items, 0..) |entry, extent_nr| {
         if (true or !entry.isDeleted()) {
@@ -173,44 +181,44 @@ pub fn directoryListRaw(disk_image: *DiskImage, options: CommandLineOptions) !vo
                 if (entry.attribSystem()) 'S' else ' ',
             };
 
-            try Console.stdout.print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
+            try Console.stdout().print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
                 extent_nr,               entry.entry.user, entry.entry.filename,
                 entry.entry.filetype,    attribs,          entry.extentGet(),
                 entry.entry.num_records,
             });
 
             // The allocations are really little endian u16's
-            try Console.stdout.print("[", .{});
+            try Console.stdout().print("[", .{});
             for (0..entry.allocationsCount() - 1) |i| {
                 const value = try entry.allocationGet(i, disk_image.image_type);
-                try Console.stdout.print("{},", .{value});
+                try Console.stdout().print("{},", .{value});
             }
             const value = try entry.allocationGet(entry.allocationsCount() - 1, disk_image.image_type);
-            try Console.stdout.print("{}]\n", .{value});
+            try Console.stdout().print("{}]\n", .{value});
         }
     }
     const free_allocations = disk_image.directory.free_allocations;
-    try Console.stdout.print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
+    try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
     var nr_output: usize = 0;
     for (0..disk_image.directory.free_allocations.capacity()) |alloc_nr| {
         if (disk_image.directory.free_allocations.isSet(alloc_nr)) {
-            try Console.stdout.print("{:0>3} ", .{alloc_nr});
+            try Console.stdout().print("{:0>3} ", .{alloc_nr});
             nr_output += 1;
             if (nr_output % 16 == 0) {
-                try Console.stdout.print("\n", .{});
+                try Console.stdout().print("\n", .{});
             }
         }
     }
-    try Console.stdout.print("\n", .{});
+    try Console.stdout().print("\n", .{});
 }
 
 /// Get a file from the image.
-pub fn getFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
-    try _getFile(disk_image, .{ .filename = options.multiple_files[0] }, options);
+pub fn getFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
+    try _getFile(ctx, disk_image, .{ .filename = options.multiple_files[0] }, options);
 }
 
 /// Get multiple files from the image.
-pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn getFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     var had_error = false;
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
@@ -218,7 +226,7 @@ pub fn getFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !voi
 
         while (itr.next()) |entry| {
             found_file = true;
-            _getFile(disk_image, .{ .dir_entry = entry }, options) catch |err| {
+            _getFile(ctx, disk_image, .{ .dir_entry = entry }, options) catch |err| {
                 if (err == error.CommandFailCanContinue) {
                     continue;
                 } else {
@@ -241,7 +249,7 @@ pub const FileNameOrCookedDir = union(enum) {
     filename: []const u8,
     dir_entry: *const CookedDirEntry,
 };
-pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: CommandLineOptions) !void {
+pub fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: CommandLineOptions) !void {
     const directory_table = disk_image.directory;
 
     // If passed in a filename, then look it up. Otherwise use the dir_entry passed in.
@@ -273,9 +281,9 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
         break :extension false;
     };
 
-    var cwd = std.fs.cwd();
+    var cwd = std.Io.Dir.cwd();
     if (options.get_out_dir.len > 0) {
-        cwd = cwd.openDir(options.get_out_dir, .{}) catch |err| {
+        cwd = cwd.openDir(ctx.io, options.get_out_dir, .{}) catch |err| {
             printErrorMessage(current_command, .open_directory, .{options.get_out_dir}, err);
             return error.CommandFailed;
         };
@@ -286,11 +294,11 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
     else
         std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()});
 
-    var out_file = cwd.createFile(out_filename, .{ .read = false }) catch |err| {
+    var out_file = cwd.createFile(ctx.io, out_filename, .{ .read = false }) catch |err| {
         printErrorMessage(current_command, .file_create, .{out_filename}, err);
         return error.CommandFailedCanContinue;
     };
-    defer out_file.close();
+    defer out_file.close(ctx.io);
 
     var text_mode: DiskImage.TextMode = .Auto;
     if (options.text_mode) {
@@ -299,7 +307,8 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
         text_mode = .Binary;
     }
 
-    disk_image.copyFromImage(dir_entry, out_file, text_mode) catch |err| {
+    var file_writer = out_file.writer(ctx.io, &.{});
+    disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| {
         printErrorMessage(current_command, .file_copy, .{out_filename}, err);
         return error.CommandFailed;
     };
@@ -307,15 +316,15 @@ pub fn _getFile(disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: Co
 }
 
 /// Copy a file to the image
-pub fn putFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
-    try _putFile(disk_image, options.multiple_files[0], options.cpm_user);
+pub fn putFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
+    try _putFile(ctx, disk_image, options.multiple_files[0], options.cpm_user);
 }
 
 /// Copy multiple files to the image
-pub fn putFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     var had_error = false;
     for (options.multiple_files) |filename| {
-        _putFile(disk_image, filename, options.cpm_user) catch |err| {
+        _putFile(ctx, disk_image, filename, options.cpm_user) catch |err| {
             if (err == error.CommandFailedCanContinue) {
                 had_error = true;
                 continue;
@@ -329,18 +338,19 @@ pub fn putFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !voi
     }
 }
 
-pub fn _putFile(disk_image: *DiskImage, filename: []const u8, user: ?u8) !void {
+pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user: ?u8) !void {
     const cpm_user = user orelse 0;
 
-    var cwd = std.fs.cwd();
+    var cwd = std.Io.Dir.cwd();
 
-    var in_file = cwd.openFile(filename, .{ .mode = .read_only }) catch |err| {
+    var in_file = cwd.openFile(ctx.io, filename, .{ .mode = .read_only }) catch |err| {
         printErrorMessage(current_command, .file_open, .{filename}, err);
         return error.CommandFailedCanContinue;
     };
-    defer in_file.close();
+    defer in_file.close(ctx.io);
 
-    disk_image.copyToImage(in_file, filename, cpm_user, false) catch |err| {
+    var file_reader = in_file.reader(ctx.io, &.{});
+    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, false) catch |err| {
         printErrorMessage(current_command, .file_copy, .{filename}, err);
         switch (err) {
             error.PathAlreadyExists, error.CookedDirEntryNotFound => return error.CommandFailedCanContinue,
@@ -351,7 +361,7 @@ pub fn _putFile(disk_image: *DiskImage, filename: []const u8, user: ?u8) !void {
 }
 
 /// Remove a file from the image
-pub fn eraseFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn eraseFile(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     const filename = options.multiple_files[0];
     if (disk_image.directory.findByFilename(filename, options.cpm_user)) |dir_entry| {
         disk_image.erase(dir_entry) catch |err| {
@@ -365,10 +375,10 @@ pub fn eraseFile(disk_image: *DiskImage, options: CommandLineOptions) !void {
 }
 
 /// Remove multiple files from the image.
-pub fn eraseFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn eraseFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     var had_error = false;
     var to_erase: std.ArrayListUnmanaged(CookedDirEntry) = .empty;
-    defer to_erase.deinit(global_allocator);
+    defer to_erase.deinit(ctx.gpa);
 
     for (options.multiple_files) |file_pattern| {
         var found_file: bool = false;
@@ -376,7 +386,7 @@ pub fn eraseFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !v
 
         while (itr.next()) |entry| {
             found_file = true;
-            try to_erase.append(global_allocator, entry.*);
+            try to_erase.append(ctx.gpa, entry.*);
         } else {
             if (!found_file) {
                 printErrorMessage(current_command, .no_matching_files, .{file_pattern}, error.None);
@@ -400,36 +410,36 @@ pub fn eraseFileMultiple(disk_image: *DiskImage, options: CommandLineOptions) !v
 }
 
 /// Extract system tracks
-pub fn extractCPM(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn extractCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Extract CPM to {s}", .{options.system_image_get});
-    var cwd = std.fs.cwd();
-    const out_file = cwd.createFile(options.system_image_get, .{ .read = false }) catch |err| {
+    var cwd = std.Io.Dir.cwd();
+    const out_file = cwd.createFile(ctx.io, options.system_image_get, .{ .read = false }) catch |err| {
         printErrorMessage(current_command, .file_create, .{options.system_image_get}, err);
         return error.CommandFailed;
     };
-    defer out_file.close();
-    disk_image.extractCPM(out_file) catch |err| {
+    defer out_file.close(ctx.io);
+    disk_image.extractCPM(ctx.io, out_file) catch |err| {
         printErrorMessage(current_command, .extract_cpm, .{options.system_image_get}, err);
         return error.CommandFailed;
     };
 }
 
 /// Write to system tracks
-pub fn installCPM(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn installCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Install CPM from {s}", .{options.system_image_put});
-    var cwd = std.fs.cwd();
-    const in_file = cwd.openFile(options.system_image_put, .{ .mode = .read_only }) catch |err| {
+    var cwd = std.Io.Dir.cwd();
+    const in_file = cwd.openFile(ctx.io, options.system_image_put, .{ .mode = .read_only }) catch |err| {
         printErrorMessage(current_command, .file_open, .{options.system_image_put}, err);
         return error.CommandFailed;
     };
-    defer in_file.close();
-    disk_image.installCPM(in_file) catch |err| {
+    defer in_file.close(ctx.io);
+    disk_image.installCPM(ctx.io, in_file) catch |err| {
         printErrorMessage(current_command, .install_cpm, .{options.system_image_put}, err);
         return error.CommandFailed;
     };
 }
 
-pub fn formatImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn formatImage(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Formatting {s} ....", .{options.image_file});
     disk_image.formatImage() catch |err| {
         printErrorMessage(current_command, .format, .{options.image_file}, err);
@@ -439,37 +449,43 @@ pub fn formatImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
 }
 
 /// Try and recover an image with corrupted directory entries.
-pub fn recoverImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Recovering {s} to {s}", .{ options.image_file, options.recovery_image_file });
 
-    var cwd = std.fs.cwd();
+    if (true) {
+        // Need to work out the copy bit and whetehr we need something seekable.
+        @panic("TODO");
+    }
+    var cwd = std.Io.Dir.cwd();
     // Copy the image to the new file first
-    const out_image = cwd.createFile(options.recovery_image_file, .{ .read = true }) catch |err| {
+    const out_image = cwd.createFile(ctx.io, options.recovery_image_file, .{ .read = true }) catch |err| {
         printErrorMessage(current_command, .recover, .{options.recovery_image_file}, err);
         return error.CommandFailed;
     };
-    {
+    if (false) {
         // recoverImage owns the file until disk_image.reinit(), so close it on error.
         errdefer out_image.close();
-        var read_buf: [4096]u8 = undefined;
-        var eof = false;
+        //        var buffer: [4096]u8 = undefined;
+        //      var writer = out_image.writer(ctx.io, &buffer);
+        //        disk_image.reader.streamRemaining(writer.interface)
+        //var eof = false;
         // Copy the corrupt image to a new file.
         // Could user std.fs.Dir.copyFile here, but we already have the files open.
-        while (!eof) {
-            const nbytes = try disk_image.image_file.reader().readAll(&read_buf);
-            out_image.writeAll(read_buf[0..nbytes]) catch |err| {
-                printErrorMessage(current_command, .file_write, .{options.recovery_image_file}, err);
-                return error.CommandFailed;
-            };
-            eof = nbytes != read_buf.len;
-        }
-        out_image.seekTo(0) catch |err| {
-            printErrorMessage(current_command, .file_seek, .{options.recovery_image_file}, err);
-            return error.CommandFailed;
-        };
+        //while (!eof) {
+        //const nbytes = try disk_image.reader.readAll(&read_buf);
+        //out_image.writeAll(read_buf[0..nbytes]) catch |err| {
+        //  printErrorMessage(current_command, .file_write, .{options.recovery_image_file}, err);
+        // return error.CommandFailed;
+        //};
+        //  eof = nbytes != read_buf.len;
+        // }
+        // out_image.seekTo(0) catch |err| {
+        //     printErrorMessage(current_command, .file_seek, .{options.recovery_image_file}, err);
+        //     return error.CommandFailed;
+        // };
     }
     // reinit() will close underlying file even on error.
-    disk_image.reinit(global_allocator, out_image) catch |err| {
+    disk_image.reinit(ctx.gpa, out_image) catch |err| {
         printErrorMessage(current_command, .image_init, .{options.recovery_image_file}, err);
         return error.CommandFailed;
     };
@@ -481,32 +497,32 @@ pub fn recoverImage(disk_image: *DiskImage, options: CommandLineOptions) !void {
 }
 
 /// Print image parameters
-pub fn printImageInfo(disk_image: *DiskImage, options: CommandLineOptions) !void {
+pub fn printImageInfo(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     _ = options;
     disk_image.image_type.dump();
 }
 
-fn openDiskImage(filename: []const u8, writeable: bool, create_file: bool) !std.fs.File {
-    const cwd = std.fs.cwd();
+fn openDiskImage(io: std.Io, filename: []const u8, writeable: bool, create_file: bool) !std.Io.File {
+    const cwd = std.Io.Dir.cwd();
     if (create_file) {
-        return cwd.createFile(filename, .{ .read = false, .truncate = false });
+        return cwd.createFile(io, filename, .{ .read = false, .truncate = false });
     } else if (writeable) {
-        return cwd.openFile(filename, .{ .mode = .read_write });
+        return cwd.openFile(io, filename, .{ .mode = .read_write });
     } else {
-        return cwd.openFile(filename, .{ .mode = .read_only });
+        return cwd.openFile(io, filename, .{ .mode = .read_only });
     }
 }
 
 fn printErrorMessage(command: []const u8, comptime message: ErrorMessage, args: anytype, err: anyerror) void {
-    Console.stderr.print("Error performing {s}: ", .{command}) catch {};
-    Console.stderr.print(error_messages.get(message), args) catch {};
+    Console.stderr().print("Error performing {s}: ", .{command}) catch {};
+    Console.stderr().print(error_messages.get(message), args) catch {};
 
     switch (err) {
         error.None => {
-            Console.stderr.writeAll("\n") catch {};
+            Console.stderr().writeAll("\n") catch {};
         },
         error.CantDetectImage => {
-            Console.stderr.print(": Not a valid Altair disk image.\n", .{}) catch {};
+            Console.stderr().print(": Not a valid Altair disk image.\n", .{}) catch {};
         },
         RawDirError.InvalidAllocation,
         RawDirError.InvalidEntryNumber,
@@ -514,30 +530,30 @@ fn printErrorMessage(command: []const u8, comptime message: ErrorMessage, args: 
         RawDirError.InvalidRecordNumber,
         RawDirError.InvalidUser,
         => {
-            Console.stderr.print(
+            Console.stderr().print(
                 ": The directory entries in this image are invalid. Error = {s}.\n",
                 .{@errorName(err)},
             ) catch {};
         },
         DirectoryError.OutOfAllocs,
         => {
-            Console.stderr.print(": The disk is full\n", .{}) catch {};
+            Console.stderr().print(": The disk is full\n", .{}) catch {};
         },
         DirectoryError.OutOfExtents,
         => {
-            Console.stderr.print(": No more directory entries available\n", .{}) catch {};
+            Console.stderr().print(": No more directory entries available\n", .{}) catch {};
         },
         error.FileNotFound => {
-            Console.stderr.print(": File not found\n", .{}) catch {};
+            Console.stderr().print(": File not found\n", .{}) catch {};
         },
         error.AccessDenied => {
-            Console.stderr.print(": Access is denied\n", .{}) catch {};
+            Console.stderr().print(": Access is denied\n", .{}) catch {};
         },
         error.PathAlreadyExists => {
-            Console.stderr.print(": File already exists\n", .{}) catch {};
+            Console.stderr().print(": File already exists\n", .{}) catch {};
         },
         else => {
-            Console.stderr.print(": {s}\n", .{@errorName(err)}) catch {};
+            Console.stderr().print(": {s}\n", .{@errorName(err)}) catch {};
         },
     }
 }

@@ -27,29 +27,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-pub const global_allocator = gpa.allocator();
 
-// This arena lasts the lifetime of the application.
-pub var arena = std.heap.ArenaAllocator.init(global_allocator);
+// TODO: I think readers are writers have different seek cursors, even if the same file.
+// Do they? and does it matter?
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
+var init: *const std.process.Init = undefined;
 
 /// Main processing takes place here
 fn do_main() !void {
-    var stdin_buffered = std.io.bufferedReader(std.io.getStdIn().reader());
-    const stdin_buffered_reader = stdin_buffered.reader().any();
-    var stdout_buffered = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const stdout_buffered_writer = stdout_buffered.writer().any();
-    const stderr_writer_any = std.io.getStdErr().writer().any();
-
-    Console.init(
-        &stdin_buffered,
-        &stdin_buffered_reader,
-        &stdout_buffered,
-        &stdout_buffered_writer,
-        &stderr_writer_any,
-    );
+    Console.init(init.io);
     defer Console.deinit();
 
     if (!(validateOptions() catch false)) {
@@ -60,18 +48,18 @@ fn do_main() !void {
     // Print out log messages in verbose mode on exit.
     defer {
         if (error_collection.items.len > 0) {
-            Console.stderr.print("The following errors were encountered:\n", .{}) catch {};
+            Console.stderr().print("The following errors were encountered:\n", .{}) catch {};
             for (error_collection.items) |message| {
-                Console.stderr.print("{s}\n", .{message}) catch {};
+                Console.stderr().print("{s}\n", .{message}) catch {};
             }
             if (options.do_recover) {
-                Console.stderr.print("It is normal to see errors when running --recover\n", .{}) catch {};
+                Console.stderr().print("It is normal to see errors when running --recover\n", .{}) catch {};
             }
         }
     }
 
     // Start of processing.
-    Commands.dispatch(options) catch |err| {
+    Commands.dispatch(init.io, init.gpa, options) catch |err| {
         switch (err) {
             error.CommandFailed, error.CommandFailedCanContinue => return error.ErrorExit,
             else => return err,
@@ -111,13 +99,9 @@ pub const CommandLineOptions = struct {
 
 var options = CommandLineOptions{};
 var app: cli.App = undefined;
-pub fn main() !void {
-    defer {
-        arena.deinit();
-        _ = gpa.deinit();
-    }
-
-    var r = try cli.AppRunner.init(arena.allocator());
+pub fn main(init_args: std.process.Init) !void {
+    init = &init_args;
+    var r = cli.AppRunner.init(init);
     app = cli.App{
         .command = cli.Command{
             .target = cli.CommandTarget{
@@ -284,10 +268,13 @@ pub fn main() !void {
     app.help_config.print_help_on_error = false;
     r.run(&app) catch {
         // De-init in the error case because exit(1) skips the defers
-        arena.deinit();
-        _ = gpa.deinit();
+        // TODO: check how this works now
+        // init.arena.deinit();
+        // _ = init.gpa.deinit();
         std.process.exit(1);
     };
+    // TODO: This should be cleanExit etc.. But leaving this until the arg parsing memory leaks are resolved
+    std.process.exit(0);
 }
 
 /// Generate help text for all disk image types. The first entry is considered the default.
@@ -301,6 +288,7 @@ fn generateDiskImageList() []const u8 {
 }
 
 pub fn validateOptions() !bool {
+    //_ = io;
     if (options.very_verbose)
         options.verbose = true;
 
@@ -328,27 +316,35 @@ pub fn validateOptions() !bool {
     }
 
     if (option_count > 1) {
-        cli.printError(&app,
-            \\You may only specify one of:
-            \\       --directory, 
-            \\       --raw
-            \\       --info
-            \\       --format,
-            \\       --get, --get-multiple,
-            \\       --put, --put-multiple,
-            \\       --erase, --erase-multiple,
-            \\       --extract-cpm, --write-cpm
-            \\       --recover
-            \\
-        , .{});
+        // var buffer: [4096]u8 = undefined;
+        // var w = std.Io.File.stderr().writer(io, &buffer);
+        // var printer = cli.Printer.init(&w);
+        // cli.printError(&app.pr,
+        //     \\You may only specify one of:
+        //     \\       --directory,
+        //     \\       --raw
+        //     \\       --info
+        //     \\       --format,
+        //     \\       --get, --get-multiple,
+        //     \\       --put, --put-multiple,
+        //     \\       --erase, --erase-multiple,
+        //     \\       --extract-cpm, --write-cpm
+        //     \\       --recover
+        //     \\
+        // , .{}, .{});
+        //TODO:
+        if (true) @panic("TODO: Can't get a Printer to print the error");
         return false;
     }
 
     if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
         if (options.multiple_files.len != 0) {
-            cli.printError(&app,
+            //if (true) @panic("TODO");
+            var stderr = std.Io.File.stderr().writer(init.io, &.{});
+            var p: cli.Printer = .init(&stderr);
+            cli.printError(&p, &app,
                 \\No filenames are allowed for:
-                \\       --directory, 
+                \\       --directory,
                 \\       --raw
                 \\       --info
                 \\       --format
@@ -359,26 +355,32 @@ pub fn validateOptions() !bool {
     }
     if (options.do_get or options.do_put or options.do_erase) {
         if (options.multiple_files.len != 1) {
-            cli.printError(&app,
-                \\You must specify exactly one filename for:
-                \\       --get, --put, --erase
-                \\
-            , .{});
+            if (true) @panic("TODO");
+
+            // cli.printError(&app,
+            //     \\You must specify exactly one filename for:
+            //     \\       --get, --put, --erase
+            //     \\
+            // , .{});
             return false;
         }
     }
     if (options.get_out_dir.len != 0 and !(options.do_get or options.do_get_multi)) {
-        cli.printError(&app,
-            \\You may only use --out with:
-            \\ --get, --get-multiple
-            \\
-        , .{});
+        if (true) @panic("TODO");
+
+        // cli.printError(&app,
+        //     \\You may only use --out with:
+        //     \\ --get, --get-multiple
+        //     \\
+        // , .{});
         return false;
     }
 
     if (options.cpm_user) |user| {
         if (user > 15) {
-            cli.printError(&app, "User must be between 0 and 15.", .{});
+            if (true) @panic("TODO");
+
+            //            cli.printError(&app, "User must be between 0 and 15.", .{});
             return false;
         }
     }
@@ -402,32 +404,32 @@ var error_collection: std.ArrayListUnmanaged([]const u8) = .empty;
 /// Any errors not for .altair_disk, .altair_disk_lib are logged straight to stderr instead.
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
     switch (scope) {
         .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
-        else => return std.io.getStdErr().writer().print(@tagName(message_level) ++ ": " ++ format, args) catch {},
+        else => return std.debug.print(@tagName(message_level) ++ ": " ++ format, args),
     }
     switch (message_level) {
         .info, .warn => {
             if (options.verbose) {
-                Console.stdout.print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
+                Console.stdout().print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .debug => {
             if (options.very_verbose) {
-                Console.stdout.print(format, args) catch {};
+                Console.stdout().print(format, args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .err => {
-            const message = std.fmt.allocPrint(arena.allocator(), format, args) catch {
+            const message = std.fmt.allocPrint(init.arena.allocator(), format, args) catch {
                 return;
             };
-            error_collection.append(arena.allocator(), message) catch {};
+            error_collection.append(init.arena.allocator(), message) catch {};
         },
     }
 }

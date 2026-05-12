@@ -1,29 +1,31 @@
 //! Provide a global, buffered stdin and stdout
 //! and non-buffered stderr.
-//! Console.stdin - AnyReader for a buffered stdin
-//! Console.stdout - AnyWriter for a buffered stdout.
-//! Console.stderr - AnyWriter for an _un_buffered stderr.
 
-pub var stdin: *const std.io.AnyReader = undefined;
-pub var stdout: *const std.io.AnyWriter = undefined;
-pub var stderr: *const std.io.AnyWriter = undefined;
+var _internal: struct {
+    stdin: std.Io.File.Reader,
+    stdout: std.Io.File.Writer,
+    stderr: std.Io.File.Writer,
 
-var _internal: Internal = undefined;
+    stdin_buffer: [4096]u8,
+    stdout_buffer: [4096]u8,
+} = undefined;
 
-pub fn init(
-    stdin_buffered: *std.io.BufferedReader(4096, std.fs.File.Reader),
-    stdin_reader: *const std.io.AnyReader,
-    stdout_buffered: *std.io.BufferedWriter(4096, std.fs.File.Writer),
-    stdout_writer: *const std.io.AnyWriter,
-    stderr_writer: *const std.io.AnyWriter,
-) void {
-    stdin = stdin_reader;
-    stdout = stdout_writer;
-    stderr = stderr_writer;
-    _internal = .{
-        .stdin_buffered = stdin_buffered,
-        .stdout_buffered = stdout_buffered,
-    };
+pub fn init(io: std.Io) void {
+    _internal.stdin = .initStreaming(.stdin(), io, &_internal.stdin_buffer);
+    _internal.stdout = .initStreaming(.stdout(), io, &_internal.stdout_buffer);
+    _internal.stderr = .initStreaming(.stderr(), io, &.{});
+}
+
+pub fn stdin() *std.Io.Reader {
+    return &_internal.stdin.interface;
+}
+
+pub fn stdout() *std.Io.Writer {
+    return &_internal.stdout.interface;
+}
+
+pub fn stderr() *std.Io.Writer {
+    return &_internal.stderr.interface;
 }
 
 /// Flushes output
@@ -33,18 +35,15 @@ pub fn deinit() void {
 
 /// Flush stdin
 pub fn flushIn() !void {
-    try _internal.stdin_buffered.flush();
+    try _internal.stdin.flush();
 }
 
 /// Flush stdout
 pub fn flushOut() !void {
-    try _internal.stdout_buffered.flush();
+    try _internal.stdout.flush();
 }
 
 // Store pointers to the buffered writers as "private" variables.
-const Internal = struct {
-    stdin_buffered: *std.io.BufferedReader(4096, std.fs.File.Reader),
-    stdout_buffered: *std.io.BufferedWriter(4096, std.fs.File.Writer),
-};
+const Internal = struct {};
 
 const std = @import("std");
