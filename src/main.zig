@@ -389,6 +389,7 @@ pub fn validateOptions() !bool {
 
 pub const std_options: std.Options = .{
     // Set the log level to info
+    // TODO: HUh???
     .log_level = .debug,
 
     // Define logFn to override the std implementation

@@ -19,11 +19,11 @@ pub const SeekableReader = union(enum) {
     on_disk: *std.Io.File.Reader,
     in_memory: *std.Io.Reader,
 
-    pub fn initWithDiskFile(file_reader: std.Io.File.Reader) SeekableReader {
+    pub fn initWithDiskFile(file_reader: *std.Io.File.Reader) SeekableReader {
         return .{ .on_disk = file_reader };
     }
 
-    pub fn initWithMemoryFile(fixed_reader: std.Io.Reader) SeekableReader {
+    pub fn initWithMemoryFile(fixed_reader: *std.Io.Reader) SeekableReader {
         return .{ .in_memory = fixed_reader };
     }
 
@@ -49,21 +49,12 @@ pub const SeekableWriter = union(enum) {
     on_disk: *std.Io.File.Writer,
     in_memory: *std.Io.Writer,
 
-    pub fn initWithDiskFile(file_reader: *std.Io.File.Writer) SeekableWriter {
-        return .{ .on_disk = file_reader };
-    }
-
-    pub fn initWithMemoryFile(fixed_reader: *std.Io.Reader) SeekableWriter {
-        return .{ .in_memory = fixed_reader };
-    }
-
     pub fn seekTo(self: SeekableWriter, offset: u64) (File.Writer.SeekError || Io.Writer.Error)!void {
         switch (self) {
             .on_disk => |file| try file.seekTo(offset),
             .in_memory => |mem| {
                 std.debug.assert(offset <= mem.buffer.len);
                 mem.end = offset;
-                //@panic("TODO"); // Can't seek a writer?
             },
         }
     }
@@ -100,10 +91,9 @@ pub const DiskImage = struct {
     _filename_conversion_buf: [12]u8, // Used to convert local to CPM filenames 8.3 = 12 chars.
 
     /// Initilize a DiskImage from an opened image file.
-    /// Image file must at least have read permissions if the loadDirectory() is called.
-    /// Note that DiskImage is not fully initialized until loadDirectories is called.
-    /// DiskImage takes ownership of the passed in file and will close it on deinit()
-    /// TODO: Allow writer to be optional for read-only?
+    /// Image file must at least have read permissions if the loadDirectories() is called.
+    /// Note: 1) DiskImage is not fully initialized until loadDirectories() is called.
+    ///       2) Caller is responsible for closing the underlying file after deinit()
     pub fn init(gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter, image_type: *const DiskImageType) !DiskImage {
         return .{
             .reader = reader,
@@ -123,15 +113,10 @@ pub const DiskImage = struct {
         self.directory = try .init(gpa, self.image_type);
     }
 
-    /// Cleanup and close underlying image file.
+    /// Cleanup.
+    /// Caller should close underlying file after calling deinit()
     pub fn deinit(self: *Self) void {
         self.directory.deinit();
-        // Close file if initialized with a file.
-        // If initialized with a stream, caller must close.
-
-        // TODO: Callers are now responsible for closing the file.
-        // put a panic in here when testing that all paths close fhe file.
-
     }
 
     /// Load the directory table.
@@ -244,33 +229,19 @@ pub const DiskImage = struct {
         var extent_count: usize = 0;
         var alloc_nr: u16 = undefined;
         var record_nr: u16 = 0;
-        var eof: bool = false;
+        var nbytes: usize = 0;
 
         // TODO: This whole thing needs a big cleanup!!!
-        while (!eof) {
-            var nbytes: usize = sector.data.len;
-            // // std.debug.print("about to read\n", .{});
-            file_reader.readSliceAll(&sector.data) catch |read_err| {
-                switch (read_err) {
-                    error.EndOfStream => {
-                        // std.debug.print("EOS buffer = {s}\n", .{file_reader.buffered()});
-                        nbytes = file_reader.buffered().len;
-                        @memcpy(sector.data[0..nbytes], file_reader.buffered());
-                        eof = true;
-                    },
-                    error.ReadFailed => return read_err,
-                }
-            };
+        nbytes = try file_reader.readSliceShort(&sector.data);
 
-            // std.debug.print("next\n", .{});
-
+        while (nbytes != 0 or first_extent) : ({
+            nbytes = try file_reader.readSliceShort(&sector.data);
+        }) {
             // Is this a new extent? (i.e. needs a new directory entry)
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (!first_extent) {
-                    // std.debug.print("new extent\n", .{});
                     try self.rawEntryWrite(extent_nr);
                     try self.directory.buildCookedEntry(extent_nr, self.image_type);
-                    // std.debug.print("wrote entries\n", .{});
                 } else {
                     first_extent = false;
                 }
@@ -285,10 +256,8 @@ pub const DiskImage = struct {
             if (record_nr % self.image_type.recs_per_alloc == 0) {
                 // Note alloc_nr is undefined until here on first loop.
                 alloc_nr = if (nbytes > 0) self.directory.allocationGetFree() catch |err| {
-                    // std.debug.print("got free alloc\n", .{});
                     try self.rawEntryWrite(@intCast(extent_nr));
                     try self.directory.buildCookedEntry(extent_nr, self.image_type);
-                    // std.debug.print("wrote entries\n", .{});
                     return err;
                 } else 0;
 
@@ -298,7 +267,6 @@ pub const DiskImage = struct {
             dir_entry.numRecordsSet(record_nr);
             dir_entry.extentSet(@intCast(extent_count));
             if (nbytes > 0) {
-                // std.debug.print("write sector\n", .{});
                 try self.writeSector(.{ .allocation = alloc_nr, .record = @intCast(record_nr % 256) }, &sector);
                 sector = .init(); // Re-fill with ^Z
             }

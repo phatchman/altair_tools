@@ -239,7 +239,6 @@ test "8in duplicate filenames" {
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var test_image: InMemoryImage = undefined;
     test_image.init(&image_file);
-
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
@@ -277,16 +276,15 @@ test "test force overwrite" {
     var image_file: [FDD_8IN.image_size]u8 = undefined;
     var test_image: InMemoryImage = undefined;
     test_image.init(&image_file);
-
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
     try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+
     // 2nd time force the overwrite.
     test_file[0] = 'X';
     test_stream.seek = 0;
     try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true);
-
     var in_file: [test_file.len]u8 = undefined;
     var in_stream: std.Io.Writer = .fixed(&in_file);
     const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
@@ -566,6 +564,7 @@ fn newMemoryDiskImage(raw_image: *InMemoryConstImage, image_type: *const DiskIma
 }
 
 fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const DiskImageType) !DiskImage {
+    // TODO: Always use these init fns or remove them.
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
     try disk_image.formatImage();
@@ -580,10 +579,12 @@ fn newReadOnlyMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Disk
     return disk_image;
 }
 
-fn newPhysicalDiskImage(stream: std.io.FixedBufferStream([]u8), image_type: *const DiskImageType) !DiskImage {
-    _ = stream;
-    const image_file = try std.Io.Dir.cwd().createFile("TEST.IMG", .{ .read = true });
-    var disk_image = try DiskImage._init(std.testing.allocator, .{ .file = image_file }, image_type);
+// Caller should pass in pointer to uninitialized reader and writer.
+fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer, image_type: *const DiskImageType) !DiskImage {
+    const image_file = try std.Io.Dir.cwd().createFile(std.testing.io, "TEST.IMG", .{ .read = true });
+    reader.* = image_file.reader(std.testing.io, &.{});
+    writer.* = image_file.writer(std.testing.io, &.{});
+    var disk_image = try DiskImage.init(std.testing.allocator, .{ .on_disk = reader }, .{ .on_disk = writer }, image_type);
     try disk_image.formatImage();
     try disk_image.loadDirectories(false);
     return disk_image;
@@ -612,7 +613,6 @@ fn saveFile(buf: []const u8) void {
 }
 
 // TODO: Invalid images and recovery of images.
-
 const std = @import("std");
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
@@ -623,3 +623,9 @@ const HDD_5MB_1024 = @import("disk_types.zig").all_disk_types.getPtrConst(.HDD_5
 const TAR = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_TAR);
 const FDC = @import("disk_types.zig").all_disk_types.getPtrConst(.@"FDD_1.5MB");
 const FDC_8MB = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN_8MB);
+
+pub const std_options: std.Options = .{
+    // Set the log level to info
+    // TODO: HUh???
+    .log_level = .debug,
+};
