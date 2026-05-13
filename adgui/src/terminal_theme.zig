@@ -1,18 +1,11 @@
 const dvui = @import("dvui");
-// const fonts: []const dvui.Font.Source = &.{
-//     .{
-//         .family = dvui.Font.array("Vera Sans Mono"),
-//         .bytes = dvui.Font.
-//         @embedFile("../fonts/bitstream-vera/VeraMono.ttf"),
-//     },
-// };
 
 const fill: dvui.Color = .fromHex("#2c3332");
 const text: dvui.Color = .fromHex("#82a29f");
 const border: dvui.Color = .fromHex("#60827d");
 
 pub const theme: dvui.Theme = blk: {
-    @setEvalBranchQuota(2000);
+    @setEvalBranchQuota(4000);
     break :blk .{
         .name = "Terminal",
         .dark = true,
@@ -26,6 +19,9 @@ pub const theme: dvui.Theme = blk: {
         .fill = fill,
         .text = text,
         .border = border,
+        .fill_hover = .fromHex("#334e57"),
+        .fill_press = .fromHex("#3b6357"),
+        .text_press = .fromHex("#97af81"),
 
         .control = .{
             .fill = .fromHex("#2c3334"),

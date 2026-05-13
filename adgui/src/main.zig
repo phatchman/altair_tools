@@ -1090,8 +1090,8 @@ fn makeStatusBar() !bool {
     const reversed = dvui.Options{
         .color_text = dvui.themeGet().window.fill,
         .color_fill = dvui.themeGet().text,
-        .color_fill_hover = dvui.themeGet().fill_press, // Added.
-        .color_fill_press = dvui.themeGet().fill_hover, // Added.
+        .color_fill_hover = dvui.themeGet().fill_press,
+        .color_fill_press = dvui.themeGet().fill_hover,
         .expand = .horizontal,
         .margin = Rect{ .x = 2, .w = 2, .y = 2, .h = 0 },
         .corner_radius = Rect.all(0),
