@@ -38,7 +38,7 @@
 //       [_]
 //
 
-const adgui_version = "0.9.5";
+const adgui_version = "0.10.0";
 
 const folder_icon = @embedFile("icons/folder.tvg");
 
@@ -274,37 +274,6 @@ fn setTheme() !void {
         return;
     dvui.themeSet(@import("terminal_theme.zig").theme);
     theme_set = true;
-
-    // This is a slightly modified Jungle theme
-    // const terminal_theme =
-    //     \\{
-    //     \\  "name": "Terminal",
-    //     \\  "font_size": 16,
-    //     \\  "font_name_body": "VeraMono",
-    //     \\  "font_name_heading": "VeraMono",
-    //     \\  "font_name_caption": "VeraMono",
-    //     \\  "font_name_title": "VeraMono",
-    //     \\  "color_focus": "#638465",
-    //     \\  "color_text": "#82a29f",
-    //     \\  "color_text_press": "#97af81",
-    //     \\  "color_fill_text": "#2c3332",
-    //     \\  "color_fill_container": "#2b3a3a",
-    //     \\  "color_fill_control": "#2c3334",
-    //     \\  "color_fill_hover": "#334e57",
-    //     \\  "color_fill_press": "#3b6357",
-    //     \\  "color_border": "#60827d"
-    //     \\}
-    // ;
-    // TODO
-    //const parsed = dvui.Theme.QuickTheme.fromString(allocator, terminal_theme);
-    // defer parsed.deinit();
-
-    // const quick_theme = parsed.value;
-    // global_theme = try quick_theme.toTheme(allocator);
-    // global_theme.font_title_4 = .{ .size = 14, .name = global_theme.font_title_4.name };
-
-    // dvui.themeSet(&global_theme);
-    // theme_set = true;
 }
 
 fn guiFrame() !bool {
@@ -536,7 +505,6 @@ fn showShortcuts() !void {
     {
         var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .vertical, .gravity_x = 0.5 });
         defer inner_vbox.deinit();
-        // TODO: was title3
         dvui.labelNoFmt(@src(), "Menu Shortcuts", .{}, .{ .font = .theme(.title), .gravity_x = 0.5 });
         while (shortcuts[idx].category == .command) : (idx += 1) {
             const s = &shortcuts[idx];
@@ -726,8 +694,8 @@ fn makeGridBody(id: GridType) !void {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .both, .id_extra = id.toUSize() });
         defer hbox.deinit();
         switch (id) {
-            .image => dvui.labelNoFmt(@src(), "Please open a disk image.", .{}, .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
-            .local => dvui.labelNoFmt(@src(), "Please open a local directory.", .{}, .{ .id_extra = id.toUSize(), .gravity_x = 0.5, .gravity_y = 0.5, .expand = .both }),
+            .image => dvui.labelNoFmt(@src(), "Please open a disk image.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
+            .local => dvui.labelNoFmt(@src(), "Please open a local directory.", .{ .align_x = 0.5, .align_y = 0.5 }, .{ .id_extra = id.toUSize(), .expand = .both }),
         }
         return;
     }
@@ -2475,28 +2443,37 @@ pub fn openLocalDirectory(path: []const u8) void {
 
 // Copy altiar filenames to the clipboard
 fn copyFilenamesToClipboard() !void {
-    var buf_len: usize = 1; // For the null
     var any_selected: bool = false;
+    var header_added: bool = false;
     if (image_directories) |dirs| {
         for (dirs) |*entry| {
-            buf_len += entry.filenameAndExtension().len + 1;
             any_selected = any_selected or entry.isSelected();
         }
-
-        const clip_text = try allocator.allocSentinel(u8, buf_len, 0);
-        defer allocator.free(clip_text);
-        var buf_pos: usize = 0;
+        var clip_text: std.Io.Writer.Allocating = .init(allocator);
+        defer clip_text.deinit();
 
         for (dirs) |*entry| {
             if (!any_selected or entry.isSelected()) {
-                const fmt_slice = try std.fmt.bufPrintZ(clip_text[buf_pos..], "{s}\n", .{entry.filenameAndExtension()});
-                buf_pos += fmt_slice.len;
+                if (!header_added) {
+                    try clip_text.writer.print("Name     Ext   Length Used U At\n", .{});
+                    header_added = true;
+                }
+                try clip_text.writer.print(
+                    "{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n",
+                    .{
+                        entry.filename(),
+                        entry.extension(),
+                        entry.fileSizeInB(),
+                        entry.fileUsedInKB(),
+                        entry.user(),
+                        entry.attribs(),
+                    },
+                );
             }
         }
 
-        const result = Backend.c.SDL_SetClipboardText(clip_text.ptr);
-
-        if (buf_len > 1 and result == 0) {
+        if (clip_text.written().len > 1) {
+            dvui.clipboardTextSet(clip_text.written());
             dvui.dialog(@src(), .{}, .{
                 .title = "Copy Filenames",
                 .message = if (any_selected) "Selected Altair filenames\ncopied to the clipboard." else "All Altair filenames\ncopied to the clipboard.",

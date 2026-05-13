@@ -528,12 +528,12 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(&mits_raw_sector),
     .CDOS_8IN = DiskImageType_CDOS_8IN.init(),
 });
-// Anyone reading this and from a C background, think about what the above actually does.
-// Zig creates this array at _compilation time_, including setting up the function calls
+
+// Zig creates these array at compile time, including setting up the function calls
 // for the different image types, performs all of the calculations in the init functions and
 // initializes the array with these values.
 // Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names,
-// at _complilation time_.
+// at vompile time.
 
 /// The display names for each image type.
 pub const all_disk_type_names = initDiskTypeNames();
