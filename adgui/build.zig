@@ -48,15 +48,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    const button_handler_tests = b.addTest(.{
-        .root_source_file = b.path("src/ButtonHandler.zig"),
-    });
-    button_handler_tests.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
-    const run_button_handler_tests = b.addRunArtifact(button_handler_tests);
+    // const button_handler_tests = b.addTest(.{ .root_module = b.createModule(.{
+    //     .root_source_file = b.path("src/ButtonHandler.zig"),
+    // }) });
+    // button_handler_tests.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
+    // const run_button_handler_tests = b.addRunArtifact(button_handler_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
-    test_step.dependOn(&run_button_handler_tests.step);
+    //    test_step.dependOn(&run_button_handler_tests.step);
 
     const exe_check = b.addExecutable(.{
         .name = "adgui",

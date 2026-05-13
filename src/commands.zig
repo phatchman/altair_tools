@@ -96,7 +96,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
         break :image_type trial_image_type;
     };
     log.info("Image type set to or detected as: {s}", .{image_type.type_name});
-    // TODO: Respect read-only and don;t have a writer?
 
     // We do out own buffering.
     var image_reader = file.reader(io, &.{});
@@ -449,51 +448,59 @@ pub fn formatImage(_: Context, disk_image: *DiskImage, options: CommandLineOptio
 }
 
 /// Try and recover an image with corrupted directory entries.
+/// TODO: I don't know how to close the underlying file here as we change which
+/// file it is actualyl pointing to. Maybe we close the file and just say that the image is unusable after a recover,
+/// until it is reloaded?
 pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Recovering {s} to {s}", .{ options.image_file, options.recovery_image_file });
 
-    if (true) {
-        // Need to work out the copy bit and whetehr we need something seekable.
-        @panic("TODO");
-    }
     var cwd = std.Io.Dir.cwd();
     // Copy the image to the new file first
     const out_image = cwd.createFile(ctx.io, options.recovery_image_file, .{ .read = true }) catch |err| {
         printErrorMessage(current_command, .recover, .{options.recovery_image_file}, err);
         return error.CommandFailed;
     };
-    if (false) {
-        // recoverImage owns the file until disk_image.reinit(), so close it on error.
-        errdefer out_image.close();
-        //        var buffer: [4096]u8 = undefined;
-        //      var writer = out_image.writer(ctx.io, &buffer);
-        //        disk_image.reader.streamRemaining(writer.interface)
-        //var eof = false;
-        // Copy the corrupt image to a new file.
-        // Could user std.fs.Dir.copyFile here, but we already have the files open.
-        //while (!eof) {
-        //const nbytes = try disk_image.reader.readAll(&read_buf);
-        //out_image.writeAll(read_buf[0..nbytes]) catch |err| {
-        //  printErrorMessage(current_command, .file_write, .{options.recovery_image_file}, err);
-        // return error.CommandFailed;
-        //};
-        //  eof = nbytes != read_buf.len;
-        // }
-        // out_image.seekTo(0) catch |err| {
-        //     printErrorMessage(current_command, .file_seek, .{options.recovery_image_file}, err);
-        //     return error.CommandFailed;
-        // };
-    }
-    // reinit() will close underlying file even on error.
-    disk_image.reinit(ctx.gpa, out_image) catch |err| {
+    defer out_image.close(ctx.io);
+    var buffer: [4096]u8 = undefined;
+    var writer = out_image.writer(ctx.io, &buffer);
+    _ = try disk_image.reader.interface().streamRemaining(&writer.interface);
+    try writer.seekTo(0);
+    var reader = out_image.reader(ctx.io, &.{});
+
+    var recovery_image: DiskImage = DiskImage.init(
+        ctx.gpa,
+        .{ .on_disk = &reader },
+        .{ .on_disk = &writer },
+        disk_image.image_type,
+    ) catch |err| {
         printErrorMessage(current_command, .image_init, .{options.recovery_image_file}, err);
         return error.CommandFailed;
     };
+    defer recovery_image.deinit();
+
+    //var eof = false;
+    // Copy the corrupt image to a new file.
+    // Could user std.fs.Dir.copyFile here, but we already have the files open.
+    //while (!eof) {
+    //const nbytes = try disk_image.reader.readAll(&read_buf);
+    //out_image.writeAll(read_buf[0..nbytes]) catch |err| {
+    //  printErrorMessage(current_command, .file_write, .{options.recovery_image_file}, err);
+    // return error.CommandFailed;
+    //};
+    //  eof = nbytes != read_buf.len;
+    // }
+    // out_image.seekTo(0) catch |err| {
+    //     printErrorMessage(current_command, .file_seek, .{options.recovery_image_file}, err);
+    //     return error.CommandFailed;
+    // };
+    //}
+
     // the file out_image now belongs to disk_image;
     disk_image.tryRecovery() catch |err| {
         printErrorMessage(current_command, .recover, .{options.image_file}, err);
         return error.CommandFailed;
     };
+    try writer.flush();
 }
 
 /// Print image parameters
@@ -603,12 +610,12 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
 });
 
 const std = @import("std");
-const DI = @import("disk_image.zig");
-const DiskImage = DI.DiskImage;
-const DirectoryTable = DI.DirectoryTable;
+const di = @import("disk_image.zig");
+const DiskImage = di.DiskImage;
+const DirectoryTable = di.DirectoryTable;
+const RawDirectoryEntry = di.RawDirEntry;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
-const RawDirectoryEntry = @import("disk_image.zig").RawDirEntry;
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const CommandLineOptions = @import("main.zig").CommandLineOptions;

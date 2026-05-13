@@ -590,24 +590,27 @@ fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer
     return disk_image;
 }
 
-fn saveImage(buf: []const u8) void {
+fn saveImage(contents: []const u8) void {
     var file = std.Io.Dir.cwd().createFile(std.testing.io, "TEST_OUT.DSK", .{}) catch {
         return;
     };
     defer file.close(std.testing.io);
     var buffer: [4096]u8 = undefined;
     var writer = file.writer(std.testing.io, &buffer);
-    writer.interface.writeAll(buf) catch {
+    defer writer.flush() catch {};
+    writer.interface.writeAll(contents) catch {
         return;
     };
 }
 
-fn saveFile(buf: []const u8) void {
-    var file = std.Io.Dir.cwd().createFile("TEST_OUT.BIN", .{}) catch {
+fn saveFile(contents: []const u8) void {
+    var file = std.Io.Dir.cwd().createFile(std.testing.io, "TEST_OUT.BIN", .{}) catch {
         return;
     };
-    defer file.close();
-    file.writeAll(buf) catch {
+    defer file.close(std.testing.io);
+    var buf: [4096]u8 = undefined;
+    var writer = file.writer(std.testing.io, &buf);
+    writer.interface.writeAll(contents) catch {
         return;
     };
 }
@@ -625,7 +628,9 @@ const FDC = @import("disk_types.zig").all_disk_types.getPtrConst(.@"FDD_1.5MB");
 const FDC_8MB = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN_8MB);
 
 pub const std_options: std.Options = .{
-    // Set the log level to info
-    // TODO: HUh???
     .log_level = .debug,
 };
+
+test {
+    std.testing.refAllDecls(@This());
+}

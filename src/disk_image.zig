@@ -19,14 +19,6 @@ pub const SeekableReader = union(enum) {
     on_disk: *std.Io.File.Reader,
     in_memory: *std.Io.Reader,
 
-    pub fn initWithDiskFile(file_reader: *std.Io.File.Reader) SeekableReader {
-        return .{ .on_disk = file_reader };
-    }
-
-    pub fn initWithMemoryFile(fixed_reader: *std.Io.Reader) SeekableReader {
-        return .{ .in_memory = fixed_reader };
-    }
-
     pub fn seekTo(self: SeekableReader, offset: u64) File.Reader.SeekError!void {
         switch (self) {
             .on_disk => |file| try file.seekTo(offset),
