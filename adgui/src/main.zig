@@ -674,7 +674,7 @@ fn makeFileSelector(id: GridType) !void {
                 is_initialised.* = false;
             }
         } else {
-            const path_to_use = path: {
+            const path_to_use: [:0]u8 = path: {
                 if (local_path_selection) |local_path| {
                     break :path std.Io.Dir.cwd().realPathFileAlloc(io, local_path, allocator) catch defaultPath();
                 } else {
@@ -1126,7 +1126,7 @@ fn makeStatusBar() !bool {
         }
     }
     if (try statusBarButton(@src(), "CLOSE", .{}, reversed, 0, .close, image_directories != null)) {
-        commands.closeImage();
+        commands.closeImage(io);
         image_directories = null;
         CommandState.finishCommand();
     }
@@ -1632,9 +1632,9 @@ pub fn statusBarButton(src: std.builtin.SourceLocation, label_str: []const u8, _
     const selected = CommandState.current_command == cmd;
     var options2 = opts;
     if (selected) {
-        options2 = options2.override(.{ .color_fill = dvui.themeGet().fill_press });
+        options2 = options2.override(.{ .color_fill = opts.color(.fill_press) });
     } else if (!enabled) {
-        options2 = options2.override(.{ .color_fill = dvui.themeGet().fill_press });
+        options2 = options2.override(.{ .color_fill = opts.color(.fill_press) });
     }
     var bw: dvui.ButtonWidget = undefined;
     bw.init(src, init_opts, options2);
@@ -1702,14 +1702,14 @@ pub fn buttonIcon(src: std.builtin.SourceLocation, name: []const u8, tvg_bytes: 
 
     if (alt_held) {
         const label_rect = labelNoFmtRect(@src(), if (id == .image) "M" else "O", .{
-            .color_fill = dvui.themeGet().text,
-            .color_text = dvui.themeGet().control.fill,
+            .color_fill = opts.color(.text),
+            .color_text = opts.color(.fill),
             .background = true,
         });
         _ = dvui.separator(src, .{
             .id_extra = 1, // Not sure why required.
             .rect = .{ .x = label_rect.x + 5, .y = 20, .w = 10, .h = 2 },
-            .color_fill = dvui.themeGet().control.fill,
+            .color_fill = opts.color(.fill),
         });
 
         const events = dvui.events();
@@ -2447,7 +2447,7 @@ pub fn openImageFile(filename: []const u8) void {
         success = true;
     }
     if (!success) {
-        commands.closeImage();
+        commands.closeImage(io);
         image_directories = null;
     }
     dialogFollowup.deinit();
@@ -2506,8 +2506,8 @@ fn copyFilenamesToClipboard() !void {
     }
 }
 
-fn defaultPath() []u8 {
-    return allocator.dupe(u8, ".") catch @panic("OOM");
+fn defaultPath() [:0]u8 {
+    return allocator.dupeZ(u8, ".") catch @panic("OOM");
 }
 
 // Optional: windows os only
@@ -2516,7 +2516,6 @@ const winapi = if (builtin.os.tag == .windows) struct {
 } else struct {};
 
 pub const std_options: std.Options = .{
-    // Set the log level to info
     .log_level = .err,
 };
 

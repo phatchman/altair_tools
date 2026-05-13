@@ -5,6 +5,11 @@ const DiskImageTypes = ad.DiskImageTypes;
 const allocator = @import("main.zig").allocator;
 
 disk_image: ?ad.DiskImage = null,
+// Only valid when disk_image is not null;
+image_file: ?std.Io.File = null,
+reader: ?std.Io.File.Reader = null,
+writer: ?std.Io.File.Writer = null,
+
 current_dir: ?std.Io.Dir = null,
 image_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
@@ -181,35 +186,37 @@ pub fn detectImageType(_: *Self, io: std.Io, filename: []const u8) !?DiskImageTy
 pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type: DiskImageTypes) !void {
     var cwd = std.Io.Dir.cwd();
 
-    if (self.disk_image) |*existing| {
-        existing.deinit();
-    }
-    const image_file = try cwd.openFile(io, filename, .{ .mode = .read_write });
+    self.closeImage(io);
+    self.image_file = try cwd.openFile(io, filename, .{ .mode = .read_write });
     const image_type = ad.all_disk_types.getPtrConst(img_type);
-    var reader = image_file.reader(io, &.{});
-    var writer = image_file.writer(io, &.{});
-    self.disk_image = DiskImage.init(allocator, .{ .on_disk = &reader }, .{ .on_disk = &writer }, image_type) catch |err| {
-        image_file.close(io);
+    self.reader = self.image_file.?.reader(io, &.{});
+    self.writer = self.image_file.?.writer(io, &.{});
+    self.disk_image = DiskImage.init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type) catch |err| {
+        self.image_file.?.close(io);
         return err;
     };
     try self.disk_image.?.loadDirectories(false);
 }
 
-pub fn closeImage(self: *Self) void {
+pub fn closeImage(self: *Self, io: std.Io) void {
     if (self.disk_image) |*existing| {
         existing.deinit();
         self.disk_image = null;
+        self.image_file.?.close(io);
+        self.image_file = null;
     }
+    self.reader = null;
+    self.writer = null;
 }
 
 pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType) !void {
     var cwd = std.Io.Dir.cwd();
 
-    self.closeImage();
-    const image_file = try cwd.createFile(io, filename, .{ .read = true });
-    var reader = image_file.reader(io, &.{});
-    var writer = image_file.writer(io, &.{});
-    self.disk_image = try .init(allocator, .{ .on_disk = &reader }, .{ .on_disk = &writer }, image_type);
+    self.closeImage(io);
+    self.image_file = try cwd.createFile(io, filename, .{ .read = true });
+    self.reader = self.image_file.?.reader(io, &.{});
+    self.writer = self.image_file.?.writer(io, &.{});
+    self.disk_image = try .init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
     try self.disk_image.?.formatImage();
     try self.disk_image.?.loadDirectories(false);
 }
