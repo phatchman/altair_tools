@@ -412,36 +412,13 @@ pub const DiskImage = struct {
         return PhysicalAddress{ .track = track, .sector = physical_sector };
     }
 
-    /// Get the seek location for reading
-    fn seekLocationGetRead(self: *const Self, location: PhysicalAddress) usize {
-        return _seekLocationGet(self, location, true);
-    }
-
-    /// Get the seek location for writing
-    fn seekLocationGetWrite(self: *const Self, location: PhysicalAddress) usize {
-        // Write location is different for the MITS 8" disks as we have to write out the track
-        // metadata / control data as well.
-        return _seekLocationGet(self, location, false);
-    }
-
-    fn _seekLocationGet(self: *const Self, location: PhysicalAddress, include_data_offset: bool) usize {
-        const offset: usize =
-            @as(usize, location.track) * self.image_type.track_size +
-            (location.sector - 1) * self.image_type.sector_size;
-        if (include_data_offset) {
-            return offset + self.image_type.offset(.data, location.track);
-        } else {
-            return offset;
-        }
-    }
-
     // TODO: Check all of the errors.
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
     /// Read a single 128bytes sector
     pub fn readSector(self: *Self, location: LogicalAddress, data: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
         // Sometimes the data is not at the start of the sector. So adjust
-        const data_offset = self.seekLocationGetRead(physical_location);
+        const data_offset = self.image_type.seekOffsetRead(physical_location);
 
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
@@ -456,7 +433,7 @@ pub const DiskImage = struct {
         const physical_location = self.toPhysicalAddress(location);
 
         const sector_data = self.image_type.writeableSectorGet(physical_location, &data.data);
-        const sector_offset = self.seekLocationGetWrite(physical_location);
+        const sector_offset = self.image_type.seekOffsetWrite(physical_location);
         try self.writer.seekTo(sector_offset);
         try self.writer.interface().writeAll(sector_data);
 

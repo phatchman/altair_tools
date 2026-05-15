@@ -77,6 +77,10 @@ pub const DiskImageType = struct {
     checksum_fn: ?*const fn (track: u16, sector_data: []u8) u8 = null,
     // return a "blank" sector that can be written to.
     writeable_sector_fn: ?*const fn (address: PhysicalAddress, sector_data: []u8, raw_sector: ?[]u8) []u8 = null,
+    // Turn a track and sector address into a seek offset for read
+    seek_offset_read_fn: ?*const fn (self: *const DiskImageType, address: PhysicalAddress) usize = null,
+    seek_offset_write_fn: ?*const fn (self: *const DiskImageType, address: PhysicalAddress) usize = null,
+
     // Raw sector data for MITS formats.
     raw_sector: ?[]u8 = null,
     // Below are "constants" - These are initialised with "init".
@@ -139,6 +143,24 @@ pub const DiskImageType = struct {
         }
     }
 
+    /// Convert a physical track / sector into a seek offset
+    pub fn seekOffsetRead(self: *const DiskImageType, address: PhysicalAddress) usize {
+        if (self.seek_offset_read_fn) |seek_fn| {
+            return seek_fn(self, address);
+        } else {
+            return self._defaultSeekOffset(address);
+        }
+    }
+
+    /// Convert a physical track / sector into a seek offset
+    pub fn seekOffsetWrite(self: *const DiskImageType, address: PhysicalAddress) usize {
+        if (self.seek_offset_write_fn) |seek_fn| {
+            return seek_fn(self, address);
+        } else {
+            return self._defaultSeekOffset(address);
+        }
+    }
+
     /// Get a sector ready for writing data.
     pub fn writeableSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector_data: []u8) []u8 {
         if (self.writeable_sector_fn) |writeable_sector| {
@@ -179,6 +201,11 @@ pub const DiskImageType = struct {
         @memset(sector_data, 0xe5);
         return sector_data;
     }
+
+    fn _defaultSeekOffset(self: *const Self, location: PhysicalAddress) usize {
+        return @as(usize, location.track) * self.track_size +
+            (location.sector - 1) * self.sector_size;
+    }
 };
 
 /// MITS 8" floppy disk format
@@ -218,6 +245,7 @@ pub const DiskImageType_MITS_8IN = struct {
             .format_fn = formattedSectorGet,
             .offset_fn = offset,
             .writeable_sector_fn = writeableSectorGet,
+            .seek_offset_read_fn = seekOffsetRead,
             .raw_sector = raw_sector,
         };
         result.init();
@@ -246,6 +274,12 @@ pub const DiskImageType_MITS_8IN = struct {
             csum +%= sector_data[6];
         }
         sector_data[offset(.checksum, track)] = csum;
+    }
+
+    /// Read vs write for the MITS 8" disks as we have to write out the track
+    /// metadata / control data as well when writing.
+    fn seekOffsetRead(self: *const DiskImageType, location: PhysicalAddress) usize {
+        return self._defaultSeekOffset(location) + self.offset(.data, location.track);
     }
 
     /// In addition to storing the sector data, need to store control meta data including,
@@ -481,11 +515,46 @@ pub const DiskImageTypes = enum(usize) {
     FDD_TAR,
     @"FDD_1.5MB",
     FDD_8IN_8MB,
-    CDOS_8IN,
+    CDOS_SMSSSD,
+    CDOS_LGSSSD,
+    CDOS_LGSSDD,
 };
 
-// CDOS Small?
-pub const DiskImageType_CDOS_8IN = struct {
+// CDOS "Small"
+pub const DiskImageType_CDOS_SMSSSD = struct {
+    const _skew_table = [_]u16{
+        0, 5,  10, 15, 2, 7,  12, 17,
+        4, 9,  14, 1,  6, 11, 16, 3,
+        8, 13,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_SMSSSD,
+            .type_name = "CDOS_SMSSSD",
+            .description = "CDOS 5.25\" SS SD Disk",
+            .tracks = 40,
+            .reserved_tracks = 3,
+            .sectors_per_track = 18,
+            .sector_size = 128,
+            .block_size = 1024,
+            .directories = 64,
+            .directory_allocs = 2,
+            .image_size = 92160,
+            .detect_conditions = .none,
+            .varying_sector_format = false,
+            .skew_fn = DiskImageType._defaultSkewFn,
+            .skew_table = &_skew_table,
+            .format_fn = DiskImageType._defaultFormattedSectorGet,
+            .offset_fn = null,
+        };
+        result.init();
+        return result;
+    }
+};
+
+// CDOS "Large"
+pub const DiskImageType_CDOS_LGSSSD = struct {
     const _skew_table = [_]u16{
         0,  6,  12, 18, 24, 4,  10, 16,
         22, 2,  8,  14, 20, 1,  7,  13,
@@ -495,9 +564,9 @@ pub const DiskImageType_CDOS_8IN = struct {
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
-            .type_id = .CDOS_8IN,
-            .type_name = "CDOS_8IN",
-            .description = "CDOS 8IN Floppy Disk",
+            .type_id = .CDOS_LGSSSD,
+            .type_name = "CDOS_LGSSSD",
+            .description = "CDOS 8IN 'Large' Disk",
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 26,
@@ -518,6 +587,48 @@ pub const DiskImageType_CDOS_8IN = struct {
     }
 };
 
+pub const DiskImageType_CDOS_LGSSDD = struct {
+    const _skew_table = [_]u16{
+        0, 11, 6,  1, 12, 7,  2,  13,
+        8, 3,  14, 9, 4,  15, 10, 5,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_LGSSDD,
+            .type_name = "CDOS_LGSSDD",
+            .description = "CDOS 8IN SSDD Disk",
+            .tracks = 77,
+            .reserved_tracks = 2, // track 0 (SSSD, 3328B) + track 1 (DD, 8192B)
+            .sectors_per_track = 16, // DD sectors (512B each)
+            .sector_size = 512,
+            .block_size = 2048, // 2K blocks needed (300 blocks > 255)
+            .directories = 128, // 128 × 32B = 4096B = 2 × 2K blocks
+            .directory_allocs = 2,
+            .image_size = 625920,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // track 0 is SSSD, rest DD
+            .skew_fn = DiskImageType._defaultSkewFn,
+            .skew_table = &_skew_table,
+            .format_fn = DiskImageType._defaultFormattedSectorGet,
+            .offset_fn = null,
+        };
+        result.init();
+        return result;
+    }
+
+    // Track 0 is SSSD (26×128 = 3328B), tracks 1-76 are DD (16×512 = 8192B)
+    // fn _offsetFn(track: u32, sector: u32) u32 {
+    //     const sssd_track_bytes: u32 = 26 * 128; // 3328
+    //     const dd_track_bytes: u32 = 16 * 512; // 8192
+    //     if (track == 0) {
+    //         return sector * 128;
+    //     } else {
+    //         return sssd_track_bytes + (track - 1) * dd_track_bytes + sector * 512;
+    //     }
+    // }
+};
+
 /// all available disk image formats.
 pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .init(.{
     .FDD_8IN = DiskImageType_MITS_8IN.init(&mits_raw_sector),
@@ -526,7 +637,9 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_TAR = DiskImageType_TARBELL_FDD.init(),
     .@"FDD_1.5MB" = @"DiskImageType_FDD_1.5MB".init(),
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(&mits_raw_sector),
-    .CDOS_8IN = DiskImageType_CDOS_8IN.init(),
+    .CDOS_SMSSSD = DiskImageType_CDOS_SMSSSD.init(),
+    .CDOS_LGSSSD = DiskImageType_CDOS_LGSSSD.init(),
+    .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls
