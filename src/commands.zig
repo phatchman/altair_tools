@@ -188,11 +188,11 @@ pub fn directoryListRaw(_: Context, disk_image: *DiskImage, options: CommandLine
 
             // The allocations are really little endian u16's
             try Console.stdout().print("[", .{});
-            for (0..entry.allocationsCount() - 1) |i| {
+            for (0..entry.allocationsCount(disk_image.image_type) - 1) |i| {
                 const value = try entry.allocationGet(i, disk_image.image_type);
                 try Console.stdout().print("{},", .{value});
             }
-            const value = try entry.allocationGet(entry.allocationsCount() - 1, disk_image.image_type);
+            const value = try entry.allocationGet(entry.allocationsCount(disk_image.image_type) - 1, disk_image.image_type);
             try Console.stdout().print("{}]\n", .{value});
         }
     }

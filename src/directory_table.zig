@@ -35,7 +35,7 @@ pub const RawDirEntry = struct {
         num_records: u8,
         _allocations: [DiskImageType.allocs_per_extent]u8,
     };
-    entry: Raw,
+    entry: Raw, // This must be the one and only field.
 
     pub const empty: RawDirEntry = .{ .entry = std.mem.zeroes(Raw) };
     pub const filename_len = 8;
@@ -66,7 +66,7 @@ pub const RawDirEntry = struct {
             );
             return RawDirError.InvalidRecordNumber;
         }
-        for (0..self.allocationsCount()) |i| {
+        for (0..self.allocationsCount(image_type)) |i| {
             const alloc = try self.allocationGet(@intCast(i), image_type);
             if (alloc > image_type.total_allocs) {
                 log.err(
@@ -112,7 +112,7 @@ pub const RawDirEntry = struct {
 
     /// Set allocation as controlled by this extent
     pub fn allocationSet(self: *RawDirEntry, entry_nr: usize, record_nr: u16, image_type: *const DiskImageType) RawDirError!void {
-        if (entry_nr >= self.allocationsCount()) {
+        if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
         if (image_type.total_allocs <= 256) {
@@ -129,10 +129,10 @@ pub const RawDirEntry = struct {
 
     /// Get the number of an allocation controlled by this extent
     pub fn allocationGet(self: *const RawDirEntry, entry_nr: usize, image_type: *const DiskImageType) RawDirError!u16 {
-        if (entry_nr >= self.allocationsCount()) {
+        if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
-        if (image_type.total_allocs <= 256) {
+        if (true or image_type.total_allocs <= 256) {
             return self.entry._allocations[entry_nr];
         } else {
             const alloc: [2]u8 = .{ self.entry._allocations[entry_nr * 2], self.entry._allocations[entry_nr * 2 + 1] };
@@ -141,11 +141,13 @@ pub const RawDirEntry = struct {
     }
 
     /// How many allocations are controlled by this extent?
-    pub fn allocationsCount(self: *const RawDirEntry) u16 {
+    pub fn allocationsCount(self: *const RawDirEntry, image_type: *const DiskImageType) u16 {
         _ = self;
-        // TODO: /2
-        //        return DiskImageType.allocs_per_extent / 2;
-        return DiskImageType.allocs_per_extent;
+        // TODO: Just return the actual numbver from image_type. And then we don't even need this fn.
+        return switch (image_type.OS) {
+            .cpm => DiskImageType.allocs_per_extent,
+            .cdos => DiskImageType.allocs_per_extent / 2,
+        };
     }
 
     pub fn filenameAndExtensionSet(self: *RawDirEntry, filename: []const u8) void {
@@ -215,7 +217,8 @@ pub const CookedDirEntry = struct {
         };
         try result.raw_indexes.append(arena, raw_index);
         result.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
-        if (image_type.recs_per_extent > 128 and result.num_allocs > 4) {
+        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.num_allocs > 4) {
+            // CPM records only go up to 128.
             result.num_records += 128;
         }
         return result;
@@ -263,16 +266,16 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn recordsUsedInB(self: *const CookedDirEntry) u32 {
-        return self.num_records * DiskImageType.sector_data_size;
+        return self.num_records * self.image_type.sector_data_size;
     }
 
-    /// Add any new allocations to teh list of used allocations.
+    /// Add any new allocations to the list of used allocations.
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
         // TODO: /2
         try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent);
         //        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent / 2);
-        for (0..raw.allocationsCount()) |alloc_nr| {
+        for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
             if (allocation == 0) {
@@ -341,9 +344,9 @@ pub const DirectoryTable = struct {
     /// raw_only: Load only the raw entries. Useful if the image has been corrupted.
     pub fn load(self: *Self, image: *DiskImage, raw_only: bool) DirectoryLoadError!void {
         const image_type = image.image_type;
-        var sector: DiskSector = .init();
-        const directory_sector_count = image_type.directories / DiskImageType.dir_entries_per_sector;
-        var raw_dir_index: usize = 0;
+        var sector: DiskSector = .init(image.image_type);
+        const directory_sector_count = image_type.directories / image_type.dir_entries_per_sector;
+        //        var raw_dir_index: usize = 0;
         var sector_nr: u16 = 0;
 
         // Reserve allocations used for directories
@@ -353,15 +356,17 @@ pub const DirectoryTable = struct {
 
         while (sector_nr < directory_sector_count) : ({
             sector_nr += 1;
-            raw_dir_index += DiskImageType.dir_entries_per_sector;
+            //          raw_dir_index += image.image_type.dir_entries_per_sector;
         }) {
             const logical_address = LogicalAddress{
-                .allocation = sector_nr / image_type.recs_per_alloc,
+                //                .allocation = sector_nr / (image_type.recs_per_alloc),
+                .allocation = sector_nr / (image_type.block_size / image_type.sector_size), // TODO: This is recs per block
                 .record = @intCast(sector_nr % image_type.recs_per_alloc),
             };
             // Read the raw CPM directory entries and add them to the raw_directories array.
             try image.readSector(logical_address, &sector);
-            const entries = std.mem.bytesAsSlice(RawDirEntry, &sector.data);
+            const entries: []RawDirEntry = std.mem.bytesAsSlice(RawDirEntry, sector.data());
+            //std.debug.print("current raw = {}, new loaded = {}\n", .{ self.raw_directories.items.len, entries.len });
             self.raw_directories.appendSliceAssumeCapacity(entries);
         }
 
@@ -396,7 +401,7 @@ pub const DirectoryTable = struct {
                     if (!raw_only) return err;
                 };
                 // Mark off the used allocations
-                for (0..dir.allocationsCount()) |alloc_nr| {
+                for (0..dir.allocationsCount(image_type)) |alloc_nr| {
                     const alloc = try dir.allocationGet(alloc_nr, image_type);
                     // 0 marks the end of the used allocations in this extent.
                     if (alloc == 0)
