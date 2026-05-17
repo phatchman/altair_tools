@@ -12,6 +12,12 @@ adgui/zig-pkg/
 *.DAT
 *.bin
 *.IMG
+*.COM
+*.Z80
+*.ASM
+*.HLP
+*.ps1
+cdos/
 tmp/
 legacy/
 release/

@@ -145,17 +145,16 @@ pub const DiskImage = struct {
             return;
         }
         const recs_per_sector = (self.image_type.sector_data_size / 128);
-        const num_sectors = num_records / recs_per_sector; // TODO: Calc this
+        const num_sectors = (num_records + recs_per_sector - 1) / recs_per_sector; // TODO:
         var total_rec_nr: u16 = 0;
         for (0..num_sectors) |sec_nr| {
-            //            const rec_nr: u8 = @intCast(total_rec_nr % 128);
             // This protects against trying to copy files from CDOS.
             const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
             if (alloc_idx >= entry.allocations.items.len) {
-                std.debug.print("num_record = {}, total_rec_nr = {}, rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
+                std.debug.print("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
                     num_records,
-                    0, //total_rec_nr,
-                    0, // rec_nr,
+                    num_sectors,
+                    total_rec_nr,
                     alloc_idx,
                     self.image_type.recs_per_alloc,
                     entry.allocations.items.len,
@@ -167,12 +166,17 @@ pub const DiskImage = struct {
             const alloc = entry.allocations.items[alloc_idx];
             if (alloc == 0)
                 break;
-            //            try self.readSector(.{ .record = rec_nr, .allocation = alloc }, &sector);
             try self.readSector(.{ .record = @intCast(sec_nr % self.image_type.recs_per_alloc), .allocation = alloc }, &sector);
-            var data_len: usize = sector.sector_len;
+            // If it is the last sector. then adjust the data length to the 128B record count, rather than just assuming a full sector
+            var data_len: usize = if (sec_nr == num_sectors - 1)
+                (((num_records - 1) % recs_per_sector) + 1) * 128
+            else
+                sector.sector_len;
             const check_for_text = text_mode != .Binary;
 
-            // CPM doesn't actually know how long a file is, except in multiples of 128 bytes.
+            //            std.debug.print("data len = {}, num_records = {}, recs_per_sect = {}\n", .{ data_len, num_records, recs_per_sector });
+
+            // CPM doesn't actually know how long a file is, except in multiples of 128 byte records.
             // So if it is a text file looks for ^Z anywhere in the last sector and use that
             // to mark the EOF. For binary files it doesn't matter if they are too long.
             if (check_for_text and total_rec_nr == num_records - 1) {
@@ -192,8 +196,6 @@ pub const DiskImage = struct {
 
             try out_writer.writeAll(sector.data()[0..data_len]);
             total_rec_nr += recs_per_sector;
-            // TODO:
-            //            if (sec_nr == 2) @breakpoint();
         }
     }
 
@@ -230,6 +232,8 @@ pub const DiskImage = struct {
         var alloc_nr: u16 = undefined;
         var record_nr: u16 = 0;
         var nbytes: usize = 0;
+        var sector_nr: u16 = 0;
+        const recs_per_sector: u16 = self.image_type.sector_size / 128;
 
         // TODO: This whole thing needs a big cleanup!!!
         nbytes = try file_reader.readSliceShort(sector.data());
@@ -237,6 +241,7 @@ pub const DiskImage = struct {
         while (nbytes != 0 or first_extent) : ({
             nbytes = try file_reader.readSliceShort(sector.data());
         }) {
+            sector_nr += 1;
             // Is this a new extent? (i.e. needs a new directory entry)
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (!first_extent) {
@@ -267,11 +272,18 @@ pub const DiskImage = struct {
             dir_entry.numRecordsSet(record_nr);
             dir_entry.extentSet(@intCast(extent_count));
             if (nbytes > 0) {
-                try self.writeSector(.{ .allocation = alloc_nr, .record = @intCast(record_nr % 256) }, &sector);
+                // TODO: This is really do we have 128k sectors or not, not the OS.. right?
+                const alloc_record_nr: u8 = switch (self.image_type.OS) {
+                    .cpm => @intCast(record_nr % 256),
+                    .cdos => @intCast((sector_nr % self.image_type.recs_per_alloc) - 1),
+                };
+
+                try self.writeSector(.{ .allocation = alloc_nr, .record = alloc_record_nr }, &sector);
                 sector = .init(self.image_type); // Re-fill with ^Z
             }
 
-            record_nr += 1;
+            record_nr += recs_per_sector;
+            // TODO: I don't think this is the case for CDOS?
             if (record_nr % 128 == 0) {
                 extent_count += 1;
             }

@@ -115,7 +115,8 @@ pub const RawDirEntry = struct {
         if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
-        if (image_type.total_allocs <= 256) {
+        // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
+        if (image_type.OS == .cdos or image_type.total_allocs <= 256) {
             // 8 bit allocations
             self.entry._allocations[entry_nr] = @intCast(record_nr & 0xff);
         } else {
@@ -132,7 +133,9 @@ pub const RawDirEntry = struct {
         if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
-        if (true or image_type.total_allocs <= 256) {
+
+        // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
+        if (image_type.OS == .cdos or image_type.total_allocs <= 256) {
             return self.entry._allocations[entry_nr];
         } else {
             const alloc: [2]u8 = .{ self.entry._allocations[entry_nr * 2], self.entry._allocations[entry_nr * 2 + 1] };
