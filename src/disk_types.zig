@@ -97,9 +97,9 @@ pub const DiskImageType = struct {
     const Self = @This();
     pub fn init(self: *Self) void {
         self.track_size = self.sector_size * self.sectors_per_track;
-        self.total_allocs = (self.tracks - self.reserved_tracks) * (self.sectors_per_track * self.sector_data_size / self.block_size);
-        self.recs_per_alloc = self.block_size / 128; // CPM records are always 128 bytes
-        self.recs_per_extent = ((self.recs_per_alloc * 8) + self.sector_data_size - 1) / self.sector_data_size * self.sector_data_size;
+        self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * (self.sectors_per_track * self.sector_data_size) / self.block_size;
+        self.recs_per_alloc = self.block_size / self.sector_data_size;
+        self.recs_per_extent = self.recs_per_alloc * if (self.OS == .cpm) 8 else 16; // 8 Allocations per extent.
         self.extents_per_alloc = self.block_size / dir_entry_size;
         self.dir_entries_per_sector = self.sector_data_size / dir_entry_size;
     }
@@ -638,6 +638,13 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .seek_offset_write_fn = seekOffset,
         };
         result.init();
+        // Sigh, this format is used by Michah CPM, which works on Cromemco machines,
+        // but only uses single byte allocs. I've yet to find and actual CDOS image using
+        // the Single Sided Double Density Format.
+
+        // So since we're using single byte allocs on this format we have to restrict to using
+        // 254 of the 300 available allocations.
+        result.total_allocs = 254;
         return result;
     }
 
@@ -650,6 +657,25 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             // There are 26 sectors of 128 bytes on the first SD track.
             return 26 * 128 + @as(usize, location.track - 1) * self.track_size + (location.sector - 1) * self.sector_size;
     }
+
+    // fn formattedSectorGet(address: PhysicalAddress, sector_data: []u8, _: ?[]u8) []u8 {
+    //     if (address.track == 0) {
+    //         const track_len = 26 * 28 * 128;
+
+    //     }
+    // }
+
+    // /// Return the internal 137 byte raw_sector buffer, freshly formatted,
+    // /// with the input sector_data copied into it.
+    // fn writeableSectorGet(address: PhysicalAddress, sector_data: []u8, _raw_sector: ?[]u8) []u8 {
+    //     var raw_sector = formattedSectorGet(address, sector_data, _raw_sector);
+    //     const data_start = offset(.data, address.track);
+    //     const data_end = data_start + sector_data_size;
+    //     @memcpy(raw_sector[data_start..data_end], sector_data);
+    //     checksum(address.track, raw_sector);
+    //     return raw_sector;
+    // }
+
 };
 
 /// all available disk image formats.

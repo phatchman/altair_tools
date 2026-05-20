@@ -138,12 +138,10 @@ test "8in filled" {
     // Copy to disk to fill it up.
     const filename = "BIG.TXT";
     try disk_image.copyToImage(&big_stream, filename, 0, false);
-    saveImage(&test_buffer);
     try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
     try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
     try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
     try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
-
     // Get it back and compare it to the original
     var in_file: [big_file.len]u8 = undefined;
     var in_stream: std.Io.Writer = .fixed(&in_file);
@@ -152,6 +150,53 @@ test "8in filled" {
     try std.testing.expect(cooked_dir != null);
     try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
     try std.testing.expectEqualSlices(u8, &in_file, &big_file);
+}
+
+test "CDOS filled" {
+    // For each CDOS format fill the disk with a single file.
+    std.testing.log_level = .info;
+    //    inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD }) |fmt| {
+    inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD }) |fmt| {
+        std.log.info("Tesing disk format {s}\n", .{fmt.type_name});
+        const nr_sectors: u32 = (fmt.total_allocs - fmt.directory_allocs) * fmt.block_size / fmt.sector_data_size;
+        // std.debug.print("NR SECTS = {}, SDS = {} tot allocs = {}, dir_allocs = {}, block_size = {}\n", .{ nr_sectors, CDOS_LGSSSD.sector_data_size, CDOS_LGSSSD.total_allocs, CDOS_LGSSSD.directory_allocs, CDOS_LGSSSD.block_size });
+        var big_file: [nr_sectors * fmt.sector_data_size]u8 = undefined;
+        for (0..nr_sectors) |sector| {
+            const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
+            const start = sector * fmt.sector_data_size;
+            const end = start + fmt.sector_data_size;
+            @memset(big_file[start..end], fill_char);
+            _ = try std.fmt.bufPrint(big_file[start..end], "\n--[{d}]--", .{sector});
+        }
+        var big_stream: std.Io.Reader = .fixed(&big_file);
+
+        // Create in-memory disk image.
+        var test_buffer: [fmt.image_size]u8 = undefined;
+        var test_image: InMemoryImage = undefined;
+        test_image.init(&test_buffer);
+
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
+
+        // Copy to disk to fill it up.
+        const filename = "BIG.TXT";
+        //try disk_image.copyToImage(&big_stream, filename, 0, false);
+
+        try disk_image.copyToImage(&big_stream, filename, 0, false);
+
+        try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
+        try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
+        try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
+        try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
+        // Get it back and compare it to the original
+        var in_file: [big_file.len]u8 = undefined;
+        var in_stream: std.Io.Writer = .fixed(&in_file);
+
+        const cooked_dir = disk_image.directory.findByFilename(filename, null);
+        try std.testing.expect(cooked_dir != null);
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
+        try std.testing.expectEqualSlices(u8, &in_file, &big_file);
+    }
 }
 
 test "8MB filled" {
@@ -567,6 +612,7 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     // TODO: Always use these init fns or remove them.
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
+    saveImage(raw_image.buffer);
     try disk_image.formatImage();
     try disk_image.loadDirectories(false);
     return disk_image;
@@ -620,12 +666,16 @@ const std = @import("std");
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
-const FDD_8IN = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN);
-const HDD_5MB = @import("disk_types.zig").all_disk_types.getPtrConst(.HDD_5MB);
-const HDD_5MB_1024 = @import("disk_types.zig").all_disk_types.getPtrConst(.HDD_5MB_1024);
-const TAR = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_TAR);
-const FDC = @import("disk_types.zig").all_disk_types.getPtrConst(.@"FDD_1.5MB");
-const FDC_8MB = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN_8MB);
+const all_disk_types = @import("disk_types.zig").all_disk_types;
+const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);
+const HDD_5MB = all_disk_types.getPtrConst(.HDD_5MB);
+const HDD_5MB_1024 = all_disk_types.getPtrConst(.HDD_5MB_1024);
+const TAR = all_disk_types.getPtrConst(.FDD_TAR);
+const FDC = all_disk_types.getPtrConst(.@"FDD_1.5MB");
+const FDC_8MB = all_disk_types.getPtrConst(.FDD_8IN_8MB);
+const CDOS_SMSSSD = all_disk_types.getPtrConst(.CDOS_SMSSSD);
+const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
+const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 pub const std_options: std.Options = .{
     .log_level = .debug,

@@ -59,13 +59,14 @@ pub const RawDirEntry = struct {
             return RawDirError.InvalidExtent;
         }
 
-        if (self.entry.num_records > image_type.recs_per_extent) {
-            log.err(
-                "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
-                .{ extent_nr, self.entry.num_records, image_type.recs_per_extent },
-            );
-            return RawDirError.InvalidRecordNumber;
-        }
+        // TODO: This is no longer true It should just be 128?
+        // if (self.entry.num_records > image_type.recs_per_extent) {
+        //     log.err(
+        //         "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
+        //         .{ extent_nr, self.entry.num_records, image_type.recs_per_extent },
+        //     );
+        //     return RawDirError.InvalidRecordNumber;
+        // }
         for (0..self.allocationsCount(image_type)) |i| {
             const alloc = try self.allocationGet(@intCast(i), image_type);
             if (alloc > image_type.total_allocs) {
@@ -113,12 +114,13 @@ pub const RawDirEntry = struct {
     /// Set allocation as controlled by this extent
     pub fn allocationSet(self: *RawDirEntry, entry_nr: usize, record_nr: u16, image_type: *const DiskImageType) RawDirError!void {
         if (entry_nr >= self.allocationsCount(image_type)) {
+            std.debug.panic("{}, {}\n", .{ entry_nr, self.allocationsCount(image_type) });
             return RawDirError.InvalidEntryNumber;
         }
         // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
         if (image_type.OS == .cdos or image_type.total_allocs <= 256) {
             // 8 bit allocations
-            self.entry._allocations[entry_nr] = @intCast(record_nr & 0xff);
+            self.entry._allocations[entry_nr] = @intCast(record_nr & 0xff); // TODO: This mask won;t work for CDOS?
         } else {
             // 16 bit allocations.
             var alloc: [2]u8 = undefined;
@@ -131,6 +133,7 @@ pub const RawDirEntry = struct {
     /// Get the number of an allocation controlled by this extent
     pub fn allocationGet(self: *const RawDirEntry, entry_nr: usize, image_type: *const DiskImageType) RawDirError!u16 {
         if (entry_nr >= self.allocationsCount(image_type)) {
+            std.debug.panic("{}, {}\n", .{ entry_nr, self.allocationsCount(image_type) });
             return RawDirError.InvalidEntryNumber;
         }
 
@@ -149,7 +152,7 @@ pub const RawDirEntry = struct {
         // TODO: Just return the actual numbver from image_type. And then we don't even need this fn.
         return switch (image_type.OS) {
             .cpm => DiskImageType.allocs_per_extent,
-            .cdos => DiskImageType.allocs_per_extent / 2,
+            .cdos => DiskImageType.allocs_per_extent, //` / 2, // TODO: ???
         };
     }
 
@@ -165,7 +168,7 @@ pub const RawDirEntry = struct {
     }
 
     pub fn isFirstEntryForFile(self: *const RawDirEntry, image_type: *const DiskImageType) bool {
-        if (image_type.recs_per_extent > 128 and self.entry._allocations[4] != 0 and self.extentGet() == 1) {
+        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.entry._allocations[4] != 0 and self.extentGet() == 1) {
             return true;
         }
         return self.extentGet() == 0;

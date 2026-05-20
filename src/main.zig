@@ -39,6 +39,7 @@ var init: *const std.process.Init = undefined;
 fn do_main() !void {
     Console.init(init.io);
     defer Console.deinit();
+    defer options.deinit(init.gpa);
 
     if (!(validateOptions() catch false)) {
         // validate options prints the error.
@@ -95,12 +96,25 @@ pub const CommandLineOptions = struct {
     very_verbose: bool = false,
     cpm_user: ?u8 = null,
     disk_image_type: ?ImageType = null,
+
+    pub fn deinit(self: *CommandLineOptions, gpa: std.mem.Allocator) void {
+        gpa.free(self.image_file);
+        for (self.multiple_files) |filename| {
+            gpa.free(filename);
+        }
+        gpa.free(self.multiple_files);
+        gpa.free(self.system_image_get);
+        gpa.free(self.system_image_put);
+        gpa.free(self.recovery_image_file);
+        gpa.free(self.get_out_dir);
+    }
 };
 
-var options = CommandLineOptions{};
+var options: CommandLineOptions = .{};
 var app: cli.App = undefined;
 pub fn main(init_args: std.process.Init) !void {
     init = &init_args;
+
     var r = cli.AppRunner.init(init);
     app = cli.App{
         .command = cli.Command{
@@ -269,12 +283,10 @@ pub fn main(init_args: std.process.Init) !void {
     r.run(&app) catch {
         // De-init in the error case because exit(1) skips the defers
         // TODO: check how this works now
-        // init.arena.deinit();
-        // _ = init.gpa.deinit();
         std.process.exit(1);
     };
     // TODO: This should be cleanExit etc.. But leaving this until the arg parsing memory leaks are resolved
-    std.process.exit(0);
+    std.process.cleanExit(init.io);
 }
 
 /// Generate help text for all disk image types. The first entry is considered the default.
@@ -288,7 +300,6 @@ fn generateDiskImageList() []const u8 {
 }
 
 pub fn validateOptions() !bool {
-    //_ = io;
     if (options.very_verbose)
         options.verbose = true;
 
@@ -315,33 +326,28 @@ pub fn validateOptions() !bool {
         options.do_directory = true;
     }
 
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+    var p: cli.Printer = .init(&stderr);
+
     if (option_count > 1) {
-        // var buffer: [4096]u8 = undefined;
-        // var w = std.Io.File.stderr().writer(io, &buffer);
-        // var printer = cli.Printer.init(&w);
-        // cli.printError(&app.pr,
-        //     \\You may only specify one of:
-        //     \\       --directory,
-        //     \\       --raw
-        //     \\       --info
-        //     \\       --format,
-        //     \\       --get, --get-multiple,
-        //     \\       --put, --put-multiple,
-        //     \\       --erase, --erase-multiple,
-        //     \\       --extract-cpm, --write-cpm
-        //     \\       --recover
-        //     \\
-        // , .{}, .{});
-        //TODO:
-        if (true) @panic("TODO: Can't get a Printer to print the error");
+        cli.printError(&p, &app,
+            \\You may only specify one of:
+            \\       --directory,
+            \\       --raw
+            \\       --info
+            \\       --format,
+            \\       --get, --get-multiple,
+            \\       --put, --put-multiple,
+            \\       --erase, --erase-multiple,
+            \\       --extract-cpm, --write-cpm
+            \\       --recover
+            \\
+        , .{});
         return false;
     }
 
     if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
         if (options.multiple_files.len != 0) {
-            //if (true) @panic("TODO");
-            var stderr = std.Io.File.stderr().writer(init.io, &.{});
-            var p: cli.Printer = .init(&stderr);
             cli.printError(&p, &app,
                 \\No filenames are allowed for:
                 \\       --directory,
@@ -355,32 +361,26 @@ pub fn validateOptions() !bool {
     }
     if (options.do_get or options.do_put or options.do_erase) {
         if (options.multiple_files.len != 1) {
-            if (true) @panic("TODO");
-
-            // cli.printError(&app,
-            //     \\You must specify exactly one filename for:
-            //     \\       --get, --put, --erase
-            //     \\
-            // , .{});
+            cli.printError(&p, &app,
+                \\You must specify exactly one filename for:
+                \\       --get, --put, --erase
+                \\
+            , .{});
             return false;
         }
     }
     if (options.get_out_dir.len != 0 and !(options.do_get or options.do_get_multi)) {
-        if (true) @panic("TODO");
-
-        // cli.printError(&app,
-        //     \\You may only use --out with:
-        //     \\ --get, --get-multiple
-        //     \\
-        // , .{});
+        cli.printError(&p, &app,
+            \\You may only use --out with:
+            \\ --get, --get-multiple
+            \\
+        , .{});
         return false;
     }
 
     if (options.cpm_user) |user| {
         if (user > 15) {
-            if (true) @panic("TODO");
-
-            //            cli.printError(&app, "User must be between 0 and 15.", .{});
+            cli.printError(&p, &app, "User must be between 0 and 15.", .{});
             return false;
         }
     }
@@ -388,10 +388,7 @@ pub fn validateOptions() !bool {
 }
 
 pub const std_options: std.Options = .{
-    // Set the log level to info
-    // TODO: HUh???
-    .log_level = .debug,
-
+    .log_level = .debug, // TODO: check this.
     // Define logFn to override the std implementation
     .logFn = log,
 };
