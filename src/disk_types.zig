@@ -23,7 +23,6 @@ pub const PhysicalAddress = struct {
 // Should never be instantiated directly, but instead is initalized
 // by one of the Concrete formats, e.g. DiskImageType_MITS_8IN
 pub const DiskImageType = struct {
-    pub const allocs_per_extent: u16 = 16;
     pub const dir_entry_size: u16 = 32;
     //    pub const sector_data_size = 128;
     //  pub const dir_entries_per_sector = sector_data_size / dir_entry_size;
@@ -50,6 +49,8 @@ pub const DiskImageType = struct {
     reserved_tracks: u16,
     // How many sectors per track
     sectors_per_track: u16,
+    // Number of sectors on the first track
+    sectors_per_track0: ?u16 = null,
     // Sector size of the physical media (This will be 128 for everything except the MITS FDDs)
     sector_size: u16,
     // Size of the logical (data containing portion of the sector)
@@ -90,6 +91,7 @@ pub const DiskImageType = struct {
     track_size: u16 = undefined,
     total_allocs: u32 = undefined, // Actually u16, but u32 gets rid of a lot of casting.
     recs_per_alloc: u16 = undefined,
+    allocs_per_extent: u8 = undefined,
     recs_per_extent: u16 = undefined,
     extents_per_alloc: u16 = undefined,
     dir_entries_per_sector: u16 = undefined,
@@ -98,8 +100,11 @@ pub const DiskImageType = struct {
     pub fn init(self: *Self) void {
         self.track_size = self.sector_size * self.sectors_per_track;
         self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * (self.sectors_per_track * self.sector_data_size) / self.block_size;
-        self.recs_per_alloc = self.block_size / self.sector_data_size;
-        self.recs_per_extent = self.recs_per_alloc * if (self.OS == .cpm) 8 else 16; // 8 Allocations per extent.
+        //        self.recs_per_alloc = self.block_size / self.sector_data_size;
+        self.recs_per_extent = 128; //self.recs_per_alloc * if (self.OS == .cpm) 8 else 16; // 8 Allocations per extent.
+        self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
+        self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
+
         self.extents_per_alloc = self.block_size / dir_entry_size;
         self.dir_entries_per_sector = self.sector_data_size / dir_entry_size;
     }
@@ -116,7 +121,7 @@ pub const DiskImageType = struct {
         std.debug.print("Recs / Ext:   {}\n", .{self.recs_per_extent});
         std.debug.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
         std.debug.print("Dirs / Sect   {}\n", .{self.dir_entries_per_sector});
-        std.debug.print("Dirs / Alloc: {}\n", .{DiskImageType.allocs_per_extent});
+        std.debug.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
         std.debug.print("Dir Allocs:   {}\n", .{self.directory_allocs});
         std.debug.print("Num Dirs:     {}\n", .{self.directories});
         std.debug.print("Num Allocs:   {}\n", .{self.total_allocs});
@@ -308,7 +313,9 @@ pub const DiskImageType_MITS_8IN = struct {
         if (address.track < 6) {
             @memset(raw_sector[offset(.zero, 0)..], 0x00);
         } else {
-            raw_sector[offset(.sector, address.track)] = @intCast((address.sector * 17) % 32);
+            // TODO: remove
+            // std.debug.print("track = {x}, sector={x} {x}\n", .{ address.track, address.sector, ((address.sector - 1) * 17) % 32 });
+            raw_sector[offset(.sector, address.track)] = @intCast(((address.sector - 1) * 17) % 32);
         }
         checksum(address.track, raw_sector);
 
@@ -623,6 +630,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 16,
+            .sectors_per_track0 = 26,
             .sector_size = 512,
             .sector_data_size = 512,
             .block_size = 2048,
@@ -633,7 +641,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_fn = DiskImageType._defaultSkewFn,
             .skew_table = &_skew_table,
-            .format_fn = DiskImageType._defaultFormattedSectorGet,
+            .format_fn = formattedSectorGet,
             .seek_offset_read_fn = seekOffset,
             .seek_offset_write_fn = seekOffset,
         };
@@ -658,24 +666,12 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             return 26 * 128 + @as(usize, location.track - 1) * self.track_size + (location.sector - 1) * self.sector_size;
     }
 
-    // fn formattedSectorGet(address: PhysicalAddress, sector_data: []u8, _: ?[]u8) []u8 {
-    //     if (address.track == 0) {
-    //         const track_len = 26 * 28 * 128;
-
-    //     }
-    // }
-
-    // /// Return the internal 137 byte raw_sector buffer, freshly formatted,
-    // /// with the input sector_data copied into it.
-    // fn writeableSectorGet(address: PhysicalAddress, sector_data: []u8, _raw_sector: ?[]u8) []u8 {
-    //     var raw_sector = formattedSectorGet(address, sector_data, _raw_sector);
-    //     const data_start = offset(.data, address.track);
-    //     const data_end = data_start + sector_data_size;
-    //     @memcpy(raw_sector[data_start..data_end], sector_data);
-    //     checksum(address.track, raw_sector);
-    //     return raw_sector;
-    // }
-
+    // By default just need to fill each sector with 0xe5
+    fn formattedSectorGet(address: PhysicalAddress, sector_data: []u8, _: ?[]u8) []u8 {
+        const sector_len: u16 = if (address.track == 0) 128 else 512; // TODO: Should come from config.
+        @memset(sector_data, 0xe5);
+        return sector_data[0..sector_len];
+    }
 };
 
 /// all available disk image formats.

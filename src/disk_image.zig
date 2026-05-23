@@ -30,6 +30,17 @@ pub const SeekableReader = union(enum) {
         }
     }
 
+    pub fn seekPos(self: SeekableReader) usize {
+        return switch (self) {
+            .on_disk => |file| {
+                file.logicalPos();
+            },
+            .in_memory => |mem| {
+                return mem.seek;
+            },
+        };
+    }
+
     pub fn interface(self: SeekableReader) *std.Io.Reader {
         return switch (self) {
             .on_disk => |file| &file.interface,
@@ -50,6 +61,13 @@ pub const SeekableWriter = union(enum) {
                 mem.end = offset;
             },
         }
+    }
+
+    pub fn seekPos(self: SeekableWriter) usize {
+        return switch (self) {
+            .on_disk => |file| file.logicalPos(),
+            .in_memory => |mem| mem.end,
+        };
     }
 
     pub fn interface(self: SeekableWriter) *std.Io.Writer {
@@ -272,7 +290,7 @@ pub const DiskImage = struct {
 
             // Is this a new record / allocation
             if (record_nr % self.image_type.recs_per_alloc == 0) {
-                // std.debug.print("NEW ALLOC RECORD_IN_EXTENT = {}, rec nr = {}, alloc_count = {}, ext_nr = {} nbytes = {}, max_alloc_per_ext = {}, recs_per_alloc = {}\n", .{ record_in_extent, record_nr, alloc_count, extent_nr, nbytes, max_allocs_per_extent, self.image_type.recs_per_alloc });
+                // std.debug.print("NEW ALLOC RECORD_IN_EXTENT = {}, rec nr = {}, alloc_count = {}, ext_nr = {} nbytes = {}, max_alloc_per_ext = {}, recs_per_alloc = {}\n", .{ record_in_extent, record_nr, alloc_count, extent_nr, nbytes, -1, self.image_type.recs_per_alloc });
                 // Note alloc_nr is undefined until here on first loop.
                 alloc_nr = if (nbytes > 0) self.directory.allocationGetFree() catch |err| {
                     try self.rawEntryWrite(@intCast(extent_nr));
@@ -291,9 +309,10 @@ pub const DiskImage = struct {
                 // TODO: This is really to do with whether we have 128k sectors or not, not the OS.. right?
                 const alloc_record_nr: u8 = switch (self.image_type.OS) {
                     .cpm => @intCast(record_nr % 256),
-                    .cdos => @intCast(((sector_nr - 1) % self.image_type.recs_per_alloc)),
+                    //                    .cdos => @intCast(((sector_nr - 1) % self.image_type.recs_per_alloc)),
+                    .cdos => @intCast(record_nr % 128),
                 };
-                // std.debug.print("WRITE SECTOR rec nr = {}, alloc_count = {}\n", .{ record_nr, alloc_count });
+                // std.debug.print("WRITE SECTOR rec nr = {}, alloc_count = {}\n", .{ alloc_record_nr, alloc_count });
                 try self.writeSector(.{ .allocation = alloc_nr, .record = alloc_record_nr }, &sector);
                 sector = .init(self.image_type); // Re-fill with ^Z
             }
@@ -380,7 +399,12 @@ pub const DiskImage = struct {
         }
 
         for (0..self.image_type.tracks) |track_nr| {
-            for (0..self.image_type.sectors_per_track) |sector_nr| {
+            const sectors_per_track = if (track_nr == 0)
+                self.image_type.sectors_per_track0 orelse self.image_type.sectors_per_track
+            else
+                self.image_type.sectors_per_track;
+
+            for (1..sectors_per_track + 1) |sector_nr| {
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
                     write_sector = self.image_type.formattedSectorGet(
@@ -388,8 +412,9 @@ pub const DiskImage = struct {
                         disk_sector.data(),
                     );
                 }
-                //                std.debug.print("writing format sector with len = {}\n", .{write_sector.len});
+                // std.debug.print("writing format sector with len = {} and pos = {}\n", .{ write_sector.len, self.writer.seekPos() });
                 try self.writer.interface().writeAll(write_sector);
+                //if (track_nr == 6) @panic("TODO");
             }
         }
     }
@@ -438,6 +463,7 @@ pub const DiskImage = struct {
 
     /// Convert between logical (allocation, record) to physical (track, sector) address.
     fn toPhysicalAddress(self: *const Self, address: LogicalAddress) PhysicalAddress {
+        // TODO: puts some asserts in here to make sure logical address is not insane.
         if (true) {
             //const recs_per_sector = self.image_type.sector_data_size / 128;
             const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_data_size;
@@ -447,7 +473,7 @@ pub const DiskImage = struct {
             const track: u16 = self.image_type.reserved_tracks + (absolute_sector / self.image_type.sectors_per_track);
             const logical_sector = absolute_sector % self.image_type.sectors_per_track;
 
-            //log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
+            log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
             // std.debug.print("ALLOCATION[{}], RECORD[{}], TRACK[{}], ABS [{}], LOGICAL[{}]", .{ address.allocation, address.record, track, absolute_sector, logical_sector });
             const physical_sector = self.image_type.skew(track, logical_sector);
             return PhysicalAddress{ .track = track, .sector = physical_sector };
@@ -456,7 +482,7 @@ pub const DiskImage = struct {
             track = @divTrunc(track, self.image_type.sectors_per_track) + self.image_type.reserved_tracks;
             const logical_sector = @rem((address.allocation * self.image_type.recs_per_alloc + @rem(address.record, self.image_type.recs_per_alloc)), self.image_type.sectors_per_track);
 
-            //log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
+            log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
             // std.debug.print("ALLOCATION[{}], RECORD[{}], TRACK[{}], LOGICAL[{}]\n", .{ address.allocation, address.record, track, logical_sector });
             const physical_sector = self.image_type.skew(track, logical_sector);
             return PhysicalAddress{ .track = track, .sector = physical_sector };
@@ -471,7 +497,7 @@ pub const DiskImage = struct {
         // Sometimes the data is not at the start of the sector. So adjust
         const data_offset = self.image_type.seekOffsetRead(physical_location);
 
-        //log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
+        log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
         // std.debug.print("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
         try self.reader.seekTo(@intCast(data_offset));
@@ -484,12 +510,13 @@ pub const DiskImage = struct {
     pub fn writeSector(self: *Self, location: LogicalAddress, data: *DiskSector) WriteSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
 
+        // std.debug.print("writinng: {}\n", .{physical_location});
         const sector_data = self.image_type.writeableSectorGet(physical_location, data.data());
         const sector_offset = self.image_type.seekOffsetWrite(physical_location);
         try self.writer.seekTo(sector_offset);
         try self.writer.interface().writeAll(sector_data);
 
-        //log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
+        log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
         // std.debug.print("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
         try data.dump(physical_location, sector_offset);
     }

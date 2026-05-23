@@ -114,8 +114,29 @@ test "FDC 8MB formatted" {
     try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
 }
 
+/// There are some part of the disk are essentially random as they are
+/// not explicitely set by the CPM bios. These are leftovers from Altair DOS.
+/// They are also included in the checksum!!
+/// Sadly we have to overwrite the checksum as well
+fn clearVariableBytes(in: anytype) [in.len]u8 {
+    var out: [in.len]u8 = undefined;
+    @memcpy(&out, in[0..]);
+    for (6..77) |track_nr| {
+        for (0..32) |sect_nr| {
+            const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
+            out[start_idx + 2] = 0xaa; // directory index (unused)
+            out[start_idx + 3] = 0xaa; // data bytes count (unused)
+            out[start_idx + 4] = 0xaa; // checksum
+            out[start_idx + 5] = 0xaa; // data pointer (unused)
+            out[start_idx + 6] = 0xaa; // data pointer (unused)
+        }
+    }
+    return out;
+}
+
 test "8in filled" {
     // Make a 296K file to fill the disk.
+    const compare_image = @embedFile("test_disks/8in_full.dsk");
     const nr_sectors = 296 * 1024 / 128;
     var big_file: [nr_sectors * 128]u8 = undefined;
     for (0..nr_sectors) |sector| {
@@ -150,11 +171,13 @@ test "8in filled" {
     try std.testing.expect(cooked_dir != null);
     try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
     try std.testing.expectEqualSlices(u8, &in_file, &big_file);
+    try std.testing.expectEqualSlices(u8, &clearVariableBytes(compare_image), &clearVariableBytes(test_buffer));
 }
 
 test "CDOS filled" {
     // For each CDOS format fill the disk with a single file.
-    std.testing.log_level = .info;
+    //std.testing.log_level = .debug;
+    // TODO:
     //    inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD }) |fmt| {
     inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD }) |fmt| {
         std.log.info("Tesing disk format {s}\n", .{fmt.type_name});
@@ -180,8 +203,10 @@ test "CDOS filled" {
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
-        //try disk_image.copyToImage(&big_stream, filename, 0, false);
 
+        // saveFile(&big_file);
+        //        saveImage(&test_buffer); // TODO: This still has some undefined in it. something about this size isn't right.
+        defer saveImage(&test_buffer);
         try disk_image.copyToImage(&big_stream, filename, 0, false);
 
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
@@ -258,6 +283,7 @@ test "8in overfilled disk" {
 }
 
 test "8in overfill directory" {
+    const compare_image = @embedFile("test_disks/8in_dirs.dsk");
     var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
     var test_stream: std.Io.Reader = .fixed(&test_file);
 
@@ -269,12 +295,14 @@ test "8in overfill directory" {
 
     var name_buf: [256]u8 = undefined;
     for (0..FDD_8IN.directories) |num| {
-        try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}", .{num}), 0, false);
+        test_stream.seek = 0;
+        try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
     }
     try std.testing.expectError(
         error.OutOfExtents,
-        disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}", .{FDD_8IN.directories}), 0, false),
+        disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{FDD_8IN.directories}), 0, false),
     );
+    try std.testing.expectEqualSlices(u8, &clearVariableBytes(compare_image), &clearVariableBytes(image_file));
 }
 
 test "8in duplicate filenames" {
@@ -612,7 +640,6 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     // TODO: Always use these init fns or remove them.
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
-    saveImage(raw_image.buffer);
     try disk_image.formatImage();
     try disk_image.loadDirectories(false);
     return disk_image;

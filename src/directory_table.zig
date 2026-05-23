@@ -33,7 +33,7 @@ pub const RawDirEntry = struct {
         reserved: u8,
         extent_hi: u8,
         num_records: u8,
-        _allocations: [DiskImageType.allocs_per_extent]u8,
+        _allocations: [16]u8, // TODO!
     };
     entry: Raw, // This must be the one and only field.
 
@@ -151,8 +151,8 @@ pub const RawDirEntry = struct {
         _ = self;
         // TODO: Just return the actual numbver from image_type. And then we don't even need this fn.
         return switch (image_type.OS) {
-            .cpm => DiskImageType.allocs_per_extent,
-            .cdos => DiskImageType.allocs_per_extent, //` / 2, // TODO: ???
+            .cpm => image_type.allocs_per_extent,
+            .cdos => image_type.allocs_per_extent, //` / 2, // TODO: ???
         };
     }
 
@@ -279,7 +279,7 @@ pub const CookedDirEntry = struct {
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
         // TODO: /2
-        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent);
+        try cooked.allocations.ensureUnusedCapacity(arena, 16); // TODO: HARDCODE
         //        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent / 2);
         for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
@@ -366,13 +366,13 @@ pub const DirectoryTable = struct {
         }) {
             const logical_address = LogicalAddress{
                 //                .allocation = sector_nr / (image_type.recs_per_alloc),
-                .allocation = sector_nr / (image_type.block_size / image_type.sector_size), // TODO: This is recs per block
+                // TODO: change this back to sector_size and add a test that picks up the error.
+                .allocation = sector_nr / (image_type.block_size / image_type.sector_data_size), // TODO: This is recs per block
                 .record = @intCast(sector_nr % image_type.recs_per_alloc),
             };
             // Read the raw CPM directory entries and add them to the raw_directories array.
             try image.readSector(logical_address, &sector);
             const entries: []RawDirEntry = std.mem.bytesAsSlice(RawDirEntry, sector.data());
-            //std.debug.print("current raw = {}, new loaded = {}\n", .{ self.raw_directories.items.len, entries.len });
             self.raw_directories.appendSliceAssumeCapacity(entries);
         }
 
@@ -583,6 +583,7 @@ pub const DirectoryTable = struct {
 
     /// Return a free allocation
     pub fn allocationGetFree(self: *Self) error{OutOfAllocs}!u16 {
+        // std.debug.print("free allocs = {}\n", .{self.free_allocations.count()});
         const free = self.free_allocations.findFirstSet();
         if (free) |free_alloc| {
             self.free_allocations.unset(free_alloc);
