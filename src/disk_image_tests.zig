@@ -141,14 +141,14 @@ test "disk filled" {
             else => void,
         };
         defer if (@TypeOf(compare_image) != @TypeOf(void)) allocator.free(compare_image);
-        const nr_sectors: usize = fmt.largestFileBytes() / fmt.sector_data_size;
-        var big_file = try allocator.alloc(u8, nr_sectors * fmt.sector_data_size);
+        const nr_sectors: usize = fmt.largestFileBytes() / fmt.sector_size_data;
+        var big_file = try allocator.alloc(u8, nr_sectors * fmt.sector_size_data);
         defer allocator.free(big_file);
 
         for (0..nr_sectors) |sector| {
             const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
-            const start = sector * fmt.sector_data_size;
-            const end = start + fmt.sector_data_size;
+            const start = sector * fmt.sector_size_data;
+            const end = start + fmt.sector_size_data;
             @memset(big_file[start..end], fill_char);
             _ = try std.fmt.bufPrint(big_file[start..end], "\n--[{d}]--", .{sector});
         }
@@ -442,16 +442,14 @@ test "8in Auto detect file type" {
     // TODO: embed a test file with bin and ascii in it and get both.
 }
 
-const util = struct {
-    pub fn count(itr: FileNameIterator) usize {
-        var my_itr = itr;
-        var c: usize = 0;
-        while (my_itr.next() != null) {
-            c += 1;
-        }
-        return c;
+fn countFilenames(itr: FileNameIterator) usize {
+    var my_itr = itr;
+    var c: usize = 0;
+    while (my_itr.next() != null) {
+        c += 1;
     }
-};
+    return c;
+}
 
 test "Multiple filenames across users" {
     var image_file: InMemoryConstImage = undefined;
@@ -466,15 +464,15 @@ test "Multiple filenames across users" {
 
     // Searching with user should return 1 file.
     var itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 0);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
     itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 1);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
     itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", 2);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
 
     // Searching without user should return 3 files.
     itr = disk_image.directory.findByFileNameWildcards("SOMETHIN.EXT", null);
-    try std.testing.expectEqual(3, util.count(itr));
+    try std.testing.expectEqual(3, countFilenames(itr));
 
     // Make sure get works. TODO: Make sure put works.
     var user: u8 = 0;
@@ -510,25 +508,25 @@ test "Find filename with wildcards" {
     defer disk_image.deinit();
 
     var itr = disk_image.directory.findByFileNameWildcards("F*", null);
-    try std.testing.expectEqual(6, util.count(itr));
+    try std.testing.expectEqual(6, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("F*.EXT", null);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("*.EXT", null);
-    try std.testing.expectEqual(4, util.count(itr));
+    try std.testing.expectEqual(4, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("*.E*", null);
-    try std.testing.expectEqual(5, util.count(itr));
+    try std.testing.expectEqual(5, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("*.EX*", null);
-    try std.testing.expectEqual(5, util.count(itr));
+    try std.testing.expectEqual(5, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("F?LENAME.EX?", null);
-    try std.testing.expectEqual(2, util.count(itr));
+    try std.testing.expectEqual(2, countFilenames(itr));
 
     itr = disk_image.directory.findByFileNameWildcards("F*.EX?", null);
-    try std.testing.expectEqual(2, util.count(itr));
+    try std.testing.expectEqual(2, countFilenames(itr));
 }
 
 test "Find filenames without extensions" {
@@ -555,9 +553,9 @@ test "Find filenames without extensions" {
     try std.testing.expect(disk_image.directory.findByFilename(".X", null) != null);
 
     var itr = disk_image.directory.findByFileNameWildcards("F*", null);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
     itr = disk_image.directory.findByFileNameWildcards("F*.*", null);
-    try std.testing.expectEqual(1, util.count(itr));
+    try std.testing.expectEqual(1, countFilenames(itr));
 }
 
 test "erase" {

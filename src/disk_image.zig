@@ -162,7 +162,7 @@ pub const DiskImage = struct {
         if (entry.allocations.items.len == 0) {
             return;
         }
-        const recs_per_sector = (self.image_type.sector_data_size / 128);
+        const recs_per_sector = (self.image_type.sector_size_data / 128);
         const num_sectors = (num_records + recs_per_sector - 1) / recs_per_sector; // TODO:
         var total_rec_nr: u16 = 0;
         for (0..num_sectors) |sec_nr| {
@@ -251,7 +251,7 @@ pub const DiskImage = struct {
         var record_nr: u16 = 0;
         var nbytes: usize = 0;
         var sector_nr: u16 = 0;
-        const recs_per_sector: u16 = self.image_type.sector_size / 128;
+        const recs_per_sector: u16 = self.image_type.sector_size_raw / 128;
         var record_in_extent: u16 = 0;
 
         // std.debug.print("RPA = {}\n", .{(self.image_type.recs_per_alloc * 8)});
@@ -466,7 +466,7 @@ pub const DiskImage = struct {
         // TODO: puts some asserts in here to make sure logical address is not insane.
         if (true) {
             //const recs_per_sector = self.image_type.sector_data_size / 128;
-            const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_data_size;
+            const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
             const absolute_sector = address.allocation * sectors_per_alloc + (address.record % sectors_per_alloc);
             //            const absolute_sector = address.allocation * sectors_per_alloc + address.record * recs_per_sector;
@@ -544,24 +544,24 @@ pub const DiskImage = struct {
 
 /// A single 128 byte disk sector.
 pub const DiskSector = struct {
-    _backing: [512]u8, // TODO: Make this look at DiskImage.max_supported_sector_size or something.
+    backing: [512]u8, // TODO: Make this look at DiskImage.max_supported_sector_size or something.
     sector_len: u16, // OR Just return a formatted slice from the DiskImageType.
 
     pub fn init(image_type: *const DiskImageType) DiskSector {
         // Initialized to ^Z.
-        std.debug.assert(image_type.sector_data_size <= 512); // TODO
-        return .{ ._backing = @splat(0x1a), .sector_len = image_type.sector_data_size };
+        std.debug.assert(image_type.sector_size_data <= 512); // TODO
+        return .{ .backing = @splat(0x1a), .sector_len = image_type.sector_size_data };
     }
 
     pub fn data(self: *DiskSector) []u8 {
-        return self._backing[0..self.sector_len];
+        return self.backing[0..self.sector_len];
     }
 
     pub fn dump(self: DiskSector, location: PhysicalAddress, offset: usize) !void {
         if (!DUMP)
             return;
         std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
-        std.debug.dumpHex(self._backing[0..self.sector_len]);
+        std.debug.dumpHex(self.backing[0..self.sector_len]);
     }
 };
 

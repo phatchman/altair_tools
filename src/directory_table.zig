@@ -272,7 +272,7 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn recordsUsedInB(self: *const CookedDirEntry) u32 {
-        return self.num_records * self.image_type.sector_data_size;
+        return self.num_records * self.image_type.sector_size_data;
     }
 
     /// Add any new allocations to the list of used allocations.
@@ -352,7 +352,6 @@ pub const DirectoryTable = struct {
         const image_type = image.image_type;
         var sector: DiskSector = .init(image.image_type);
         const directory_sector_count = image_type.directories / image_type.dir_entries_per_sector;
-        //        var raw_dir_index: usize = 0;
         var sector_nr: u16 = 0;
 
         // Reserve allocations used for directories
@@ -362,10 +361,9 @@ pub const DirectoryTable = struct {
 
         while (sector_nr < directory_sector_count) : ({
             sector_nr += 1;
-            //          raw_dir_index += image.image_type.dir_entries_per_sector;
         }) {
             const logical_address = LogicalAddress{
-                .allocation = sector_nr / (image_type.block_size / image_type.sector_data_size), // TODO: This is recs per block
+                .allocation = sector_nr / (image_type.block_size / image_type.sector_size_data), // TODO: This is recs per block
                 .record = @intCast(sector_nr % image_type.recs_per_alloc),
             };
             // Read the raw CPM directory entries and add them to the raw_directories array.
@@ -374,12 +372,15 @@ pub const DirectoryTable = struct {
             self.raw_directories.appendSliceAssumeCapacity(entries);
         }
 
-        // Creation of CookedDirectories in buildCookedEntries, relies on the raw entires being sorted.
-        // TODO: Would prefer to keep the raw entries in the same order as on-disk.
-        // Either sort based on pointers here, so the raw indexes are stable.
-        // OR remove requirement for cooked entries to be sorted.
-        std.mem.sort(RawDirEntry, self.raw_directories.items, {}, struct {
-            fn lessThan(_: void, lhs: RawDirEntry, rhs: RawDirEntry) bool {
+        // building the cooked dirs needs sorted raw_dirs.
+        var raw_dirs_sorted: std.ArrayList(*RawDirEntry) = try .initCapacity(self.allocator(), self.raw_directories.items.len);
+        defer raw_dirs_sorted.deinit(self.allocator());
+        for (self.raw_directories.items) |*raw_dir| {
+            raw_dirs_sorted.appendAssumeCapacity(raw_dir);
+        }
+
+        std.mem.sort(*RawDirEntry, raw_dirs_sorted.items, {}, struct {
+            fn lessThan(_: void, lhs: *RawDirEntry, rhs: *RawDirEntry) bool {
                 if (std.mem.eql(u8, &lhs.entry.filename, &rhs.entry.filename)) {
                     if (std.mem.eql(u8, &lhs.entry.filetype, &rhs.entry.filetype)) {
                         if (lhs.entry.user == rhs.entry.user) {
@@ -399,9 +400,10 @@ pub const DirectoryTable = struct {
         // Create the CookedDirEntries and remove any used allocations from the free alocations set.
         // TODO: This does assume that the "first" extent always appears in the raw entry before the
         // later extents. Is that always true?
-        for (self.raw_directories.items, 0..) |dir, i| {
+        for (raw_dirs_sorted.items, 0..) |dir, i| {
             if (!dir.isDeleted()) {
-                self.buildCookedEntry(@intCast(i), image_type) catch |err| {
+                const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.items[0])) / @sizeOf(RawDirEntry);
+                self.buildCookedEntry(@intCast(entry_nr), image_type) catch |err| {
                     if (!raw_only) return err;
                 };
                 // Mark off the used allocations
@@ -471,6 +473,9 @@ pub const DirectoryTable = struct {
         }
         to_erase.allocations.clearAndFree(self.allocator());
         // Delete all the raw_entries and write to disk.
+        // TODO: If we iterate over the raw entires instead, there is no need to keep the
+        // raw index in the cooked entry.
+        // This is the only place where the raw index is used.
         for (to_erase.raw_indexes.items) |raw_index| {
             var raw_entry = &self.raw_directories.items[raw_index];
             raw_entry.setDeleted();

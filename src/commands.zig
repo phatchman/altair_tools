@@ -174,7 +174,7 @@ pub fn directoryListRaw(_: Context, disk_image: *DiskImage, options: CommandLine
     try Console.stdout().print("IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]\n", .{});
 
     for (disk_image.directory.raw_directories.items, 0..) |entry, extent_nr| {
-        if (true or !entry.isDeleted()) {
+        if (!entry.isDeleted()) {
             const attribs = [2]u8{
                 if (entry.attribReadOnly()) 'R' else 'W',
                 if (entry.attribSystem()) 'S' else ' ',
@@ -196,6 +196,7 @@ pub fn directoryListRaw(_: Context, disk_image: *DiskImage, options: CommandLine
             try Console.stdout().print("{}]\n", .{value});
         }
     }
+    try Console.stdout().print("FREE DIRECTORIES: ({})\n", .{disk_image.image_type.directories - disk_image.directory.cooked_directories.items.len});
     const free_allocations = disk_image.directory.free_allocations;
     try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
     var nr_output: usize = 0;

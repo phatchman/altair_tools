@@ -52,9 +52,11 @@ pub const DiskImageType = struct {
     // Number of sectors on the first track
     sectors_per_track0: ?u16 = null,
     // Sector size of the physical media (This will be 128 for everything except the MITS FDDs)
-    sector_size: u16,
+    sector_size_raw: u16,
     // Size of the logical (data containing portion of the sector)
-    sector_data_size: u16,
+    sector_size_data: u16,
+    // Size of the sectors on track0
+    sector_size_data0: ?u16 = null,
     // Block size, must be multiple of 1024.
     block_size: u16,
     // Maximum number of directory entries and extents
@@ -98,21 +100,21 @@ pub const DiskImageType = struct {
 
     const Self = @This();
     pub fn init(self: *Self) void {
-        self.track_size = self.sector_size * self.sectors_per_track;
-        self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * (self.sectors_per_track * self.sector_data_size) / self.block_size;
+        self.track_size = self.sector_size_raw * self.sectors_per_track;
+        self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * (self.sectors_per_track * self.sector_size_data) / self.block_size;
         //        self.recs_per_alloc = self.block_size / self.sector_data_size;
         self.recs_per_extent = 128; //self.recs_per_alloc * if (self.OS == .cpm) 8 else 16; // 8 Allocations per extent.
         self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
         self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
 
         self.extents_per_alloc = self.block_size / dir_entry_size;
-        self.dir_entries_per_sector = self.sector_data_size / dir_entry_size;
+        self.dir_entries_per_sector = self.sector_size_data / dir_entry_size;
     }
 
     pub fn dump(self: *const Self) void {
         std.debug.print("Type:         {s}\n", .{self.type_name});
-        std.debug.print("Sector Len:   {}\n", .{self.sector_size});
-        std.debug.print("Data Len:     {}\n", .{self.sector_data_size});
+        std.debug.print("Sector Len:   {}\n", .{self.sector_size_raw});
+        std.debug.print("Data Len:     {}\n", .{self.sector_size_data});
         std.debug.print("Num Tracks:   {}\n", .{self.tracks});
         std.debug.print("Res Tracks:   {}\n", .{self.reserved_tracks});
         std.debug.print("Secs / Track: {}\n", .{self.sectors_per_track});
@@ -229,7 +231,7 @@ pub const DiskImageType = struct {
 
     fn _defaultSeekOffset(self: *const Self, location: PhysicalAddress) usize {
         return @as(usize, location.track) * self.track_size +
-            (location.sector - 1) * self.sector_size;
+            (location.sector - 1) * self.sector_size_raw;
     }
 };
 
@@ -260,8 +262,8 @@ pub const DiskImageType_MITS_8IN = struct {
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 32,
-            .sector_size = sector_size,
-            .sector_data_size = sector_data_size,
+            .sector_size_raw = sector_size,
+            .sector_size_data = sector_data_size,
             .block_size = 2048,
             .directories = 64,
             .directory_allocs = 2,
@@ -382,8 +384,8 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .tracks = 2048,
             .reserved_tracks = 2,
             .sectors_per_track = 32,
-            .sector_size = 137,
-            .sector_data_size = 128,
+            .sector_size_raw = 137,
+            .sector_size_data = 128,
             .block_size = 4096,
             .directories = 512,
             .directory_allocs = 4,
@@ -429,8 +431,8 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
             .tracks = 406,
             .reserved_tracks = 1,
             .sectors_per_track = 96,
-            .sector_size = 128,
-            .sector_data_size = 128,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
             .block_size = 4096,
             .directories = 256,
             .directory_allocs = 2,
@@ -481,8 +483,8 @@ pub const DiskImageType_TARBELL_FDD = struct {
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 26,
-            .sector_size = 128,
-            .sector_data_size = 128,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
             .block_size = 1024,
             .directories = 64,
             .directory_allocs = 2,
@@ -523,8 +525,8 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
             .tracks = 149,
             .reserved_tracks = 1,
             .sectors_per_track = 80,
-            .sector_size = 128,
-            .sector_data_size = 128,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
             .block_size = 4096,
             .directories = 256,
             .directory_allocs = 2,
@@ -575,8 +577,8 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
             .tracks = 40,
             .reserved_tracks = 3,
             .sectors_per_track = 18,
-            .sector_size = 128,
-            .sector_data_size = 128,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
             .block_size = 1024,
             .directories = 64,
             .directory_allocs = 2,
@@ -611,8 +613,8 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
             .tracks = 77,
             .reserved_tracks = 2,
             .sectors_per_track = 26,
-            .sector_size = 128,
-            .sector_data_size = 128,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
             .block_size = 1024,
             .directories = 64,
             .directory_allocs = 2,
@@ -645,8 +647,8 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .reserved_tracks = 2,
             .sectors_per_track = 16,
             .sectors_per_track0 = 26,
-            .sector_size = 512,
-            .sector_data_size = 512,
+            .sector_size_raw = 512,
+            .sector_size_data = 512,
             .block_size = 2048,
             .directories = 128,
             .directory_allocs = 2, // TODO: WAs 2
@@ -677,7 +679,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             @as(usize, location.track) * self.track_size + (location.sector - 1) * 128
         else
             // There are 26 sectors of 128 bytes on the first SD track.
-            return 26 * 128 + @as(usize, location.track - 1) * self.track_size + (location.sector - 1) * self.sector_size;
+            return 26 * 128 + @as(usize, location.track - 1) * self.track_size + (location.sector - 1) * self.sector_size_raw;
     }
 
     // By default just need to fill each sector with 0xe5
