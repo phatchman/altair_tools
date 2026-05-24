@@ -116,7 +116,7 @@ pub const DiskImage = struct {
 
     /// Close the existing image file and open a new one.
     /// closes any files before an error is returned.
-    pub fn reinit(self: *Self, gpa: std.mem.Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
+    pub fn reinit(self: *Self, gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter) !void {
         self.deinit();
         self.reader = reader;
         self.writer = writer;

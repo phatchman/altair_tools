@@ -365,8 +365,6 @@ pub const DirectoryTable = struct {
             //          raw_dir_index += image.image_type.dir_entries_per_sector;
         }) {
             const logical_address = LogicalAddress{
-                //                .allocation = sector_nr / (image_type.recs_per_alloc),
-                // TODO: change this back to sector_size and add a test that picks up the error.
                 .allocation = sector_nr / (image_type.block_size / image_type.sector_data_size), // TODO: This is recs per block
                 .record = @intCast(sector_nr % image_type.recs_per_alloc),
             };

@@ -199,6 +199,20 @@ pub const DiskImageType = struct {
         return false;
     }
 
+    /// Return total number of sectors on disk.
+    pub fn sectorCount(self: *const DiskImageType) u16 {
+        if (self.sectors_per_track0) |track0| {
+            return track0 + (self.tracks - 1) * self.sectors_per_track;
+        } else {
+            return self.tracks * self.sectors_per_track;
+        }
+    }
+
+    /// Return total number of sectors used to store data.
+    pub fn largestFileBytes(self: *const DiskImageType) u32 {
+        return (self.total_allocs - self.directory_allocs) * self.block_size;
+    }
+
     // By default, use the provided skew table, with no other adjustment required.
     fn _defaultSkewFn(skew_table: []const u16, track: u16, logical_sector: u16) u16 {
         _ = track;

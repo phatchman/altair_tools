@@ -118,72 +118,33 @@ test "FDC 8MB formatted" {
 /// not explicitely set by the CPM bios. These are leftovers from Altair DOS.
 /// They are also included in the checksum!!
 /// Sadly we have to overwrite the checksum as well
-fn clearVariableBytes(in: anytype) [in.len]u8 {
-    var out: [in.len]u8 = undefined;
-    @memcpy(&out, in[0..]);
+fn clearVariableBytes(in: []u8) []u8 {
     for (6..77) |track_nr| {
         for (0..32) |sect_nr| {
             const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
-            out[start_idx + 2] = 0xaa; // directory index (unused)
-            out[start_idx + 3] = 0xaa; // data bytes count (unused)
-            out[start_idx + 4] = 0xaa; // checksum
-            out[start_idx + 5] = 0xaa; // data pointer (unused)
-            out[start_idx + 6] = 0xaa; // data pointer (unused)
+            in[start_idx + 2] = 0xaa; // directory index (unused)
+            in[start_idx + 3] = 0xaa; // data bytes count (unused)
+            in[start_idx + 4] = 0xaa; // checksum
+            in[start_idx + 5] = 0xaa; // data pointer (unused)
+            in[start_idx + 6] = 0xaa; // data pointer (unused)
         }
     }
-    return out;
+    return in;
 }
 
-test "8in filled" {
-    // Make a 296K file to fill the disk.
-    const compare_image = @embedFile("test_disks/8in_full.dsk");
-    const nr_sectors = 296 * 1024 / 128;
-    var big_file: [nr_sectors * 128]u8 = undefined;
-    for (0..nr_sectors) |sector| {
-        const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
-        const start = sector * 128;
-        const end = start + 128;
-        @memset(big_file[start..end], fill_char);
-        _ = try std.fmt.bufPrint(big_file[start..end], "\n--[{d}]--", .{sector});
-    }
-    var big_stream: std.Io.Reader = .fixed(&big_file);
+test "disk filled" {
+    // Make a file to fill the disk.
+    inline for (all_formats) |fmt| {
+        std.log.info("Testing: {t} filled", .{fmt.type_id});
+        const compare_image = switch (fmt.type_id) {
+            .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_full.dsk")),
+            else => void,
+        };
+        defer if (@TypeOf(compare_image) != @TypeOf(void)) allocator.free(compare_image);
+        const nr_sectors: usize = fmt.largestFileBytes() / fmt.sector_data_size;
+        var big_file = try allocator.alloc(u8, nr_sectors * fmt.sector_data_size);
+        defer allocator.free(big_file);
 
-    // Create in-memory disk image.
-    var test_buffer: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
-
-    // Copy to disk to fill it up.
-    const filename = "BIG.TXT";
-    try disk_image.copyToImage(&big_stream, filename, 0, false);
-    try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
-    try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
-    try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
-    try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
-    // Get it back and compare it to the original
-    var in_file: [big_file.len]u8 = undefined;
-    var in_stream: std.Io.Writer = .fixed(&in_file);
-
-    const cooked_dir = disk_image.directory.findByFilename(filename, null);
-    try std.testing.expect(cooked_dir != null);
-    try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-    try std.testing.expectEqualSlices(u8, &in_file, &big_file);
-    try std.testing.expectEqualSlices(u8, &clearVariableBytes(compare_image), &clearVariableBytes(test_buffer));
-}
-
-test "CDOS filled" {
-    // For each CDOS format fill the disk with a single file.
-    //std.testing.log_level = .debug;
-    // TODO:
-    //    inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD }) |fmt| {
-    inline for (.{ CDOS_SMSSSD, CDOS_LGSSSD }) |fmt| {
-        std.log.info("Tesing disk format {s}\n", .{fmt.type_name});
-        const nr_sectors: u32 = (fmt.total_allocs - fmt.directory_allocs) * fmt.block_size / fmt.sector_data_size;
-        // std.debug.print("NR SECTS = {}, SDS = {} tot allocs = {}, dir_allocs = {}, block_size = {}\n", .{ nr_sectors, CDOS_LGSSSD.sector_data_size, CDOS_LGSSSD.total_allocs, CDOS_LGSSSD.directory_allocs, CDOS_LGSSSD.block_size });
-        var big_file: [nr_sectors * fmt.sector_data_size]u8 = undefined;
         for (0..nr_sectors) |sector| {
             const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
             const start = sector * fmt.sector_data_size;
@@ -191,7 +152,7 @@ test "CDOS filled" {
             @memset(big_file[start..end], fill_char);
             _ = try std.fmt.bufPrint(big_file[start..end], "\n--[{d}]--", .{sector});
         }
-        var big_stream: std.Io.Reader = .fixed(&big_file);
+        var big_stream: std.Io.Reader = .fixed(big_file);
 
         // Create in-memory disk image.
         var test_buffer: [fmt.image_size]u8 = undefined;
@@ -203,24 +164,31 @@ test "CDOS filled" {
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
-
-        // saveFile(&big_file);
-        //        saveImage(&test_buffer); // TODO: This still has some undefined in it. something about this size isn't right.
-        defer saveImage(&test_buffer);
         try disk_image.copyToImage(&big_stream, filename, 0, false);
-
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
         try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
         try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
         // Get it back and compare it to the original
-        var in_file: [big_file.len]u8 = undefined;
-        var in_stream: std.Io.Writer = .fixed(&in_file);
+        const in_file = try allocator.alloc(u8, big_file.len);
+        defer allocator.free(in_file);
+        var in_stream: std.Io.Writer = .fixed(in_file);
 
+        // Important to re-init to rebuild the in-memory directory entries from the image.
+        try reinitDiskImage(&disk_image);
         const cooked_dir = disk_image.directory.findByFilename(filename, null);
         try std.testing.expect(cooked_dir != null);
         try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-        try std.testing.expectEqualSlices(u8, &in_file, &big_file);
+        try std.testing.expectEqualSlices(u8, in_file, big_file);
+        // Noting a weird thing here. The below can be replaced with `if (@TypeOf(compare_image) != type)`.
+        // compare_image is either a field containing a const u8 array or it is the void type.
+        // That's the reason for the strange syntax below. It seemed clearer than `@TypeOf(compare_image) != type`
+        if (@TypeOf(compare_image) != @TypeOf(void)) {
+            switch (fmt.type_id) {
+                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(compare_image), clearVariableBytes(&test_buffer)),
+                else => try std.testing.expectEqualSlices(u8, compare_image, test_buffer),
+            }
+        }
     }
 }
 
@@ -228,8 +196,8 @@ test "8MB filled" {
     if (true) return error.SkipZigTest;
     // Make a 8168KB file to fill the disk.
     const nr_sectors = 8168 * 1024 / 128;
-    var big_file = try std.testing.allocator.alloc(u8, nr_sectors * 128);
-    defer std.testing.allocator.free(big_file);
+    var big_file = try allocator.alloc(u8, nr_sectors * 128);
+    defer allocator.free(big_file);
     for (0..nr_sectors) |sector| {
         const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
         const start = sector * 128;
@@ -240,8 +208,8 @@ test "8MB filled" {
     var big_stream: std.Io.Reader = .fixed(big_file);
 
     // Create in-memory disk image.
-    const test_buffer = try std.testing.allocator.alloc(u8, FDC_8MB.image_size);
-    defer std.testing.allocator.free(test_buffer);
+    const test_buffer = try allocator.alloc(u8, FDC_8MB.image_size);
+    defer allocator.free(test_buffer);
     var disk_image = try newFormattedMemoryDiskImage(test_buffer, FDC_8MB);
     defer disk_image.deinit();
 
@@ -254,8 +222,8 @@ test "8MB filled" {
     try std.testing.expectEqualStrings(disk_image.directory.cooked_directories.items[0].filenameAndExtension(), filename);
 
     // Get it back and compare it to the original
-    const in_file = try std.testing.allocator.alloc(u8, big_file.len);
-    defer std.testing.allocator.free(in_file);
+    const in_file = try allocator.alloc(u8, big_file.len);
+    defer allocator.free(in_file);
     var in_stream: std.Io.Writer = .fixed(in_file);
 
     const cooked_dir = disk_image.directory.findByFilename(filename, null);
@@ -264,45 +232,77 @@ test "8MB filled" {
     try std.testing.expectEqualSlices(u8, in_file, big_file);
 }
 
-test "8in overfilled disk" {
+test "disk overfilled disk" {
     // Make file 1 byte too big. Should result in out of allocs.
-    var big_file = std.mem.zeroes([296 * 1024 + 1]u8);
-    var big_stream: std.Io.Reader = .fixed(&big_file);
 
-    var test_buffer: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
+    inline for (all_formats) |fmt| {
+        std.log.info("Testing: {t} filled", .{fmt.type_id});
+        const big_file = try allocator.alloc(u8, fmt.largestFileBytes() + 1);
+        defer allocator.free(big_file);
+        var big_stream: std.Io.Reader = .fixed(big_file);
 
-    try std.testing.expectError(
-        error.OutOfAllocs,
-        disk_image.copyToImage(&big_stream, "BIG.TXT", 0, false),
-    );
-    try std.testing.expectEqual(disk_image.directory.cooked_directories.items.len, 1);
+        const test_buffer = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(test_buffer);
+        var test_image: InMemoryImage = undefined;
+        test_image.init(test_buffer);
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
+
+        try std.testing.expectError(
+            error.OutOfAllocs,
+            disk_image.copyToImage(&big_stream, "BIG.TXT", 0, false),
+        );
+        try std.testing.expectEqual(disk_image.directory.cooked_directories.items.len, 1);
+
+        try reinitDiskImage(&disk_image);
+        try std.testing.expectError(error.OutOfAllocs, disk_image.directory.allocationGetFree());
+        try std.testing.expect(disk_image.directory.findByFilename("BIG.TXT", null) != null);
+    }
 }
 
-test "8in overfill directory" {
-    const compare_image = @embedFile("test_disks/8in_dirs.dsk");
-    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
-    var test_stream: std.Io.Reader = .fixed(&test_file);
+test "disk overfill directory" {
+    inline for (all_formats) |fmt| {
+        const compare_image = switch (fmt.type_id) {
+            inline .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_dirs.dsk")),
+            inline else => void,
+        };
+        defer if (@TypeOf(compare_image) != @TypeOf(void)) allocator.free(compare_image);
 
-    var image_file: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&image_file);
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
+        var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
+        var test_stream: std.Io.Reader = .fixed(&test_file);
 
-    var name_buf: [256]u8 = undefined;
-    for (0..FDD_8IN.directories) |num| {
-        test_stream.seek = 0;
-        try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
+        const image_file = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(image_file);
+
+        var test_image: InMemoryImage = undefined;
+        test_image.init(image_file);
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
+
+        var name_buf: [256]u8 = undefined;
+        for (0..fmt.directories) |num| {
+            test_stream.seek = 0;
+            try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
+        }
+        try std.testing.expectError(
+            error.OutOfExtents,
+            disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false),
+        );
+        if (@TypeOf(compare_image) != @TypeOf(void)) {
+            try std.testing.expectEqualSlices(u8, clearVariableBytes(compare_image), clearVariableBytes(image_file));
+        }
+
+        try reinitDiskImage(&disk_image);
+
+        const out_buf = try allocator.alloc(u8, test_file.len);
+        defer allocator.free(out_buf);
+        var out_file: std.Io.Writer = .fixed(out_buf);
+        const cooked_dir = disk_image.directory.findByFilename(try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories - 1}), null);
+        try std.testing.expect(cooked_dir != null);
+
+        try disk_image.copyFromImage(cooked_dir.?, &out_file, .Auto);
+        try std.testing.expectEqualSlices(u8, &test_file, out_buf);
     }
-    try std.testing.expectError(
-        error.OutOfExtents,
-        disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{FDD_8IN.directories}), 0, false),
-    );
-    try std.testing.expectEqualSlices(u8, &clearVariableBytes(compare_image), &clearVariableBytes(image_file));
 }
 
 test "8in duplicate filenames" {
@@ -560,36 +560,6 @@ test "Find filenames without extensions" {
     try std.testing.expectEqual(1, util.count(itr));
 }
 
-const InMemoryConstImage = struct {
-    buffer: []u8,
-    reader: std.Io.Reader,
-    writer: std.Io.Writer,
-
-    pub fn init(self: *InMemoryConstImage, gpa: std.mem.Allocator, buffer: []const u8) error{OutOfMemory}!void {
-        self.buffer = try gpa.alloc(u8, buffer.len);
-        @memcpy(self.buffer, buffer);
-        self.reader = .fixed(self.buffer);
-        self.writer = .fixed(self.buffer);
-    }
-
-    pub fn deinit(self: *InMemoryConstImage, gpa: std.mem.Allocator) void {
-        gpa.free(self.buffer);
-        self.* = undefined;
-    }
-};
-
-const InMemoryImage = struct {
-    reader: std.Io.Reader,
-    writer: std.Io.Writer,
-    buffer: []u8,
-
-    pub fn init(self: *InMemoryImage, buffer: []u8) void {
-        self.reader = .fixed(buffer);
-        self.writer = .fixed(buffer);
-        self.buffer = buffer;
-    }
-};
-
 test "erase" {
     var image_file: InMemoryConstImage = undefined;
     try image_file.init(std.testing.allocator, @embedFile("test_disks/erase_pre.dsk"));
@@ -629,6 +599,39 @@ test "non-contiguous extent" {
     try std.testing.expectEqualSlices(u8, expected, &file_buffer);
 }
 
+/// Create readers and writers against a []const u8
+/// deinit() musdt be called to free allocated buffer
+const InMemoryConstImage = struct {
+    buffer: []u8,
+    reader: std.Io.Reader,
+    writer: std.Io.Writer,
+
+    pub fn init(self: *InMemoryConstImage, gpa: std.mem.Allocator, buffer: []const u8) error{OutOfMemory}!void {
+        self.buffer = try gpa.alloc(u8, buffer.len);
+        @memcpy(self.buffer, buffer);
+        self.reader = .fixed(self.buffer);
+        self.writer = .fixed(self.buffer);
+    }
+
+    pub fn deinit(self: *InMemoryConstImage, gpa: std.mem.Allocator) void {
+        gpa.free(self.buffer);
+        self.* = undefined;
+    }
+};
+
+/// Create readers and writers against a var []u8.
+const InMemoryImage = struct {
+    reader: std.Io.Reader,
+    writer: std.Io.Writer,
+    buffer: []u8,
+
+    pub fn init(self: *InMemoryImage, buffer: []u8) void {
+        self.reader = .fixed(buffer);
+        self.writer = .fixed(buffer);
+        self.buffer = buffer;
+    }
+};
+
 fn newMemoryDiskImage(raw_image: *InMemoryConstImage, image_type: *const DiskImageType) !DiskImage {
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
@@ -652,7 +655,16 @@ fn newReadOnlyMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Disk
     return disk_image;
 }
 
-// Caller should pass in pointer to uninitialized reader and writer.
+pub fn reinitDiskImage(image: *DiskImage) !void {
+    const reader = image.reader;
+    const writer = image.writer;
+    try reader.seekTo(0);
+    try writer.seekTo(0);
+    try image.reinit(std.testing.allocator, reader, writer);
+    try image.loadDirectories(false);
+}
+
+/// Caller should pass in pointers to an uninitialized reader and writer.
 fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer, image_type: *const DiskImageType) !DiskImage {
     const image_file = try std.Io.Dir.cwd().createFile(std.testing.io, "TEST.IMG", .{ .read = true });
     reader.* = image_file.reader(std.testing.io, &.{});
@@ -690,6 +702,7 @@ fn saveFile(contents: []const u8) void {
 
 // TODO: Invalid images and recovery of images.
 const std = @import("std");
+const allocator = std.testing.allocator;
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
@@ -704,9 +717,8 @@ const CDOS_SMSSSD = all_disk_types.getPtrConst(.CDOS_SMSSSD);
 const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
-pub const std_options: std.Options = .{
-    .log_level = .debug,
-};
+// Can be set to a limited set of formats when wanting to test a subset.
+const all_formats = .{ FDD_8IN, TAR, CDOS_SMSSSD, CDOS_LGSSSD };
 
 test {
     std.testing.refAllDecls(@This());
