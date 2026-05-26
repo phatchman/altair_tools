@@ -156,7 +156,6 @@ pub const DiskImage = struct {
     pub const TextMode = enum { Auto, Text, Binary };
 
     pub fn copyFromImage(self: *Self, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
-        var sector: DiskSector = .init(self.image_type); // TODO: Just make this sector data size, rather than image_type.
         const num_records = entry.num_records;
         // Check for empty file.
         if (entry.allocations.items.len == 0) {
@@ -184,12 +183,13 @@ pub const DiskImage = struct {
             const alloc = entry.allocations.items[alloc_idx];
             if (alloc == 0)
                 break;
+            var sector: DiskSector = undefined;
             try self.readSector(.{ .record = @intCast(sec_nr % self.image_type.recs_per_alloc), .allocation = alloc }, &sector);
             // If it is the last sector. then adjust the data length to the 128B record count, rather than just assuming a full sector
             var data_len: usize = if (sec_nr == num_sectors - 1)
                 (((num_records - 1) % recs_per_sector) + 1) * 128
             else
-                sector.sector_len;
+                sector.sector_len_data;
             const check_for_text = text_mode != .Binary;
 
             //          // std.debug.print("data len = {}, num_records = {}, recs_per_sect = {}\n", .{ data_len, num_records, recs_per_sector });
@@ -198,7 +198,7 @@ pub const DiskImage = struct {
             // So if it is a text file looks for ^Z anywhere in the last sector and use that
             // to mark the EOF. For binary files it doesn't matter if they are too long.
             if (check_for_text and total_rec_nr == num_records - 1) {
-                for (sector.data(), 0..) |b, i| {
+                for (sector.dataBytes(), 0..) |b, i| {
                     if (text_mode == .Auto) {
                         if (b & 0x80 != 0) {
                             break;
@@ -212,7 +212,7 @@ pub const DiskImage = struct {
                 }
             }
 
-            try out_writer.writeAll(sector.data()[0..data_len]);
+            try out_writer.writeAll(sector.dataBytes()[0..data_len]);
             total_rec_nr += recs_per_sector;
         }
     }
@@ -241,7 +241,17 @@ pub const DiskImage = struct {
             }
         }
 
-        var sector: DiskSector = .init(self.image_type);
+        // TODO: Issue here is that we have made sector size generic on track_nr, but
+        // really we don't need that here. Track 0 is not used in copy to / from.
+        // It is used for the copy system image stuff though.
+        // So maybe we need an init
+        var sector: DiskSector = undefined;
+        sector.initDataTrack(self.image_type); // So we ask for a writeabletrack. That
+        // 1) The non-data bits are formatted.
+        // 2) The data bits are ^Z
+        // OROROROR
+        // When we write, it works out that this is hard-sectored and it does the
+        // other stuff outside of the data areas. That would be simpler?
         var alloc_count: u16 = 0;
         var dir_entry: *RawDirEntry = undefined;
         var extent_nr: u16 = 0;
@@ -257,18 +267,13 @@ pub const DiskImage = struct {
         // std.debug.print("RPA = {}\n", .{(self.image_type.recs_per_alloc * 8)});
         // std.debug.print("RPA rounded = {}\n", .{((self.image_type.recs_per_alloc * 8) + self.image_type.sector_data_size - 1) / self.image_type.sector_data_size * self.image_type.sector_data_size});
         // TODO: This whole thing needs a big cleanup!!!
-        nbytes = try file_reader.readSliceShort(sector.data());
+        nbytes = try file_reader.readSliceShort(sector.dataBytes());
 
         while (nbytes != 0 or first_extent) : ({
-            nbytes = try file_reader.readSliceShort(sector.data());
+            nbytes = try file_reader.readSliceShort(sector.dataBytes());
         }) {
             // std.debug.print("READ: {s}\n", .{sector.data()});
             sector_nr += 1;
-            // TODO: Just return the actual number from image_type. And then we don't even need this fn.
-            // const max_allocs_per_extent = switch (self.image_type.OS) {
-            //     .cpm => DiskImageType.allocs_per_extent,
-            //     .cdos => DiskImageType.allocs_per_extent / 2, // TODO: ???
-            // };
             // std.debug.print("rec nr = {}, alloc_count = {}\n", .{ record_nr, alloc_count });
             // Is this a new extent? (i.e. needs a new directory entry)
             if (record_nr % self.image_type.recs_per_extent == 0) {
@@ -314,19 +319,11 @@ pub const DiskImage = struct {
                 };
                 // std.debug.print("WRITE SECTOR rec nr = {}, alloc_count = {}\n", .{ alloc_record_nr, alloc_count });
                 try self.writeSector(.{ .allocation = alloc_nr, .record = alloc_record_nr }, &sector);
-                sector = .init(self.image_type); // Re-fill with ^Z
+                @memset(sector.dataBytes(), 0x1a); // Re-fill with ^Z
             }
 
             record_nr += recs_per_sector;
             record_in_extent += recs_per_sector;
-            // TODO: I don't think this is the case for CDOS?
-            // if (self.image_type.OS == .cpm) {
-            //     if (record_nr % 128 == 0) {
-            //         extent_count += 1;
-            //     }
-            // } else {
-
-            // }
         }
 
         try self.rawEntryWrite(@intCast(extent_nr));
@@ -358,16 +355,16 @@ pub const DiskImage = struct {
     }
 
     pub fn extractCPM(self: *Self, io: std.Io, out_file: File) !void {
-        var sector: DiskSector = .init(self.image_type);
-
         try self.reader.seekTo(0);
 
-        for (0..self.image_type.reserved_tracks) |_| {
+        for (0..self.image_type.reserved_tracks) |track_nr| {
+            var sector: DiskSector = undefined;
+            sector.init(self.image_type, @intCast(track_nr));
             for (0..self.image_type.sectors_per_track) |_| {
                 // TODO: Log error here?
-                self.reader.interface().readSliceAll(sector.data()) catch return error.InvalidImageFile;
+                self.reader.interface().readSliceAll(sector.dataBytes()) catch return error.InvalidImageFile;
                 var writer = out_file.writer(io, &.{});
-                try writer.interface.writeAll(sector.data());
+                try writer.interface.writeAll(sector.dataBytes());
             }
         }
     }
@@ -386,16 +383,15 @@ pub const DiskImage = struct {
     }
 
     pub fn formatImage(self: *Self) !void {
-        var disk_sector: DiskSector = .init(self.image_type);
+        var disk_sector: DiskSector = undefined;
         const varying_sector_format = self.image_type.varying_sector_format;
 
         // Just in case formatting an existing image file from larger to smaller format.
         try self.writer.truncate();
 
         // Small optimization. If the format does not vary, just get the formatted sector only once.
-        var write_sector: []u8 = undefined;
         if (!varying_sector_format) {
-            write_sector = self.image_type.formattedSectorGet(.zero, disk_sector.data());
+            self.image_type.formattedSectorGet(.zero, &disk_sector);
         }
 
         for (0..self.image_type.tracks) |track_nr| {
@@ -407,14 +403,12 @@ pub const DiskImage = struct {
             for (1..sectors_per_track + 1) |sector_nr| {
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
-                    write_sector = self.image_type.formattedSectorGet(
+                    self.image_type.formattedSectorGet(
                         .{ .track = @truncate(track_nr), .sector = @truncate(sector_nr) },
-                        disk_sector.data(),
+                        &disk_sector,
                     );
                 }
-                // std.debug.print("writing format sector with len = {} and pos = {}\n", .{ write_sector.len, self.writer.seekPos() });
-                try self.writer.interface().writeAll(write_sector);
-                //if (track_nr == 6) @panic("TODO");
+                try self.writer.interface().writeAll(disk_sector.rawBytes());
             }
         }
     }
@@ -492,33 +486,38 @@ pub const DiskImage = struct {
     // TODO: Check all of the errors.
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
     /// Read a single 128bytes sector
-    pub fn readSector(self: *Self, location: LogicalAddress, data: *DiskSector) ReadSectorError!void {
+    pub fn readSector(self: *Self, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
         // Sometimes the data is not at the start of the sector. So adjust
-        const data_offset = self.image_type.seekOffsetRead(physical_location);
+        const data_offset = self.image_type.seekOffset(physical_location);
 
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
         // std.debug.print("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
         try self.reader.seekTo(@intCast(data_offset));
-        _ = try self.reader.interface().readSliceAll(data.data());
-        try data.dump(physical_location, data_offset);
+        sector.init(self.image_type, physical_location.track);
+        try sector.readFrom(self.reader.interface());
+        try sector.dump(physical_location, data_offset);
     }
 
     const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single sector.
-    pub fn writeSector(self: *Self, location: LogicalAddress, data: *DiskSector) WriteSectorError!void {
+    pub fn writeSector(self: *Self, location: LogicalAddress, sector: *DiskSector) WriteSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
 
         // std.debug.print("writinng: {}\n", .{physical_location});
-        const sector_data = self.image_type.writeableSectorGet(physical_location, data.data());
-        const sector_offset = self.image_type.seekOffsetWrite(physical_location);
+        // TODO: Should remove the writable sector get stuff!!!
+        // this is a bit f'D writeable sector get copies the data again.. need to sort this.
+        //        @memcpy(sector.dataBytes(), )
+
+        self.image_type.prepareSectorForWrite(physical_location, sector);
+        const sector_offset = self.image_type.seekOffset(physical_location);
         try self.writer.seekTo(sector_offset);
-        try self.writer.interface().writeAll(sector_data);
+        try self.writer.interface().writeAll(sector.rawBytes());
 
         log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
         // std.debug.print("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
-        try data.dump(physical_location, sector_offset);
+        try sector.dump(physical_location, sector_offset);
     }
 
     /// write a CPM diretory entry (RawDirEntry)
@@ -530,40 +529,45 @@ pub const DiskImage = struct {
             try this_entry.validate(self.image_type, extent_nr);
         }
 
-        var sector: DiskSector = .init(self.image_type);
+        // TODO: initDataSector() ??
+        var sector: DiskSector = undefined;
+        sector.initDataTrack(self.image_type);
         const allocation = extent_nr / self.image_type.extents_per_alloc;
         const record: u8 = @intCast(extent_nr / self.image_type.dir_entries_per_sector);
         // start_index is the index of the directory entry that is at
         // the beginning of this sector
         const start_index = extent_nr / self.image_type.dir_entries_per_sector * self.image_type.dir_entries_per_sector;
         // Copy 1 full sector worth of extents/raw entries
-        @memcpy(sector.data(), std.mem.sliceAsBytes(self.directory.raw_directories.items[start_index .. start_index + self.image_type.dir_entries_per_sector]));
+        @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.items[start_index .. start_index + self.image_type.dir_entries_per_sector]));
         try self.writeSector(.{ .allocation = allocation, .record = record }, &sector);
     }
 };
 
 /// A single 128 byte disk sector.
-pub const DiskSector = struct {
-    backing: [512]u8, // TODO: Make this look at DiskImage.max_supported_sector_size or something.
-    sector_len: u16, // OR Just return a formatted slice from the DiskImageType.
+// pub const DiskSector = struct {
+//     backing: [512]u8, // TODO: Make this look at DiskImage.max_supported_sector_size or something.
+//     sector_len: u16, // OR Just return a formatted slice from the DiskImageType.
 
-    pub fn init(image_type: *const DiskImageType) DiskSector {
-        // Initialized to ^Z.
-        std.debug.assert(image_type.sector_size_data <= 512); // TODO
-        return .{ .backing = @splat(0x1a), .sector_len = image_type.sector_size_data };
-    }
+//     pub fn init(image_type: *const DiskImageType) DiskSector {
+//         // Initialized to ^Z.
+//         std.debug.assert(image_type.sector_size_data <= 512); // TODO
+//         return .{ .backing = @splat(0x1a), .sector_len = image_type.sector_size_data };
+//     }
 
-    pub fn data(self: *DiskSector) []u8 {
-        return self.backing[0..self.sector_len];
-    }
+//     pub fn data(self: *DiskSector) []u8 {
+//         return self.backing[0..self.sector_len];
+//     }
 
-    pub fn dump(self: DiskSector, location: PhysicalAddress, offset: usize) !void {
-        if (!DUMP)
-            return;
-        std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
-        std.debug.dumpHex(self.backing[0..self.sector_len]);
-    }
-};
+//     pub fn dump(self: DiskSector, location: PhysicalAddress, offset: usize) !void {
+//         if (!DUMP)
+//             return;
+//         std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
+//         std.debug.dumpHex(self.backing[0..self.sector_len]);
+//     }
+// };
+
+// TODO:
+pub const DiskSector = @import("disk_types.zig").DiskSector;
 
 const std = @import("std");
 const Console = @import("console.zig");

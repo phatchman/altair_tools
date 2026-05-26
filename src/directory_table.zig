@@ -345,12 +345,12 @@ pub const DirectoryTable = struct {
         return self.arena.allocator();
     }
 
-    pub const DirectoryLoadError = (error{OutOfMemory} || DiskImage.ReadSectorError || RawDirError);
+    pub const DirectoryLoadError = (error{ OutOfMemory, InvalidImageFile } || DiskImage.ReadSectorError || RawDirError);
     /// Load the directory table
     /// raw_only: Load only the raw entries. Useful if the image has been corrupted.
     pub fn load(self: *Self, image: *DiskImage, raw_only: bool) DirectoryLoadError!void {
         const image_type = image.image_type;
-        var sector: DiskSector = .init(image.image_type);
+        var sector: DiskSector = undefined;
         const directory_sector_count = image_type.directories / image_type.dir_entries_per_sector;
         var sector_nr: u16 = 0;
 
@@ -368,7 +368,7 @@ pub const DirectoryTable = struct {
             };
             // Read the raw CPM directory entries and add them to the raw_directories array.
             try image.readSector(logical_address, &sector);
-            const entries: []RawDirEntry = std.mem.bytesAsSlice(RawDirEntry, sector.data());
+            const entries: []RawDirEntry = std.mem.bytesAsSlice(RawDirEntry, sector.dataBytes());
             self.raw_directories.appendSliceAssumeCapacity(entries);
         }
 
@@ -378,6 +378,8 @@ pub const DirectoryTable = struct {
         for (self.raw_directories.items) |*raw_dir| {
             raw_dirs_sorted.appendAssumeCapacity(raw_dir);
         }
+
+        if (raw_only) return;
 
         std.mem.sort(*RawDirEntry, raw_dirs_sorted.items, {}, struct {
             fn lessThan(_: void, lhs: *RawDirEntry, rhs: *RawDirEntry) bool {
@@ -443,7 +445,7 @@ pub const DirectoryTable = struct {
 
     /// Whenever a new extent is created, register it with the directory
     /// Builds up the associated CookedDirEntry as new RawDirEntries are registered.
-    pub fn buildCookedEntry(self: *Self, raw_entry_nr: u16, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
+    pub fn buildCookedEntry(self: *Self, raw_entry_nr: u16, image_type: *const DiskImageType) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
         const entry = &self.raw_directories.items[raw_entry_nr];
         try entry.validate(image_type, raw_entry_nr);
         if (entry.isFirstEntryForFile(image_type)) {
@@ -451,6 +453,11 @@ pub const DirectoryTable = struct {
         } else {
             // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
             // Consider changing this to a name lookup instead?
+            // TODO: Put a guard here. The first raw entry might not be detected as the first file entry, then this will crash on index -1
+            // if (self.cooked_directories.items.len == 0) {
+            //     log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.entry.filename, entry.entry.filetype });
+            //     return error.InvalidImageFile;
+            // }
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
             try prev.extend(self.allocator(), entry, raw_entry_nr, image_type);
         }
