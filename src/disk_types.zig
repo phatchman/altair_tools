@@ -18,44 +18,35 @@ pub const PhysicalAddress = struct {
 };
 
 /// Represents a single disk sector.
+/// For MITS hard-sectored disks, the raw on-disk sector length is different to the data length.
 pub const DiskSector = struct {
+    const DUMP = false;
+
     backing_buffer: [512]u8,
     sector_len_raw: u16,
     sector_len_data: u16,
     data_start: u8 = 0,
 
-    pub fn init(self: *DiskSector, image_type: *const DiskImageType, track_nr: u16) void {
+    pub fn init(image_type: *const DiskImageType, track_nr: u16) DiskSector {
         std.debug.assert(image_type.sector_size_data <= 512);
-        self.* = .{
-            // Fill with ^Z by default, but should be formatted as needed.
-            .backing_buffer = @splat(0x1a),
+        return .{
+            .backing_buffer = undefined,
             .sector_len_data = image_type.sectorSizeDataForTrack(track_nr),
             .sector_len_raw = image_type.sectorSizeRawForTrack(track_nr),
-            // TODO: The + 1 doesn't make sense??
             .data_start = image_type.offsetOf(.data, track_nr),
         };
     }
-
-    // Sadge this doesn't work for the altair 137 byte format as data tracks can have different data offsets. Sigh.
-    // shame we can't apply the offset at write time. I mean we can do it by shifting memory around, but it isn't very nice.
-    // pub fn initDataTrack(self: *DiskSector, image_type: *const DiskImageType) void {
-    //     return self.init(image_type, image_type.tracks - 1);
-    // }
-
-    // TODO: This should probably use location. But useing track_nr for now
-    pub fn readFrom(self: *DiskSector, reader: *std.Io.Reader) std.Io.Reader.Error!void {
-        try reader.readSliceAll(self.backing_buffer[0..self.sector_len_raw]);
-    }
-
+    /// Return the data portion of the sector
     pub fn dataBytes(self: *DiskSector) []u8 {
         return self.backing_buffer[self.data_start .. self.sector_len_data + self.data_start];
     }
 
+    /// Return the whoel sector, including the data portion.
     pub fn rawBytes(self: *DiskSector) []u8 {
         return self.backing_buffer[0..self.sector_len_raw];
     }
 
-    const DUMP = false;
+    /// Hexdump raw sector information.
     pub fn dump(self: DiskSector, location: PhysicalAddress, offset: usize) !void {
         if (!DUMP)
             return;
@@ -71,8 +62,6 @@ pub const DiskSector = struct {
 // by one of the Concrete formats, e.g. DiskImageType_MITS_8IN
 pub const DiskImageType = struct {
     pub const dir_entry_size: u16 = 32;
-    //    pub const sector_data_size = 128;
-    //  pub const dir_entries_per_sector = sector_data_size / dir_entry_size;
     pub const max_user = 15;
 
     pub const AutoDetectConditions = enum {
@@ -96,28 +85,29 @@ pub const DiskImageType = struct {
     reserved_tracks: u16,
     // How many sectors per track
     sectors_per_track: u16,
-    // Number of sectors on the first track
+    // Number of sectors on track 0, if different
     sectors_per_track0: ?u16 = null,
-    // Sector size of the physical media (This will be 128 for everything except the MITS FDDs)
+    // Sector size of the physical media (This will be 128 for everything except the MITS hard-sectored FDDs)
     sector_size_raw: u16,
     // Size of the physical media for track 0, if different.
     sector_size_raw0: ?u16 = null,
     // Size of the logical (data containing portion of the sector)
     sector_size_data: u16,
-    // Size of the sectors on track0
+    // Size of the sectors on track 0, if different
     sector_size_data0: ?u16 = null,
     // Block size, must be multiple of 1024.
     block_size: u16,
-    // Maximum number of directory entries and extents
+    // Maximum number of directory entries
     directories: u16,
-    // How many allocations per directory entry.
+    // How many allocations are reserved for the directory table.
     directory_allocs: u16,
-    // Size of a disk image?
+    // Size of a disk image
     image_size: u32,
     // Support detection of padded images etc.
     detect_conditions: AutoDetectConditions,
     // Are all sectors formatted the same or do they vary per track?
     varying_sector_format: bool,
+    // Which operating system is this?
     OS: enum { cpm, cdos },
 
     // Skew from logical to physical sector
@@ -126,17 +116,11 @@ pub const DiskImageType = struct {
     skew_table: []const u16 = undefined,
     // Format disk
     format_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultFormattedSectorGet,
-    // Checksum for MITS formats.
+    // Create the hard-sector meta data for mits formats.
     prepare_write_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultPrepareSectorForWrite,
-    // return a "blank" sector that can be written to.
-    //    writeable_sector_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector, sector_data: []u8) void = defaultWritableSectorGet,
-    // Turn a track and sector address into a seek offset for read
-    //seek_offset_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress) usize = defaultSeekOffset,
-    // TODO: Need to rename this. offset is not descriptive
-    offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffset,
+    // For hard-sectored formats, return the offset from start of sector for various disk control bytes.
+    offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffsetOf,
 
-    // Raw sector data for MITS formats.
-    raw_sector: ?[]u8 = null,
     // Below are "constants" - These are initialised with "init".
     track_size: u16 = undefined,
     total_allocs: u32 = undefined, // Actually u16, but u32 gets rid of a lot of casting.
@@ -182,18 +166,11 @@ pub const DiskImageType = struct {
         return self.skew_fn(self.skew_table, track, logical_sector);
     }
 
-    // Calculate and store checksum if required by this format.
-    pub fn checksum(self: *const DiskImageType, address: PhysicalAddress, sector: DiskSector) void {
-        return self.checksum_fn(self, address, sector);
-    }
-
     const OffsetType = enum { track, sector, data, stop, zero, checksum };
-
+    /// Return the offset of sector meta-data fields for hard-sectored formats.
     pub fn offsetOf(self: *const DiskImageType, otype: OffsetType, track_nr: u16) u8 {
         return self.offset_fn(otype, track_nr);
     }
-
-    // TODO: Flops between being named location and address. I think location is better maybe, even though the struct is called address?
 
     /// Convert a physical track / sector into a seek offset
     pub fn seekOffset(self: *const DiskImageType, location: PhysicalAddress) usize {
@@ -211,17 +188,12 @@ pub const DiskImageType = struct {
         self.prepare_write_fn(self, address, sector);
     }
 
-    /// Get a sector ready for writing data.
-    // pub fn writeableSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector, sector_data: []u8) void {
-    //     return self.writeable_sector_fn(self, address, sector, sector_data);
-    // }
-
     /// Get a freshly formatted sector.
     pub fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        // TODO: Get rid of RawSector
         self.format_fn(self, address, sector);
     }
 
+    /// TODO: PRob just create a stand-alone detection routine, rather than this cimplex nonsense.
     /// Retruns true if supplied image_file is supported by this image type.
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
         const image_size = image_file.length(io) catch {
@@ -244,10 +216,12 @@ pub const DiskImageType = struct {
         }
     }
 
+    /// How large is the data portion of the sector for this track?
     pub fn sectorSizeDataForTrack(self: *const DiskImageType, track_nr: u16) u16 {
         return if (track_nr > 0) self.sector_size_data else self.sector_size_data0 orelse self.sector_size_data;
     }
 
+    /// How large is the on-disk sector for this track?
     pub fn sectorSizeRawForTrack(self: *const DiskImageType, track_nr: u16) u16 {
         return if (track_nr > 0) self.sector_size_raw else self.sector_size_raw0 orelse self.sector_size_raw;
     }
@@ -265,18 +239,11 @@ pub const DiskImageType = struct {
 
     // By default just need to fill each sector with 0xe5
     fn defaultFormattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        sector.init(self, address.track);
+        sector.* = .init(self, address.track);
         @memset(sector.dataBytes(), 0xe5);
     }
 
-    fn defaultSeekOffset(self: *const DiskImageType, location: PhysicalAddress) usize {
-        // TODO: We can put all of the track 0 logic in here as well.
-        // So we don't a different seek function for CDOS disks.
-        return @as(usize, location.track) * self.track_size +
-            (location.sector - 1) * self.sector_size_raw;
-    }
-
-    fn defaultOffset(_: DiskImageType.OffsetType, _: u16) u8 {
+    fn defaultOffsetOf(_: DiskImageType.OffsetType, _: u16) u8 {
         return 0;
     }
 
@@ -352,17 +319,10 @@ pub const DiskImageType_MITS_8IN = struct {
         sector_data[offsetOf(.checksum, track)] = csum;
     }
 
-    /// Read vs write for the MITS 8" disks as we have to write out the track
-    /// metadata / control data as well when writing.
-    fn seekOffsetRead(self: *const DiskImageType, location: PhysicalAddress) usize {
-        // TODO: should be able to remove the offset now.
-        return self.defaultSeekOffset(location); // + offset(.data, location.track);
-    }
-
     /// In addition to storing the sector data, need to store control meta data including,
     /// track and sector number, stop byte, zero byte and checksum.
     fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        sector.init(self, address.track);
+        sector.* = .init(self, address.track);
         @memset(sector.rawBytes(), 0xe5);
         const raw_sector = sector.rawBytes();
         raw_sector[1] = 0x00;
@@ -380,20 +340,13 @@ pub const DiskImageType_MITS_8IN = struct {
         checksum(address.track, raw_sector);
     }
 
-    // TODO: So we shouldn;t need writable sectots anymore.
-    // We just:
-    // 1) init the sector before we store data to it.
-    // 2) Write data to it
-    // 3) call some function on disk_image_type to prepare the sector for writing
-    // 4) write the raw data.
-
-    /// Return the internal 137 byte raw_sector buffer, freshly formatted,
-    /// with the input sector_data copied into it.
+    /// Set all of the control meta data for the sector.
     fn prepareSectorForWrite(_: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        // TODO: MAke this better
+        // Fill the non-data parts of the sector with 0xe5.
         @memset(sector.backing_buffer[0..sector.data_start], 0xe5);
         @memset(sector.backing_buffer[sector.data_start + 128 ..], 0xe5);
 
+        // Then set the required control bytes and checksum
         const raw_sector = sector.rawBytes();
         raw_sector[1] = 0x00;
         raw_sector[2] = 0x01;
@@ -456,7 +409,6 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .format_fn = DiskImageType_MITS_8IN.formattedSectorGet,
             .prepare_write_fn = DiskImageType_MITS_8IN.prepareSectorForWrite,
             .offset_fn = DiskImageType_MITS_8IN.offsetOf,
-            //.writeable_sector_fn = DiskImageType_MITS_8IN.writeableSectorGet,
         };
         result.init();
         return result;
@@ -593,11 +545,6 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
     }
 };
 
-// TODO: Move this or delete it
-// Because the MITS floppy drives are formatted with 137 bytes per sector
-// this buffer is used to create a 137 byte physical sector out of the
-// 128 byte cpm sector when writing to the image.
-
 pub const DiskImageTypes = enum(usize) {
     FDD_8IN = 0,
     HDD_5MB,
@@ -698,14 +645,11 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .sector_size_raw0 = 128,
             .block_size = 2048,
             .directories = 128,
-            .directory_allocs = 2, // TODO: WAs 2
+            .directory_allocs = 2,
             .image_size = 625920,
             .detect_conditions = .none,
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_table = &_skew_table,
-            //            .format_fn = formattedSectorGet,
-            // .seek_offset_read_fn = seekOffset,
-            // .seek_offset_write_fn = seekOffset,
         };
         result.init();
         // Sigh, this format is used by Michah CPM, which works on Cromemco machines,
@@ -717,17 +661,6 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
         result.total_allocs = 254;
         return result;
     }
-
-    // // By default just need to fill each sector with 0xe5
-    // fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector_data: []u8, _: ?[]u8) []u8 {
-    //     const sector_len: u16 = if (address.track > 0)
-    //         self.sector_size_data
-    //     else
-    //         self.sector_size_data0 orelse self.sector_size_data;
-
-    //     @memset(sector_data, 0xe5);
-    //     return sector_data[0..sector_len];
-    // }
 };
 
 /// all available disk image formats.
@@ -747,7 +680,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
 // for the different image types, performs all of the calculations in the init functions and
 // initializes the array with these values.
 // Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names,
-// at vompile time.
+// at compile time.
 
 /// The display names for each image type.
 pub const all_disk_type_names = initDiskTypeNames();

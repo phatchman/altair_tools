@@ -59,6 +59,7 @@ pub const RawDirEntry = struct {
             return RawDirError.InvalidExtent;
         }
 
+        // TODO: REstore this check
         // TODO: This is no longer true It should just be 128?
         // if (self.entry.num_records > image_type.recs_per_extent) {
         //     log.err(
@@ -149,7 +150,7 @@ pub const RawDirEntry = struct {
     /// How many allocations are controlled by this extent?
     pub fn allocationsCount(self: *const RawDirEntry, image_type: *const DiskImageType) u16 {
         _ = self;
-        // TODO: Just return the actual numbver from image_type. And then we don't even need this fn.
+        // TODO: Just return the actual number from image_type. And then we don't even need this fn.
         return switch (image_type.OS) {
             .cpm => image_type.allocs_per_extent,
             .cdos => image_type.allocs_per_extent, //` / 2, // TODO: ???
@@ -280,7 +281,6 @@ pub const CookedDirEntry = struct {
         var alloc_count: u8 = 0;
         // TODO: /2
         try cooked.allocations.ensureUnusedCapacity(arena, 16); // TODO: HARDCODE
-        //        try cooked.allocations.ensureUnusedCapacity(arena, DiskImageType.allocs_per_extent / 2);
         for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
@@ -453,11 +453,10 @@ pub const DirectoryTable = struct {
         } else {
             // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
             // Consider changing this to a name lookup instead?
-            // TODO: Put a guard here. The first raw entry might not be detected as the first file entry, then this will crash on index -1
-            // if (self.cooked_directories.items.len == 0) {
-            //     log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.entry.filename, entry.entry.filetype });
-            //     return error.InvalidImageFile;
-            // }
+            if (self.cooked_directories.items.len == 0) {
+                log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.entry.filename, entry.entry.filetype });
+                return error.InvalidImageFile;
+            }
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
             try prev.extend(self.allocator(), entry, raw_entry_nr, image_type);
         }
@@ -593,7 +592,6 @@ pub const DirectoryTable = struct {
 
     /// Return a free allocation
     pub fn allocationGetFree(self: *Self) error{OutOfAllocs}!u16 {
-        // std.debug.print("free allocs = {}\n", .{self.free_allocations.count()});
         const free = self.free_allocations.findFirstSet();
         if (free) |free_alloc| {
             self.free_allocations.unset(free_alloc);
