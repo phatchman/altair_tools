@@ -36,10 +36,11 @@ pub const DiskSector = struct {
         };
     }
 
-    pub fn initDataTrack(self: *DiskSector, image_type: *const DiskImageType) void {
-        // Currewntly only track 0 can be different size.
-        return self.init(image_type, 1);
-    }
+    // Sadge this doesn't work for the altair 137 byte format as data tracks can have different data offsets. Sigh.
+    // shame we can't apply the offset at write time. I mean we can do it by shifting memory around, but it isn't very nice.
+    // pub fn initDataTrack(self: *DiskSector, image_type: *const DiskImageType) void {
+    //     return self.init(image_type, image_type.tracks - 1);
+    // }
 
     // TODO: This should probably use location. But useing track_nr for now
     pub fn readFrom(self: *DiskSector, reader: *std.Io.Reader) std.Io.Reader.Error!void {

@@ -245,8 +245,6 @@ pub const DiskImage = struct {
         // really we don't need that here. Track 0 is not used in copy to / from.
         // It is used for the copy system image stuff though.
         // So maybe we need an init
-        var sector: DiskSector = undefined;
-        sector.initDataTrack(self.image_type); // So we ask for a writeabletrack. That
         // 1) The non-data bits are formatted.
         // 2) The data bits are ^Z
         // OROROROR
@@ -263,14 +261,17 @@ pub const DiskImage = struct {
         var sector_nr: u16 = 0;
         const recs_per_sector: u16 = self.image_type.sector_size_raw / 128;
         var record_in_extent: u16 = 0;
+        var file_buffer: [512]u8 = undefined; // TODO: Make this MAX_SECTOR_SIZE
+        const file_data = file_buffer[0..self.image_type.sector_size_data];
+        @memset(file_data, 0x1a); // Re-fill with ^Z
 
         // std.debug.print("RPA = {}\n", .{(self.image_type.recs_per_alloc * 8)});
         // std.debug.print("RPA rounded = {}\n", .{((self.image_type.recs_per_alloc * 8) + self.image_type.sector_data_size - 1) / self.image_type.sector_data_size * self.image_type.sector_data_size});
         // TODO: This whole thing needs a big cleanup!!!
-        nbytes = try file_reader.readSliceShort(sector.dataBytes());
+        nbytes = try file_reader.readSliceShort(file_data);
 
         while (nbytes != 0 or first_extent) : ({
-            nbytes = try file_reader.readSliceShort(sector.dataBytes());
+            nbytes = try file_reader.readSliceShort(file_data);
         }) {
             // std.debug.print("READ: {s}\n", .{sector.data()});
             sector_nr += 1;
@@ -318,8 +319,13 @@ pub const DiskImage = struct {
                     .cdos => @intCast(record_nr % 128),
                 };
                 // std.debug.print("WRITE SECTOR rec nr = {}, alloc_count = {}\n", .{ alloc_record_nr, alloc_count });
-                try self.writeSector(.{ .allocation = alloc_nr, .record = alloc_record_nr }, &sector);
-                @memset(sector.dataBytes(), 0x1a); // Re-fill with ^Z
+                const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = alloc_record_nr });
+                var sector: DiskSector = undefined;
+                sector.init(self.image_type, location.track);
+                @memcpy(sector.dataBytes(), file_data);
+
+                try self.writeSector(location, &sector);
+                @memset(file_data, 0x1a); // Re-fill with ^Z
             }
 
             record_nr += recs_per_sector;
@@ -502,22 +508,20 @@ pub const DiskImage = struct {
 
     const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single sector.
-    pub fn writeSector(self: *Self, location: LogicalAddress, sector: *DiskSector) WriteSectorError!void {
-        const physical_location = self.toPhysicalAddress(location);
-
+    pub fn writeSector(self: *Self, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
         // std.debug.print("writinng: {}\n", .{physical_location});
         // TODO: Should remove the writable sector get stuff!!!
         // this is a bit f'D writeable sector get copies the data again.. need to sort this.
         //        @memcpy(sector.dataBytes(), )
 
-        self.image_type.prepareSectorForWrite(physical_location, sector);
-        const sector_offset = self.image_type.seekOffset(physical_location);
+        self.image_type.prepareSectorForWrite(location, sector);
+        const sector_offset = self.image_type.seekOffset(location);
         try self.writer.seekTo(sector_offset);
         try self.writer.interface().writeAll(sector.rawBytes());
 
-        log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
+        log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ location.track, location.sector, sector_offset });
         // std.debug.print("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
-        try sector.dump(physical_location, sector_offset);
+        try sector.dump(location, sector_offset);
     }
 
     /// write a CPM diretory entry (RawDirEntry)
@@ -529,17 +533,18 @@ pub const DiskImage = struct {
             try this_entry.validate(self.image_type, extent_nr);
         }
 
-        // TODO: initDataSector() ??
+        const location = self.toPhysicalAddress(.{ .allocation = extent_nr / self.image_type.extents_per_alloc, .record = @intCast(extent_nr / self.image_type.dir_entries_per_sector) });
         var sector: DiskSector = undefined;
-        sector.initDataTrack(self.image_type);
-        const allocation = extent_nr / self.image_type.extents_per_alloc;
-        const record: u8 = @intCast(extent_nr / self.image_type.dir_entries_per_sector);
+        sector.init(self.image_type, location.track);
+
+        // const allocation = extent_nr / self.image_type.extents_per_alloc;
+        // const record: u8 = @intCast(extent_nr / self.image_type.dir_entries_per_sector);
         // start_index is the index of the directory entry that is at
         // the beginning of this sector
         const start_index = extent_nr / self.image_type.dir_entries_per_sector * self.image_type.dir_entries_per_sector;
         // Copy 1 full sector worth of extents/raw entries
         @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.items[start_index .. start_index + self.image_type.dir_entries_per_sector]));
-        try self.writeSector(.{ .allocation = allocation, .record = record }, &sector);
+        try self.writeSector(location, &sector);
     }
 };
 

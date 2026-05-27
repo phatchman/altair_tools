@@ -131,8 +131,8 @@ fn clearVariableBytes(in: []u8) []u8 {
     }
     return in;
 }
-
 test "disk filled" {
+    //std.testing.log_level = .debug;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
@@ -179,7 +179,10 @@ test "disk filled" {
         const cooked_dir = disk_image.directory.findByFilename(filename, null);
         try std.testing.expect(cooked_dir != null);
         try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-        try std.testing.expectEqualSlices(u8, in_file, big_file);
+        //std.debug.dumpHex(in_file);
+        //std.debug.dumpHex(big_file);
+        try std.testing.expectEqualSlices(u8, big_file, in_file);
+
         // Noting a weird thing here. The below can be replaced with `if (@TypeOf(compare_image) != type)`.
         // compare_image is either a field containing a const u8 array or it is the void type.
         // That's the reason for the strange syntax below. It seemed clearer than `@TypeOf(compare_image) != type`
