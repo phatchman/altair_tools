@@ -20,6 +20,7 @@ pub const PhysicalAddress = struct {
 /// Represents a single disk sector.
 /// For MITS hard-sectored disks, the raw on-disk sector length is different to the data length.
 pub const DiskSector = struct {
+    // Hexdump raw sectors to debug output
     const DUMP = false;
 
     backing_buffer: [512]u8,

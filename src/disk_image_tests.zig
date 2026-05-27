@@ -235,7 +235,8 @@ test "8MB filled" {
     try std.testing.expectEqualSlices(u8, in_file, big_file);
 }
 
-test "disk overfilled disk" {
+test "disk overfilled" {
+    std.testing.log_level = .info;
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
@@ -250,6 +251,7 @@ test "disk overfilled disk" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,
@@ -712,7 +714,7 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-const all_formats = .{ FDD_8IN, TAR, CDOS_SMSSSD, CDOS_LGSSSD };
+const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 
 test {
     std.testing.refAllDecls(@This());
