@@ -476,12 +476,12 @@ pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOp
         return error.CommandFailed;
     };
     defer recovery_image.deinit();
-    defer writer.flush();
 
     recovery_image.tryRecovery() catch |err| {
         printErrorMessage(current_command, .recover, .{options.image_file}, err);
         return error.CommandFailed;
     };
+    try writer.flush();
 }
 
 /// Print image parameters

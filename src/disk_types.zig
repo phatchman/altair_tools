@@ -411,6 +411,9 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .offset_fn = DiskImageType_MITS_8IN.offsetOf,
         };
         result.init();
+        // TODO: hackiness. Calculate these properly
+        result.allocs_per_extent = 16;
+        result.recs_per_extent = 256;
         return result;
     }
 };
