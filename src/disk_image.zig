@@ -37,7 +37,7 @@ pub const SeekableReader = union(enum) {
                 file.logicalPos();
             },
             .in_memory => |mem| {
-                return mem.seek;
+                mem.seek;
             },
         };
     }

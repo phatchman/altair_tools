@@ -35,7 +35,7 @@ pub const theme: dvui.Theme = blk: {
         .highlight = .{
             .fill = .fromHex("#475b4b"),
             .fill_hover = .fromHex("#334e57"),
-            .fill_press = .fromHex("3b6357"),
+            .fill_press = .fromHex("#3b6357"),
             .text = .fromHex("#2c3332"),
             .text_press = .fromHex("#090909"),
         },

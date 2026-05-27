@@ -649,13 +649,6 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     return disk_image;
 }
 
-fn newReadOnlyMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const DiskImageType) !DiskImage {
-    var disk_image = try DiskImage._init(std.testing.allocator, .{ .in_memory = raw_image.reader }, .{ .in_memory = raw_image.writer }, image_type);
-    errdefer disk_image.deinit();
-    try disk_image.loadDirectories(false);
-    return disk_image;
-}
-
 pub fn reinitDiskImage(image: *DiskImage) !void {
     const reader = image.reader;
     const writer = image.writer;

@@ -268,7 +268,7 @@ test "directory list handler errors" {
     );
     CommandState.current_command = .get;
 
-    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    local.err_to_return = std.Io.Dir.CreateDirError.PathAlreadyExists;
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);
@@ -325,7 +325,7 @@ test "prompt for file handler errors" {
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);
 
     CommandState.state = .confirm;
-    local.err_to_return = std.fs.Dir.MakeError.BadPathName;
+    local.err_to_return = std.Io.Dir.PathNameError.BadPathName;
 
     try handler.process();
     try std.testing.expectEqual(.none, CommandState.current_command);
@@ -368,7 +368,7 @@ test "directory list handler confirm errors" {
     );
     CommandState.current_command = .get;
 
-    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    local.err_to_return = std.Io.Dir.CreateDirError.PathAlreadyExists;
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);
@@ -473,7 +473,7 @@ test "directory list handler cancel errors with skip" {
     );
     CommandState.current_command = .get;
 
-    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    local.err_to_return = std.Io.Dir.CreateDirError.PathAlreadyExists;
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);
@@ -547,7 +547,7 @@ test "directory list handler cancel errors no skip" {
     );
     CommandState.current_command = .get;
 
-    local.err_to_return = std.fs.Dir.MakeError.PathAlreadyExists;
+    local.err_to_return = std.Io.Dir.CreateDirError.PathAlreadyExists;
     try handler.process(&directories);
     try std.testing.expectEqual(.get, CommandState.current_command);
     try std.testing.expectEqual(.waiting_for_input, CommandState.state);

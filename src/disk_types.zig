@@ -51,7 +51,7 @@ pub const DiskSector = struct {
         if (!DUMP)
             return;
         std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
-        std.debug.dumpHex(self.backing[0..self.sector_len_raw]);
+        std.debug.dumpHex(self.rawBytes());
     }
 };
 

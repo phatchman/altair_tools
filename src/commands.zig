@@ -449,9 +449,6 @@ pub fn formatImage(_: Context, disk_image: *DiskImage, options: CommandLineOptio
 }
 
 /// Try and recover an image with corrupted directory entries.
-/// TODO: I don't know how to close the underlying file here as we change which
-/// file it is actualyl pointing to. Maybe we close the file and just say that the image is unusable after a recover,
-/// until it is reloaded?
 pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Recovering {s} to {s}", .{ options.image_file, options.recovery_image_file });
 
@@ -462,6 +459,7 @@ pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOp
         return error.CommandFailed;
     };
     defer out_image.close(ctx.io);
+
     var buffer: [4096]u8 = undefined;
     var writer = out_image.writer(ctx.io, &buffer);
     _ = try disk_image.reader.interface().streamRemaining(&writer.interface);
@@ -478,30 +476,12 @@ pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOp
         return error.CommandFailed;
     };
     defer recovery_image.deinit();
+    defer writer.flush();
 
-    //var eof = false;
-    // Copy the corrupt image to a new file.
-    // Could user std.fs.Dir.copyFile here, but we already have the files open.
-    //while (!eof) {
-    //const nbytes = try disk_image.reader.readAll(&read_buf);
-    //out_image.writeAll(read_buf[0..nbytes]) catch |err| {
-    //  printErrorMessage(current_command, .file_write, .{options.recovery_image_file}, err);
-    // return error.CommandFailed;
-    //};
-    //  eof = nbytes != read_buf.len;
-    // }
-    // out_image.seekTo(0) catch |err| {
-    //     printErrorMessage(current_command, .file_seek, .{options.recovery_image_file}, err);
-    //     return error.CommandFailed;
-    // };
-    //}
-
-    // the file out_image now belongs to disk_image;
-    disk_image.tryRecovery() catch |err| {
+    recovery_image.tryRecovery() catch |err| {
         printErrorMessage(current_command, .recover, .{options.image_file}, err);
         return error.CommandFailed;
     };
-    try writer.flush();
 }
 
 /// Print image parameters
