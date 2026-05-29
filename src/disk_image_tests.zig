@@ -249,7 +249,6 @@ test "disk overfilled" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,
@@ -263,13 +262,15 @@ test "disk overfilled" {
     }
 }
 
-test "disk overfill directory" {
+test "overfill directory" {
     //std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing format: {t}", .{fmt.type_id});
         const compare_image: ?[]u8 = switch (fmt.type_id) {
-            inline .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_dirs.dsk")),
-            inline else => null,
+            .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_dirs.dsk")),
+            .HDD_5MB => try allocator.dupe(u8, @embedFile("test_disks/5mb_dirs.dsk")),
+            .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_dirs.dsk")),
+            else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
 
