@@ -421,6 +421,7 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
         // TODO: hackiness. Calculate these properly
         result.allocs_per_extent = 16;
         result.recs_per_extent = 256;
+        result.two_byte_allocs = true; // TODO: Check this
         return result;
     }
 };
@@ -485,6 +486,7 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
 
         result.recs_per_extent = 256;
         result.allocs_per_extent = 8;
+        result.directory_allocs = 8;
 
         return result;
     }
@@ -574,7 +576,7 @@ pub const DiskImageTypes = enum(usize) {
     FDD_8IN_8MB,
     CDOS_SMSSSD,
     CDOS_LGSSSD,
-    CDOS_LGSSDD,
+    //CDOS_LGSSDD,
 };
 
 // CDOS "Small"
@@ -693,7 +695,8 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(),
     .CDOS_SMSSSD = DiskImageType_CDOS_SMSSSD.init(),
     .CDOS_LGSSSD = DiskImageType_CDOS_LGSSSD.init(),
-    .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
+    // TODO: needs investigation
+    //    .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

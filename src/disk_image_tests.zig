@@ -133,7 +133,7 @@ fn clearVariableBytes(in: []u8) []u8 {
     return in;
 }
 test "disk filled" {
-    //std.testing.log_level = .info;
+    //    std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
@@ -157,14 +157,13 @@ test "disk filled" {
         var big_stream: std.Io.Reader = .fixed(big_file);
 
         // Create in-memory disk image.
-        var test_buffer: [fmt.image_size]u8 = undefined;
+        const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(test_buffer);
         var test_image: InMemoryImage = undefined;
-        test_image.init(&test_buffer);
+        test_image.init(test_buffer);
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(&test_buffer);
-        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -187,7 +186,7 @@ test "disk filled" {
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(&test_buffer)),
+                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(test_buffer)),
                 else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
@@ -235,7 +234,7 @@ test "8MB filled" {
 }
 
 test "disk overfilled" {
-    //std.testing.log_level = .info;
+    // std.testing.log_level = .info;
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
@@ -250,6 +249,7 @@ test "disk overfilled" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,
@@ -704,6 +704,7 @@ const std = @import("std");
 const allocator = std.testing.allocator;
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
+const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);
@@ -718,8 +719,17 @@ const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
-const all_formats = .{ FDD_8IN, HDD_5MB, TAR, FDC, CDOS_SMSSSD, CDOS_LGSSSD };
-//const all_formats = .{ FDD_8IN, TAR, CDOS_SMSSSD, CDOS_LGSSSD };
+const all_formats = _: {
+    const fields = std.meta.fields(DiskImageTypes);
+    var result: [fields.len]*const DiskImageType = undefined;
+    var idx: usize = 0;
+    for (fields) |field| {
+        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+        idx += 1;
+    }
+    const result_c = result;
+    break :_ &result_c;
+};
 
 test {
     std.testing.refAllDecls(@This());
