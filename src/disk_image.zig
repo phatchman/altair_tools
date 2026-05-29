@@ -2,6 +2,8 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
+// TODO: Forced put doesn;t work.
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;
@@ -232,9 +234,9 @@ pub const DiskImage = struct {
 
     pub fn copyToImage(self: *Self, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
         const cpm_user = user orelse 0;
-
         const basename = std.fs.path.basename(to_filename);
         const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
+
         if (self.directory.findByFilename(cpm_filename, user)) |existing_entry| {
             if (force) {
                 try self.erase(existing_entry);
@@ -247,13 +249,12 @@ pub const DiskImage = struct {
         var dir_entry: *RawDirEntry = undefined;
         var extent_nr: u16 = 0;
         var first_extent = true;
-        var extent_count: usize = 0;
+        var extent_count: u16 = 0;
         var alloc_nr: u16 = undefined;
         var record_nr: u16 = 0;
         var nbytes: usize = 0;
         var sector_nr: u16 = 0;
         const recs_per_sector: u16 = self.image_type.sector_size_raw / 128;
-        var record_in_extent: u16 = 0;
         var file_buffer: [512]u8 = undefined; // TODO: Make this MAX_SECTOR_SIZE
         const file_data = file_buffer[0..self.image_type.sector_size_data];
         @memset(file_data, 0x1a); // Re-fill with ^Z
@@ -265,6 +266,7 @@ pub const DiskImage = struct {
             nbytes = try file_reader.readSliceShort(file_data);
         }) {
             sector_nr += 1;
+            //            std.debug.print("sect_nr = {}, rec_nr = {}\n", .{ sector_nr, record_nr });
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (!first_extent) {
                     try self.rawEntryWrite(extent_nr);
@@ -273,20 +275,21 @@ pub const DiskImage = struct {
                 } else {
                     first_extent = false;
                 }
-                // Note: extent is undefined until here on first loop.
+                // Note: dir_entry is undefined until here on first loop.
                 dir_entry = try self.directory.rawEntryGetFree(&extent_nr);
                 dir_entry.filenameAndExtensionSet(cpm_filename);
                 dir_entry.entry.user = cpm_user;
                 alloc_count = 0;
-                record_in_extent = 0;
             }
 
             // Is this a new record / allocation
             if (record_nr % self.image_type.recs_per_alloc == 0) {
                 // Note alloc_nr is undefined until here on first loop.
                 alloc_nr = if (nbytes > 0) self.directory.allocationGetFree() catch |err| {
-                    try self.rawEntryWrite(@intCast(extent_nr));
-                    try self.directory.buildCookedEntry(extent_nr, self.image_type);
+                    if (alloc_count > 0) {
+                        try self.rawEntryWrite(@intCast(extent_nr));
+                        try self.directory.buildCookedEntry(extent_nr, self.image_type);
+                    }
                     return err;
                 } else 0;
 
@@ -294,14 +297,15 @@ pub const DiskImage = struct {
                 alloc_count += 1;
             }
             dir_entry.numRecordsSet(record_nr);
-            dir_entry.extentSet(@intCast(extent_count));
+            // std.debug.print("set extent to {}\n", .{extent_count});
+            dir_entry.extentSet(extent_count);
+            const alloc_record_nr: u8 = switch (self.image_type.OS) {
+                .cpm => @intCast(record_nr % 256),
+                .cdos => @intCast(record_nr % 128), // TODO: Is this even correct?
+            };
+            const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = alloc_record_nr });
+            var sector: DiskSector = .init(self.image_type, location.track);
             if (nbytes > 0) {
-                const alloc_record_nr: u8 = switch (self.image_type.OS) {
-                    .cpm => @intCast(record_nr % 256),
-                    .cdos => @intCast(record_nr % 128), // TODO: Is this even correct?
-                };
-                const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = alloc_record_nr });
-                var sector: DiskSector = .init(self.image_type, location.track);
                 @memcpy(sector.dataBytes(), file_data);
 
                 try self.writeSector(location, &sector);
@@ -309,7 +313,16 @@ pub const DiskImage = struct {
             }
 
             record_nr += recs_per_sector;
-            record_in_extent += recs_per_sector;
+            if (self.image_type.recs_per_extent == 256 and
+                record_nr % 128 == 0 and
+                record_nr % 256 != 0)
+            {
+                //            if (record_nr % 128 == 0 and record_nr % self.image_type. != 0) {
+                extent_count += 1;
+                // std.debug.print("inc extent_count to {}\n", .{extent_count});
+                // TODO: What is this writeSector for is there a case where we don't loop?
+                try self.writeSector(location, &sector);
+            }
         }
 
         try self.rawEntryWrite(@intCast(extent_nr));
@@ -494,6 +507,7 @@ pub const DiskImage = struct {
 
     /// write a CPM diretory entry (RawDirEntry)
     pub fn rawEntryWrite(self: *Self, extent_nr: u16) (WriteSectorError || RawDirError)!void {
+        // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.items[extent_nr].extentGet() });
         // Make sure entry is valid before written.
         const this_entry = &self.directory.raw_directories.items[extent_nr];
         if (!this_entry.isDeleted()) {

@@ -151,10 +151,10 @@ pub const RawDirEntry = struct {
     pub fn allocationsCount(self: *const RawDirEntry, image_type: *const DiskImageType) u16 {
         _ = self;
         // TODO: Just return the actual number from image_type. And then we don't even need this fn.
-        return switch (image_type.OS) {
-            .cpm => image_type.allocs_per_extent,
-            .cdos => image_type.allocs_per_extent, //` / 2, // TODO: ???
-        };
+        return if (image_type.two_byte_allocs)
+            @min(8, image_type.allocs_per_extent)
+        else
+            @min(16, image_type.allocs_per_extent);
     }
 
     pub fn filenameAndExtensionSet(self: *RawDirEntry, filename: []const u8) void {
@@ -169,6 +169,7 @@ pub const RawDirEntry = struct {
     }
 
     pub fn isFirstEntryForFile(self: *const RawDirEntry, image_type: *const DiskImageType) bool {
+        //std.debug.print("isFirstExtentforFile: recs_per_extent {}, allocations[4] {}. extent {} = ", .{ image_type.recs_per_extent, self.entry._allocations[4], self.extentGet() });
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.entry._allocations[4] != 0 and self.extentGet() == 1) {
             return true;
         }
@@ -379,8 +380,6 @@ pub const DirectoryTable = struct {
             raw_dirs_sorted.appendAssumeCapacity(raw_dir);
         }
 
-        if (raw_only) return;
-
         std.mem.sort(*RawDirEntry, raw_dirs_sorted.items, {}, struct {
             fn lessThan(_: void, lhs: *RawDirEntry, rhs: *RawDirEntry) bool {
                 if (std.mem.eql(u8, &lhs.entry.filename, &rhs.entry.filename)) {
@@ -449,8 +448,10 @@ pub const DirectoryTable = struct {
         const entry = &self.raw_directories.items[raw_entry_nr];
         try entry.validate(image_type, raw_entry_nr);
         if (entry.isFirstEntryForFile(image_type)) {
+            // std.debug.print("TRUE\n", .{});
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, raw_entry_nr, image_type));
         } else {
+            // std.debug.print("FALSE\n", .{});
             // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
             // Consider changing this to a name lookup instead?
             if (self.cooked_directories.items.len == 0) {

@@ -10,6 +10,9 @@
 // 4) Add a freshly formatted version of the image to src/test_images
 // 5) Add a format test and any other relevant tests to disk_image_tests.zig
 
+// TODO: Sector numbers are currently 1-based. There's no good reason
+// they should not be zero based instead.
+
 /// The physical track and sector number after skew
 pub const PhysicalAddress = struct {
     track: u16,
@@ -102,6 +105,8 @@ pub const DiskImageType = struct {
     directories: u16,
     // How many allocations are reserved for the directory table.
     directory_allocs: u16,
+    // Are allocation numbers stored as 1 or two bytes in the directory table?
+    two_byte_allocs: bool = false,
     // Size of a disk image
     image_size: u32,
     // Support detection of padded images etc.
@@ -133,9 +138,10 @@ pub const DiskImageType = struct {
 
     pub fn init(self: *DiskImageType) void {
         self.track_size = self.sector_size_raw * self.sectors_per_track;
-        self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * (self.sectors_per_track * self.sector_size_data) / self.block_size;
+        self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * self.sectors_per_track * self.sector_size_data / self.block_size;
         self.recs_per_extent = 128;
         self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
+        //        self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
         self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
 
         self.extents_per_alloc = self.block_size / dir_entry_size;
@@ -345,7 +351,7 @@ pub const DiskImageType_MITS_8IN = struct {
     fn prepareSectorForWrite(_: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
         // Fill the non-data parts of the sector with 0xe5.
         @memset(sector.backing_buffer[0..sector.data_start], 0xe5);
-        @memset(sector.backing_buffer[sector.data_start + 128 ..], 0xe5);
+        @memset(sector.backing_buffer[sector.data_start + sector_data_size ..], 0xe5);
 
         // Then set the required control bytes and checksum
         const raw_sector = sector.rawBytes();
@@ -451,6 +457,7 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
             .block_size = 4096,
             .directories = 256,
             .directory_allocs = 2,
+            .two_byte_allocs = true,
             .image_size = 4988928,
             .detect_conditions = .duplicate_size,
             .varying_sector_format = false,
@@ -458,6 +465,8 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
         };
         if (init_before_return)
             result.init();
+        result.recs_per_extent = 256;
+        result.allocs_per_extent = 8;
         return result;
     }
 };
@@ -473,6 +482,10 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
         result.description = "MITS 5MB, with 1024 directories";
         result.directories = 1024;
         result.init();
+
+        result.recs_per_extent = 256;
+        result.allocs_per_extent = 8;
+
         return result;
     }
 };
@@ -539,12 +552,15 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
             .block_size = 4096,
             .directories = 256,
             .directory_allocs = 2,
+            .two_byte_allocs = true,
             .image_size = 1525760,
             .varying_sector_format = false,
             .detect_conditions = .none,
             .skew_table = &_skew_table,
         };
         result.init();
+        // TODO: Hacky
+        result.allocs_per_extent = 16;
         return result;
     }
 };

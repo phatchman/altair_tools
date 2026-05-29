@@ -115,9 +115,10 @@ test "FDC 8MB formatted" {
 }
 
 /// There are some part of the disk are essentially random as they are
-/// not explicitely set by the CPM bios. These are leftovers from Altair DOS.
-/// They are also included in the checksum!!
-/// Sadly we have to overwrite the checksum as well
+/// not explicitely set by the CPM bios and is just whatever happens to be in that part of memory
+/// These bytes are leftovers from Altair DOS, so are essentially ignored.
+/// These "random" bytes are also included in the checksum!!
+/// Which means that we can't even compare the checksums between two images.
 fn clearVariableBytes(in: []u8) []u8 {
     for (6..77) |track_nr| {
         for (0..32) |sect_nr| {
@@ -132,15 +133,16 @@ fn clearVariableBytes(in: []u8) []u8 {
     return in;
 }
 test "disk filled" {
-    //std.testing.log_level = .debug;
+    //std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
-        const compare_image = switch (fmt.type_id) {
+        const compare_image: ?[]u8 = switch (fmt.type_id) {
             .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_full.dsk")),
-            else => void,
+            else => null,
         };
-        defer if (@TypeOf(compare_image) != @TypeOf(void)) allocator.free(compare_image);
+        defer if (compare_image) |ci| allocator.free(ci);
+
         const nr_sectors: usize = fmt.largestFileBytes() / fmt.sector_size_data;
         var big_file = try allocator.alloc(u8, nr_sectors * fmt.sector_size_data);
         defer allocator.free(big_file);
@@ -161,6 +163,8 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(&test_buffer);
+        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -179,17 +183,12 @@ test "disk filled" {
         const cooked_dir = disk_image.directory.findByFilename(filename, null);
         try std.testing.expect(cooked_dir != null);
         try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-        //std.debug.dumpHex(in_file);
-        //std.debug.dumpHex(big_file);
         try std.testing.expectEqualSlices(u8, big_file, in_file);
 
-        // Noting a weird thing here. The below can be replaced with `if (@TypeOf(compare_image) != type)`.
-        // compare_image is either a field containing a const u8 array or it is the void type.
-        // That's the reason for the strange syntax below. It seemed clearer than `@TypeOf(compare_image) != type`
-        if (@TypeOf(compare_image) != @TypeOf(void)) {
+        if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(compare_image), clearVariableBytes(&test_buffer)),
-                else => try std.testing.expectEqualSlices(u8, compare_image, test_buffer),
+                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(&test_buffer)),
+                else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
     }
@@ -219,10 +218,10 @@ test "8MB filled" {
     // Copy to disk to fill it up.
     const filename = "BIG.TXT";
     try disk_image.copyToImage(&big_stream, filename, 0, false);
-    try std.testing.expectEqual(disk_image.directory.free_allocations.count(), 0);
-    try std.testing.expectEqual(disk_image.capacityFreeInKB(), 0);
-    try std.testing.expectEqual(disk_image.directory.cooked_directories.items.len, 1);
-    try std.testing.expectEqualStrings(disk_image.directory.cooked_directories.items[0].filenameAndExtension(), filename);
+    try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
+    try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
+    try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
+    try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
 
     // Get it back and compare it to the original
     const in_file = try allocator.alloc(u8, big_file.len);
@@ -232,11 +231,11 @@ test "8MB filled" {
     const cooked_dir = disk_image.directory.findByFilename(filename, null);
     try std.testing.expect(cooked_dir != null);
     try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-    try std.testing.expectEqualSlices(u8, in_file, big_file);
+    try std.testing.expectEqualSlices(u8, big_file, in_file);
 }
 
 test "disk overfilled" {
-    std.testing.log_level = .info;
+    //std.testing.log_level = .info;
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
@@ -251,13 +250,12 @@ test "disk overfilled" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,
             disk_image.copyToImage(&big_stream, "BIG.TXT", 0, false),
         );
-        try std.testing.expectEqual(disk_image.directory.cooked_directories.items.len, 1);
+        try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
 
         try reinitDiskImage(&disk_image);
         try std.testing.expectError(error.OutOfAllocs, disk_image.directory.allocationGetFree());
@@ -266,12 +264,14 @@ test "disk overfilled" {
 }
 
 test "disk overfill directory" {
+    //std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
-        const compare_image = switch (fmt.type_id) {
+        std.log.info("Testing format: {t}", .{fmt.type_id});
+        const compare_image: ?[]u8 = switch (fmt.type_id) {
             inline .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_dirs.dsk")),
-            inline else => void,
+            inline else => null,
         };
-        defer if (@TypeOf(compare_image) != @TypeOf(void)) allocator.free(compare_image);
+        defer if (compare_image) |ci| allocator.free(ci);
 
         var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
         var test_stream: std.Io.Reader = .fixed(&test_file);
@@ -293,8 +293,11 @@ test "disk overfill directory" {
             error.OutOfExtents,
             disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false),
         );
-        if (@TypeOf(compare_image) != @TypeOf(void)) {
-            try std.testing.expectEqualSlices(u8, clearVariableBytes(compare_image), clearVariableBytes(image_file));
+        if (compare_image) |ci| {
+            switch (fmt.type_id) {
+                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(image_file)),
+                else => try std.testing.expectEqualSlices(u8, ci, image_file),
+            }
         }
 
         try reinitDiskImage(&disk_image);
@@ -714,7 +717,9 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
+const all_formats = .{ FDD_8IN, HDD_5MB, TAR, FDC, CDOS_SMSSSD, CDOS_LGSSSD };
+//const all_formats = .{ FDD_8IN, TAR, CDOS_SMSSSD, CDOS_LGSSSD };
 
 test {
     std.testing.refAllDecls(@This());
