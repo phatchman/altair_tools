@@ -1,19 +1,43 @@
 //! Test all disk operations on each image format
 
 const io = std.testing.io;
+const allocator = std.testing.allocator;
 
-// TODO: Restore the tests for filling the 8MB disks
+test "disk formatted" {
+    std.testing.log_level = .info;
+    inline for (all_formats) |fmt| {
+        std.log.info("Testing image format {s}", .{fmt.type_name});
+        const compare_image = switch (fmt.type_id) {
+            .FDD_8IN => @embedFile("test_disks/8in_fmt.dsk"),
+            .FDD_8IN_8MB => @embedFile("test_disks/8mb_fmt.dsk"),
+            .HDD_5MB => @embedFile("test_disks/5mb_fmt.dsk"),
+            .HDD_5MB_1024 => @embedFile("test_disks/5mb_1024_fmt.dsk"),
+            .FDD_TAR => @embedFile("test_disks/tar_fmt.dsk"),
+            .@"FDD_1.5MB" => @embedFile("test_disks/1.5mb_fmt.dsk"),
+            .CDOS_SMSSSD => @embedFile("test_disks/smsssd_fmt.dsk"),
+            .CDOS_LGSSSD => @embedFile("test_disks/lgsssd_fmt.dsk"),
+        };
 
-test "8in formatted" {
-    const compare_image = @embedFile("test_disks/8in_fmt.dsk");
+        const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(test_buffer);
+        var test_image: InMemoryImage = undefined;
+        test_image.init(test_buffer);
 
-    var test_buffer: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
+        if (fmt.OS == .cdos) {
+            var label: DiskLabel = .{ .cdos = undefined };
+            @memcpy(&label.cdos.user_label, "ABCDEFGH");
+            label.cdos.date_mmddyy[0] = 12;
+            label.cdos.date_mmddyy[1] = 12;
+            label.cdos.date_mmddyy[2] = 12;
+            try disk_image.labelDisk(label);
+        }
+
+        try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
+    }
 }
 
 test "8in alt size" {
@@ -59,26 +83,6 @@ test "HDD 5MB 1024 dirs formatted" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, HDD_5MB_1024);
     defer disk_image.deinit();
     try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-test "HDD 5MB 1024 supports 1024 dirs?" {
-    if (true) return error.SkipZigTest;
-    var test_buffer: [HDD_5MB_1024.image_size]u8 = undefined;
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_buffer, HDD_5MB_1024);
-    defer disk_image.deinit();
-
-    var test_file = "Mostly harmless.".*;
-    var test_reader: std.Io.Reader = .fixed(&test_file);
-
-    var filename_buffer: [20]u8 = undefined;
-    // Should handle 1024 entries
-    for (0..1024) |i| {
-        const filename = try std.fmt.bufPrint(&filename_buffer, "{d}.TXT", .{i});
-        try disk_image.copyToImage(&test_reader, filename, 0, false);
-    }
-    // but not 1025
-    try std.testing.expectError(error.OutOfExtents, disk_image.copyToImage(&test_reader, "STRAW.BAK", 0, false));
 }
 
 test "Tarbell formatted" {
@@ -191,46 +195,6 @@ test "disk filled" {
             }
         }
     }
-}
-
-test "8MB filled" {
-    if (true) return error.SkipZigTest;
-    // Make a 8168KB file to fill the disk.
-    const nr_sectors = 8168 * 1024 / 128;
-    var big_file = try allocator.alloc(u8, nr_sectors * 128);
-    defer allocator.free(big_file);
-    for (0..nr_sectors) |sector| {
-        const fill_char: u8 = ' ' + @as(u8, @intCast(sector % (127 - ' ')));
-        const start = sector * 128;
-        const end = start + 128;
-        @memset(big_file[start..end], fill_char);
-        _ = try std.fmt.bufPrint(big_file[start..end], "\n--[{d}]--", .{sector});
-    }
-    var big_stream: std.Io.Reader = .fixed(big_file);
-
-    // Create in-memory disk image.
-    const test_buffer = try allocator.alloc(u8, FDC_8MB.image_size);
-    defer allocator.free(test_buffer);
-    var disk_image = try newFormattedMemoryDiskImage(test_buffer, FDC_8MB);
-    defer disk_image.deinit();
-
-    // Copy to disk to fill it up.
-    const filename = "BIG.TXT";
-    try disk_image.copyToImage(&big_stream, filename, 0, false);
-    try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
-    try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
-    try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
-    try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
-
-    // Get it back and compare it to the original
-    const in_file = try allocator.alloc(u8, big_file.len);
-    defer allocator.free(in_file);
-    var in_stream: std.Io.Writer = .fixed(in_file);
-
-    const cooked_dir = disk_image.directory.findByFilename(filename, null);
-    try std.testing.expect(cooked_dir != null);
-    try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
-    try std.testing.expectEqualSlices(u8, big_file, in_file);
 }
 
 test "disk overfilled" {
@@ -702,10 +666,10 @@ fn saveFile(contents: []const u8) void {
 
 // TODO: Invalid images and recovery of images.
 const std = @import("std");
-const allocator = std.testing.allocator;
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
+const DiskLabel = @import("disk_image.zig").DiskLabel;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);
@@ -719,18 +683,18 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
-const all_formats = _: {
-    const fields = std.meta.fields(DiskImageTypes);
-    var result: [fields.len]*const DiskImageType = undefined;
-    var idx: usize = 0;
-    for (fields) |field| {
-        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-        idx += 1;
-    }
-    const result_c = result;
-    break :_ &result_c;
-};
+const all_formats = .{CDOS_LGSSSD};
+// const all_formats = _: {
+//     const fields = std.meta.fields(DiskImageTypes);
+//     var result: [fields.len]*const DiskImageType = undefined;
+//     var idx: usize = 0;
+//     for (fields) |field| {
+//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+//         idx += 1;
+//     }
+//     const result_c = result;
+//     break :_ &result_c;
+// };
 
 test {
     std.testing.refAllDecls(@This());

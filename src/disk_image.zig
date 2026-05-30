@@ -402,12 +402,31 @@ pub const DiskImage = struct {
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
                     self.image_type.formattedSectorGet(
-                        .{ .track = @truncate(track_nr), .sector = @truncate(sector_nr) },
+                        .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) },
                         &disk_sector,
                     );
                 }
                 try self.writer.interface().writeAll(disk_sector.rawBytes());
             }
+        }
+    }
+
+    pub fn labelDisk(self: *Self, label: DiskLabel) !void {
+        switch (label) {
+            .cdos => |lbl| {
+                const raw_item = &self.directory.raw_directories.items[0].entry;
+                @memset(std.mem.asBytes(raw_item), 0x00);
+                raw_item.user = 0x81;
+                @memcpy(&raw_item.filename, &lbl.user_label);
+                raw_item.filetype[0] = lbl.date_mmddyy[0];
+                raw_item.filetype[1] = lbl.date_mmddyy[1];
+                raw_item.filetype[2] = lbl.date_mmddyy[2];
+                raw_item.extent_low = 0x08; // TODO: What is this?
+                raw_item.num_records = 0x10; // TODO: What is this?
+                raw_item._allocations[1] = 1; // TODO: What is this bit?
+                try self.rawEntryWrite(0);
+            },
+            else => return error.LabelingNotSupported,
         }
     }
 
@@ -530,7 +549,9 @@ const std = @import("std");
 const Console = @import("console.zig");
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;
+// TODO: Should not be pub. Fix up the other imports
 pub const DiskSector = @import("disk_types.zig").DiskSector;
+pub const DiskLabel = @import("disk_types.zig").DiskLabel;
 const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 const DirectoryLoadError = DirectoryTable.DirectoryLoadError;

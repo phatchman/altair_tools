@@ -13,6 +13,16 @@
 // TODO: Sector numbers are currently 1-based. There's no good reason
 // they should not be zero based instead.
 
+pub const OperatingSystem = enum { cpm, cdos };
+pub const DiskLabel = union(OperatingSystem) {
+    cpm: void,
+    cdos: struct {
+        //        disk_format_label: [6]u8, // e.g. LGSSDD for large single-sided double density,
+        user_label: [8]u8,
+        date_mmddyy: [3]u8,
+    },
+};
+
 /// The physical track and sector number after skew
 pub const PhysicalAddress = struct {
     track: u16,
@@ -114,7 +124,7 @@ pub const DiskImageType = struct {
     // Are all sectors formatted the same or do they vary per track?
     varying_sector_format: bool,
     // Which operating system is this?
-    OS: enum { cpm, cdos },
+    OS: OperatingSystem,
 
     // Skew from logical to physical sector
     skew_fn: *const fn (skew_table: []const u16, track: u16, sector: u16) u16 = defaultSkewFn,
@@ -126,6 +136,8 @@ pub const DiskImageType = struct {
     prepare_write_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultPrepareSectorForWrite,
     // For hard-sectored formats, return the offset from start of sector for various disk control bytes.
     offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffsetOf,
+    // For formats which support disk labels e.g. cdos
+    label_fn: *const fn (self: *const DiskImageType, label: DiskLabel) void = defaultLabelDisk,
 
     // Below are "constants" - These are initialised with "init".
     track_size: u16 = undefined,
@@ -200,6 +212,10 @@ pub const DiskImageType = struct {
         self.format_fn(self, address, sector);
     }
 
+    pub fn labelDisk(self: *const DiskImageType, label: DiskLabel) void {
+        self.label_fn(self, label);
+    }
+
     /// TODO: PRob just create a stand-alone detection routine, rather than this cimplex nonsense.
     /// Retruns true if supplied image_file is supported by this image type.
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
@@ -255,6 +271,7 @@ pub const DiskImageType = struct {
     }
 
     fn defaultPrepareSectorForWrite(_: *const DiskImageType, _: PhysicalAddress, _: *DiskSector) void {}
+    fn defaultLabelDisk(_: *const DiskImageType, _: DiskLabel) void {}
 };
 
 /// MITS 8" floppy disk format
@@ -603,11 +620,25 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
             .directory_allocs = 2,
             .image_size = 92160,
             .detect_conditions = .none,
-            .varying_sector_format = false,
+            .varying_sector_format = true, // First sector contains label
             .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
         };
         result.init();
         return result;
+    }
+};
+
+const CDOS = struct {
+
+    // For the first sector on the first track, put the disk format label
+    fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
+        std.debug.print("?HERE {}\n", .{address});
+        self.defaultFormattedSectorGet(address, sector);
+        if (address.track == 0 and address.sector == 1) {
+            std.debug.print("setting label\n", .{});
+            @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
+        }
     }
 };
 
@@ -636,8 +667,9 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
             .directory_allocs = 2,
             .image_size = 256256,
             .detect_conditions = .none,
-            .varying_sector_format = false,
+            .varying_sector_format = true, // First sector contains a label
             .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
         };
         result.init();
         return result;
@@ -672,6 +704,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .detect_conditions = .none,
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
         };
         result.init();
         // Sigh, this format is used by Michah CPM, which works on Cromemco machines,
