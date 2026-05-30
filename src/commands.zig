@@ -143,6 +143,14 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
     var file_count: u32 = 0;
     var kb_used: u32 = 0;
 
+    print_label: {
+        var label: DiskLabel = undefined;
+        disk_image.labelGet(&label) catch {
+            break :print_label;
+        };
+        try Console.stdout().print("{f}\n", .{label});
+    }
+
     try Console.stdout().print("Name     Ext   Length Used U At\n", .{});
 
     for (disk_image.directory.cooked_directories.items) |entry| {

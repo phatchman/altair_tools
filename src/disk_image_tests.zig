@@ -27,7 +27,6 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         if (fmt.OS == .cdos) {
             var label: DiskLabel = .{ .cdos = undefined };

@@ -21,6 +21,21 @@ pub const DiskLabel = union(OperatingSystem) {
         user_label: [8]u8,
         date_mmddyy: [3]u8,
     },
+
+    pub fn format(self: *const DiskLabel, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self.*) {
+            .cpm => {},
+            .cdos => |lbl| try writer.print("Label: {s}  Date: {c}{c}/{c}{c}/{c}{c}", .{
+                lbl.user_label,
+                lbl.date_mmddyy[0] / 10 + '0',
+                lbl.date_mmddyy[0] % 10 + '0',
+                lbl.date_mmddyy[1] / 10 + '0',
+                lbl.date_mmddyy[1] % 10 + '0',
+                lbl.date_mmddyy[2] / 10 + '0',
+                lbl.date_mmddyy[2] % 10 + '0',
+            }),
+        }
+    }
 };
 
 /// The physical track and sector number after skew
