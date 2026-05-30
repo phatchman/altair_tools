@@ -136,8 +136,6 @@ pub const DiskImageType = struct {
     prepare_write_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultPrepareSectorForWrite,
     // For hard-sectored formats, return the offset from start of sector for various disk control bytes.
     offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffsetOf,
-    // For formats which support disk labels e.g. cdos
-    label_fn: *const fn (self: *const DiskImageType, label: DiskLabel) void = defaultLabelDisk,
 
     // Below are "constants" - These are initialised with "init".
     track_size: u16 = undefined,
@@ -212,10 +210,6 @@ pub const DiskImageType = struct {
         self.format_fn(self, address, sector);
     }
 
-    pub fn labelDisk(self: *const DiskImageType, label: DiskLabel) void {
-        self.label_fn(self, label);
-    }
-
     /// TODO: PRob just create a stand-alone detection routine, rather than this cimplex nonsense.
     /// Retruns true if supplied image_file is supported by this image type.
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
@@ -271,7 +265,6 @@ pub const DiskImageType = struct {
     }
 
     fn defaultPrepareSectorForWrite(_: *const DiskImageType, _: PhysicalAddress, _: *DiskSector) void {}
-    fn defaultLabelDisk(_: *const DiskImageType, _: DiskLabel) void {}
 };
 
 /// MITS 8" floppy disk format
@@ -633,10 +626,8 @@ const CDOS = struct {
 
     // For the first sector on the first track, put the disk format label
     fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        std.debug.print("?HERE {}\n", .{address});
         self.defaultFormattedSectorGet(address, sector);
         if (address.track == 0 and address.sector == 1) {
-            std.debug.print("setting label\n", .{});
             @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
         }
     }

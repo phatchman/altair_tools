@@ -30,6 +30,8 @@ const command_list = [_]Command{
     .{ .option = "do_format", .name = "format", .write = true, .action = formatImage },
     .{ .option = "do_recover", .name = "recover", .write = false, .action = recoverImage },
     .{ .option = "do_information", .name = "image information", .write = false, .action = printImageInfo },
+    .{ .option = "do_label_set", .name = "set disk label", .write = true, .action = labelSet },
+    .{ .option = "do_label_get", .name = "show disk label", .write = false, .action = labelShow },
 };
 
 var current_command: []const u8 = undefined;
@@ -42,16 +44,18 @@ const Context = struct {
 /// Dispatch the correct command based on the supplied command line options.
 pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions) !void {
     var write_access: bool = undefined;
-
     // Create a table that sets write_access and last_command_description
     // based on which do_xxxx flag is true in the options struct
+    var found_command: bool = false;
     inline for (command_list) |command| {
         // If there is a field in options with the same name as command.option
         if (@field(options, command.option)) {
             write_access = command.write;
             current_command = command.name;
+            found_command = true;
         }
     }
+    std.debug.assert(found_command);
 
     var file = openDiskImage(io, options.image_file, write_access, options.do_format) catch |err| {
         printErrorMessage(current_command, .open_image, .{options.image_file}, err);
@@ -121,6 +125,8 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
     // Create a dispatch that calls the correct command based on
     // which do_xxx options is true in the options struct.
     inline for (command_list) |command| {
+        //        std.debug.print("looking for {s} vs {any}", .{ command.option, std.meta.fieldNames(Command) });
+
         // If there is a field in options with the same name as command.option
         if (@field(options, command.option)) {
             defer Console.flushOut() catch {};
@@ -128,6 +134,8 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
             return;
         }
     }
+    // Command was not displatched?
+    unreachable;
 }
 
 /// Do a standard directory listing.
@@ -448,6 +456,103 @@ pub fn formatImage(_: Context, disk_image: *DiskImage, options: CommandLineOptio
     log.info("Format complete", .{});
 }
 
+pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
+    log.info("Setting disk label to: {s}", .{options.disk_label});
+    doLabelSet(disk_image, options) catch |err| {
+        switch (err) {
+            error.InvalidLabelFormat => printErrorMessage(current_command, .label_invalid, .{options.disk_label}, err),
+            error.LabelingNotSupported => printErrorMessage(current_command, .labeling_not_supported, .{}, err),
+            else => printErrorMessage(current_command, .unexpected, .{}, err),
+        }
+        return error.CommandFailed;
+    };
+}
+
+var c: usize = 0;
+fn m() void {
+    std.debug.print("{}\n", .{c});
+    c += 1;
+}
+
+fn n(v: u8) void {
+    std.debug.print("{}:{c}\n", .{ c, v });
+    c += 1;
+}
+
+fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    switch (disk_image.image_type.OS) {
+        .cdos => {
+            // Format for CDOS label is llllllll:mm/dd/yy
+            // where l can be 1-8 chars long
+            const colon_pos = std.mem.indexOfScalarPos(u8, options.disk_label, 0, ':') orelse
+                return error.InvalidLabelFormat;
+            // make sure both the label is at most 8 chars and the date is exactly 8 chars
+            if (colon_pos > 8 or colon_pos + 9 != options.disk_label.len)
+                return error.InvalidLabelFormat;
+            // Make sure it is valid date in mm/dd/yy format.
+            if (options.disk_label[colon_pos + 3] != '/' or
+                options.disk_label[colon_pos + 6] != '/')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 1] != '0' and
+                options.disk_label[colon_pos + 1] != '1')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 2] < '0' or
+                options.disk_label[colon_pos + 2] > '9')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 4] < '0' or
+                options.disk_label[colon_pos + 4] > '3')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 5] < '0' or
+                options.disk_label[colon_pos + 5] > '9')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 7] < '0' or
+                options.disk_label[colon_pos + 7] > '9')
+                return error.InvalidLabelFormat;
+            if (options.disk_label[colon_pos + 8] < '0' or
+                options.disk_label[colon_pos + 8] > '9')
+                return error.InvalidLabelFormat;
+
+            var disk_label: DiskLabel = .{ .cdos = undefined };
+            @memset(&disk_label.cdos.user_label, ' ');
+            @memcpy(disk_label.cdos.user_label[0..colon_pos], options.disk_label[0..colon_pos]);
+            const mm: u8 = (options.disk_label[colon_pos + 1] - '0') * 10 + options.disk_label[colon_pos + 2] - '0';
+            const dd: u8 = (options.disk_label[colon_pos + 4] - '0') * 10 + options.disk_label[colon_pos + 5] - '0';
+            const yy: u8 = (options.disk_label[colon_pos + 7] - '0') * 10 + options.disk_label[colon_pos + 8] - '0';
+            disk_label.cdos.date_mmddyy[0] = mm;
+            disk_label.cdos.date_mmddyy[1] = dd;
+            disk_label.cdos.date_mmddyy[2] = yy;
+            try disk_image.labelDisk(disk_label);
+        },
+        else => return error.LabelingNotSupported,
+    }
+}
+
+pub fn labelShow(_: Context, disk_image: *DiskImage, _: CommandLineOptions) !void {
+    switch (disk_image.image_type.OS) {
+        .cdos => {},
+        else => {
+            printErrorMessage(current_command, .labeling_not_supported, .{}, error.LabelingNotSupported);
+            return error.CommandFailed;
+        },
+    }
+    var label: DiskLabel = undefined;
+    disk_image.labelGet(&label) catch |err| {
+        switch (err) {
+            error.LabelingNotSupported => {
+                printErrorMessage(current_command, .labeling_not_supported, .{}, err);
+                return error.CommandFailed;
+            },
+        }
+    };
+
+    try Console.stdout().print("Label: {s}\nDate:  {d:02}/{d:02}/{d:02} (mm/dd/yy)\n", .{
+        label.cdos.user_label,
+        label.cdos.date_mmddyy[0],
+        label.cdos.date_mmddyy[1],
+        label.cdos.date_mmddyy[2],
+    });
+}
+
 /// Try and recover an image with corrupted directory entries.
 pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) !void {
     log.info("Recovering {s} to {s}", .{ options.image_file, options.recovery_image_file });
@@ -547,6 +652,7 @@ fn printErrorMessage(command: []const u8, comptime message: ErrorMessage, args: 
 }
 
 const ErrorMessage = enum {
+    unexpected,
     open_image,
     open_directory,
     image_type_detect,
@@ -566,9 +672,12 @@ const ErrorMessage = enum {
     install_cpm,
     format,
     recover,
+    labeling_not_supported,
+    label_invalid,
 };
 
 const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
+    .unexpected = "Unexpected error",
     .open_image = "Error opening disk image {s}",
     .open_directory = "Error opening directory {s}",
     .image_type_detect = "Can't detect image type. Use -h to see supported types and -T to force a type.",
@@ -588,6 +697,8 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
     .install_cpm = "Error installing system image from {s}",
     .format = "Error formatting {s}",
     .recover = "Error recovering image {s}",
+    .labeling_not_supported = "Labels are not supported for this image type",
+    .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy whhere <label> is up to 8 characters",
 });
 
 const std = @import("std");
@@ -597,6 +708,7 @@ const DirectoryTable = di.DirectoryTable;
 const RawDirectoryEntry = di.RawDirEntry;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
+const DiskLabel = @import("disk_types.zig").DiskLabel;
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const CommandLineOptions = @import("main.zig").CommandLineOptions;

@@ -17,6 +17,7 @@ adgui/zig-pkg/
 *.ASM
 *.HLP
 *.ps1
+*.bak
 cdos/
 tmp/
 legacy/
@@ -24,3 +25,4 @@ release/
 adgui/disks
 .vscode
 adgui/.vscode
+!src/test_disks/*.DSK

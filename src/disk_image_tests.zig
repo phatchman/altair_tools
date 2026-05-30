@@ -1,10 +1,12 @@
 //! Test all disk operations on each image format
 
+// TODO: Add labelling tests
+
 const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    std.testing.log_level = .info;
+    //    std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
         const compare_image = switch (fmt.type_id) {
@@ -683,18 +685,18 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-const all_formats = .{CDOS_LGSSSD};
-// const all_formats = _: {
-//     const fields = std.meta.fields(DiskImageTypes);
-//     var result: [fields.len]*const DiskImageType = undefined;
-//     var idx: usize = 0;
-//     for (fields) |field| {
-//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-//         idx += 1;
-//     }
-//     const result_c = result;
-//     break :_ &result_c;
-// };
+//const all_formats = .{CDOS_LGSSSD};
+const all_formats = _: {
+    const fields = std.meta.fields(DiskImageTypes);
+    var result: [fields.len]*const DiskImageType = undefined;
+    var idx: usize = 0;
+    for (fields) |field| {
+        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+        idx += 1;
+    }
+    const result_c = result;
+    break :_ &result_c;
+};
 
 test {
     std.testing.refAllDecls(@This());

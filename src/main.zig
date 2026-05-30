@@ -28,8 +28,7 @@
 // SOFTWARE.
 //
 
-// TODO: I think readers are writers have different seek cursors, even if the same file.
-// Do they? and does it matter?
+// TODO: Errors not being shown for invalie options e.g. -q
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
@@ -75,6 +74,7 @@ pub const CommandLineOptions = struct {
     system_image_put: []const u8 = undefined,
     recovery_image_file: []const u8 = undefined,
     get_out_dir: []const u8 = undefined,
+    disk_label: []const u8 = undefined,
     // All command options need to be in the format do_xxxx to be
     // included in the dispatch table.
     do_directory: bool = false,
@@ -90,6 +90,8 @@ pub const CommandLineOptions = struct {
     do_cpm_get: bool = false,
     do_cpm_put: bool = false,
     do_recover: bool = false,
+    do_label_get: bool = false,
+    do_label_set: bool = false,
     text_mode: bool = false,
     bin_mode: bool = false,
     verbose: bool = false,
@@ -107,6 +109,7 @@ pub const CommandLineOptions = struct {
         gpa.free(self.system_image_put);
         gpa.free(self.recovery_image_file);
         gpa.free(self.get_out_dir);
+        gpa.free(self.disk_label);
     }
 };
 
@@ -273,6 +276,19 @@ pub fn main(init_args: std.process.Init) !void {
                     .short_alias = 'V',
                     .value_ref = r.mkRef(&options.very_verbose),
                 },
+                .{
+                    .long_name = "label-set",
+                    .help = "Label set - Set the disk label and timestamp on CDOS disks",
+                    .short_alias = 'L',
+                    .value_name = "label",
+                    .value_ref = r.mkRef(&options.disk_label),
+                },
+                .{
+                    .long_name = "label",
+                    .help = "Label get - Get the disk label and timestamp from CDOS disks",
+                    .short_alias = 'l',
+                    .value_ref = r.mkRef(&options.do_label_get),
+                },
             },
         },
         .version = "0.9",
@@ -306,6 +322,7 @@ pub fn validateOptions() !bool {
     options.do_cpm_get = options.system_image_get.len != 0;
     options.do_cpm_put = options.system_image_put.len != 0;
     options.do_recover = options.recovery_image_file.len != 0;
+    options.do_label_set = options.disk_label.len != 0;
 
     // Can only by one of directory, get/multi, put/multi, etc
     const single_options = [_]bool{
@@ -313,7 +330,7 @@ pub fn validateOptions() !bool {
         options.do_format,      options.do_get,       options.do_get_multi,
         options.do_put,         options.do_put_multi, options.do_raw_dir,
         options.do_cpm_get,     options.do_cpm_put,   options.do_recover,
-        options.do_information,
+        options.do_information, options.do_label_get, options.do_label_set,
     };
 
     var option_count: usize = 0;
@@ -333,13 +350,14 @@ pub fn validateOptions() !bool {
         cli.printError(&p, &app,
             \\You may only specify one of:
             \\       --directory,
-            \\       --raw
-            \\       --info
+            \\       --raw,
+            \\       --info,
             \\       --format,
             \\       --get, --get-multiple,
             \\       --put, --put-multiple,
             \\       --erase, --erase-multiple,
-            \\       --extract-cpm, --write-cpm
+            \\       --extract-cpm, --write-cpm,
+            \\       -- label, --label-set,
             \\       --recover
             \\
         , .{});

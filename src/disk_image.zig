@@ -412,8 +412,13 @@ pub const DiskImage = struct {
     }
 
     pub fn labelDisk(self: *Self, label: DiskLabel) !void {
+        switch (self.image_type.OS) {
+            .cdos => {},
+            else => return error.LabelingNotSupported,
+        }
         switch (label) {
             .cdos => |lbl| {
+                std.debug.assert(self.image_type.OS == .cdos);
                 const raw_item = &self.directory.raw_directories.items[0].entry;
                 @memset(std.mem.asBytes(raw_item), 0x00);
                 raw_item.user = 0x81;
@@ -425,6 +430,22 @@ pub const DiskImage = struct {
                 raw_item.num_records = 0x10; // TODO: What is this?
                 raw_item._allocations[1] = 1; // TODO: What is this bit?
                 try self.rawEntryWrite(0);
+            },
+            else => return error.LabelingNotSupported,
+        }
+    }
+
+    /// Return any disk label in `label`
+    pub fn labelGet(self: *const Self, label: *DiskLabel) !void {
+        switch (self.image_type.OS) {
+            .cdos => {
+                label.* = .{ .cdos = undefined };
+                // TODO: Do some validation of the label here
+                const raw_item = &self.directory.raw_directories.items[0].entry;
+                @memcpy(&label.cdos.user_label, &raw_item.filename);
+                label.cdos.date_mmddyy[0] = raw_item.filetype[0];
+                label.cdos.date_mmddyy[1] = raw_item.filetype[1];
+                label.cdos.date_mmddyy[2] = raw_item.filetype[2];
             },
             else => return error.LabelingNotSupported,
         }
