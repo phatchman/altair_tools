@@ -601,7 +601,7 @@ pub const DiskImageTypes = enum(usize) {
     FDD_8IN_8MB,
     CDOS_SMSSSD,
     CDOS_LGSSSD,
-    //CDOS_LGSSDD,
+    CDOS_LGSSDD,
 };
 
 // CDOS "Small"
@@ -705,7 +705,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .sector_size_raw0 = 128,
             .block_size = 2048,
             .directories = 128,
-            .directory_allocs = 2,
+            .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
             .image_size = 625920,
             .detect_conditions = .none,
             .varying_sector_format = true, // track 0 is SD, rest DD
@@ -734,8 +734,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(),
     .CDOS_SMSSSD = DiskImageType_CDOS_SMSSSD.init(),
     .CDOS_LGSSSD = DiskImageType_CDOS_LGSSSD.init(),
-    // TODO: needs investigation
-    //    .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
+    .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

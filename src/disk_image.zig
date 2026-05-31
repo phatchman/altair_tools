@@ -254,7 +254,7 @@ pub const DiskImage = struct {
         var record_nr: u16 = 0;
         var nbytes: usize = 0;
         var sector_nr: u16 = 0;
-        const recs_per_sector: u16 = self.image_type.sector_size_raw / 128;
+        //const recs_per_sector: u16 = self.image_type.sector_size_raw / 128;
         var file_buffer: [512]u8 = undefined; // TODO: Make this MAX_SECTOR_SIZE
         const file_data = file_buffer[0..self.image_type.sector_size_data];
         @memset(file_data, 0x1a); // Re-fill with ^Z
@@ -312,7 +312,7 @@ pub const DiskImage = struct {
                 @memset(file_data, 0x1a); // Re-fill with ^Z
             }
 
-            record_nr += recs_per_sector;
+            record_nr += @intCast(nbytes / 128);
             if (self.image_type.recs_per_extent == 256 and
                 record_nr % 128 == 0 and
                 record_nr % 256 != 0)
@@ -426,9 +426,17 @@ pub const DiskImage = struct {
                 raw_item.filetype[0] = lbl.date_mmddyy[0];
                 raw_item.filetype[1] = lbl.date_mmddyy[1];
                 raw_item.filetype[2] = lbl.date_mmddyy[2];
-                raw_item.extent_low = 0x08; // TODO: What is this?
-                raw_item.num_records = 0x10; // TODO: What is this?
-                raw_item._allocations[1] = 1; // TODO: What is this bit?
+                raw_item.extent_low = switch (self.image_type.type_id) {
+                    .CDOS_SMSSSD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
+                    .CDOS_LGSSDD => 0x10,
+                    else => unreachable,
+                };
+                raw_item.num_records = switch (self.image_type.type_id) {
+                    .CDOS_SMSSSD, .CDOS_LGSSSD => 0x10, // TODO: What is this? num dirs?
+                    .CDOS_LGSSDD => 0x20,
+                    else => unreachable,
+                };
+                raw_item._allocations[1] = 1; // TODO: What is this?
                 try self.rawEntryWrite(0);
             },
             else => return error.LabelingNotSupported,

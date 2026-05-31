@@ -42,7 +42,7 @@ pub const RawDirEntry = struct {
     pub const filetype_len = 3;
 
     pub fn validate(self: *const RawDirEntry, image_type: *const DiskImageType, extent_nr: u16) RawDirError!void {
-        if (self.entry.user > DiskImageType.max_user and self.entry.user != 0xe5) {
+        if (self.entry.user > DiskImageType.max_user and self.entry.user != 0xe5 and self.entry.user != 0x81) {
             log.err(
                 "Invalid directory entry: {} [Invalid user: {}. Must be 0-{} or {}]",
                 .{ extent_nr, self.entry.user, DiskImageType.max_user, 0xe5 },
@@ -82,6 +82,11 @@ pub const RawDirEntry = struct {
 
     pub fn isDeleted(self: *const RawDirEntry) bool {
         return self.entry.user > DiskImageType.max_user;
+    }
+
+    // TODO: Think of a better way. Thisis only valid for cdos.
+    pub fn isLabel(self: *const RawDirEntry) bool {
+        return self.entry.user == 0x81;
     }
 
     pub fn setDeleted(self: *RawDirEntry) void {
@@ -605,7 +610,7 @@ pub const DirectoryTable = struct {
     /// Return a free CPM directory entry
     pub fn rawEntryGetFree(self: *const Self, extent_nr: *u16) error{OutOfExtents}!*RawDirEntry {
         for (self.raw_directories.items, 0..) |*dir, i| {
-            if (dir.isDeleted()) {
+            if (dir.isDeleted() and !dir.isLabel()) {
                 extent_nr.* = @intCast(i);
                 dir.* = .empty;
                 return dir;
@@ -618,7 +623,7 @@ pub const DirectoryTable = struct {
     pub fn rawEntryFreeCount(self: *const Self) usize {
         var count: usize = 0;
         for (self.raw_directories.items) |dir| {
-            if (!dir.isDeleted()) {
+            if (!dir.isDeleted() and !dir.isLabel()) {
                 count += 1;
             }
         }

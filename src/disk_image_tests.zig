@@ -18,6 +18,7 @@ test "disk formatted" {
             .@"FDD_1.5MB" => @embedFile("test_disks/1.5mb_fmt.dsk"),
             .CDOS_SMSSSD => @embedFile("test_disks/smsssd_fmt.dsk"),
             .CDOS_LGSSSD => @embedFile("test_disks/lgsssd_fmt.dsk"),
+            .CDOS_LGSSDD => @embedFile("test_disks/lgssdd_fmt.dsk"),
         };
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
@@ -28,14 +29,14 @@ test "disk formatted" {
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
 
-        if (fmt.OS == .cdos) {
-            var label: DiskLabel = .{ .cdos = undefined };
-            @memcpy(&label.cdos.user_label, "ABCDEFGH");
-            label.cdos.date_mmddyy[0] = 12;
-            label.cdos.date_mmddyy[1] = 12;
-            label.cdos.date_mmddyy[2] = 12;
-            try disk_image.labelDisk(label);
-        }
+        // if (fmt.OS == .cdos) {
+        //     var label: DiskLabel = .{ .cdos = undefined };
+        //     @memcpy(&label.cdos.user_label, "ABCDEFGH");
+        //     label.cdos.date_mmddyy[0] = 12;
+        //     label.cdos.date_mmddyy[1] = 12;
+        //     label.cdos.date_mmddyy[2] = 12;
+        //     try disk_image.labelDisk(label);
+        // }
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -169,6 +170,8 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
+        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -251,7 +254,8 @@ test "overfill directory" {
         defer disk_image.deinit();
 
         var name_buf: [256]u8 = undefined;
-        for (0..fmt.directories) |num| {
+        const max_dirs = if (fmt.OS == .cdos) fmt.directories - 1 else fmt.directories;
+        for (0..max_dirs) |num| {
             test_stream.seek = 0;
             try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
         }
@@ -271,7 +275,7 @@ test "overfill directory" {
         const out_buf = try allocator.alloc(u8, test_file.len);
         defer allocator.free(out_buf);
         var out_file: std.Io.Writer = .fixed(out_buf);
-        const cooked_dir = disk_image.directory.findByFilename(try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories - 1}), null);
+        const cooked_dir = disk_image.directory.findByFilename(try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{max_dirs - 1}), null);
         try std.testing.expect(cooked_dir != null);
 
         try disk_image.copyFromImage(cooked_dir.?, &out_file, .Auto);
@@ -617,6 +621,17 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     errdefer disk_image.deinit();
     try disk_image.formatImage();
     try disk_image.loadDirectories(false);
+    switch (image_type.OS) {
+        .cpm => {},
+        .cdos => {
+            var label: DiskLabel = .{ .cdos = undefined };
+            @memcpy(&label.cdos.user_label, "ABCDEFGH");
+            label.cdos.date_mmddyy[0] = 12;
+            label.cdos.date_mmddyy[1] = 12;
+            label.cdos.date_mmddyy[2] = 12;
+            try disk_image.labelDisk(label);
+        },
+    }
     return disk_image;
 }
 
@@ -684,18 +699,20 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{CDOS_LGSSSD};
-const all_formats = _: {
-    const fields = std.meta.fields(DiskImageTypes);
-    var result: [fields.len]*const DiskImageType = undefined;
-    var idx: usize = 0;
-    for (fields) |field| {
-        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-        idx += 1;
-    }
-    const result_c = result;
-    break :_ &result_c;
-};
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
+const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
+//const all_formats = .{FDD_8IN};
+// const all_formats = _: {
+//     const fields = std.meta.fields(DiskImageTypes);
+//     var result: [fields.len]*const DiskImageType = undefined;
+//     var idx: usize = 0;
+//     for (fields) |field| {
+//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+//         idx += 1;
+//     }
+//     const result_c = result;
+//     break :_ &result_c;
+// };
 
 test {
     std.testing.refAllDecls(@This());
