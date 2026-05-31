@@ -12,6 +12,7 @@
 
 // TODO: Sector numbers are currently 1-based. There's no good reason
 // they should not be zero based instead.
+// Also some skew tables are 1-based and some are 0-based. how tf is that working?
 
 pub const OperatingSystem = enum { cpm, cdos };
 pub const DiskLabel = union(OperatingSystem) {

@@ -1,6 +1,7 @@
 //! Test all disk operations on each image format
 
 // TODO: Add labelling tests
+// TODO: Invalid images and recovery of images.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -139,7 +140,7 @@ fn clearVariableBytes(in: []u8) []u8 {
     return in;
 }
 test "disk filled" {
-    //    std.testing.log_level = .info;
+    //std.testing.log_level = .debug;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
@@ -576,7 +577,7 @@ test "non-contiguous extent" {
 }
 
 /// Create readers and writers against a []const u8
-/// deinit() musdt be called to free allocated buffer
+/// deinit() must be called to free allocated buffer
 const InMemoryConstImage = struct {
     buffer: []u8,
     reader: std.Io.Reader,
@@ -680,7 +681,6 @@ fn saveFile(contents: []const u8) void {
     };
 }
 
-// TODO: Invalid images and recovery of images.
 const std = @import("std");
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
@@ -699,9 +699,11 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
-const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
+const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
+//const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
+//const all_formats = .{CDOS_LGSSDD};
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
 //     var result: [fields.len]*const DiskImageType = undefined;

@@ -104,7 +104,7 @@ pub const RawDirEntry = struct {
     }
 
     /// Set extent from 16 bit value
-    pub fn extentSet(self: *RawDirEntry, extent_count: u16) void {
+    pub fn extentCountSet(self: *RawDirEntry, extent_count: u16) void {
         self.entry.extent_low = @intCast(extent_count % 32);
         self.entry.extent_hi = @intCast(extent_count / 32);
     }
@@ -608,7 +608,7 @@ pub const DirectoryTable = struct {
     }
 
     /// Return a free CPM directory entry
-    pub fn rawEntryGetFree(self: *const Self, extent_nr: *u16) error{OutOfExtents}!*RawDirEntry {
+    pub fn rawEntryGetFreeInitialized(self: *const Self, extent_nr: *u16) error{OutOfExtents}!*RawDirEntry {
         for (self.raw_directories.items, 0..) |*dir, i| {
             if (dir.isDeleted() and !dir.isLabel()) {
                 extent_nr.* = @intCast(i);
