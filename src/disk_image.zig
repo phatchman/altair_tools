@@ -201,7 +201,8 @@ pub const DiskImage = struct {
             // CPM doesn't actually know how long a file is, except in multiples of 128 byte records.
             // So if it is a text file looks for ^Z anywhere in the last sector and use that
             // to mark the EOF. For binary files it doesn't matter if they are too long.
-            if (check_for_text and total_rec_nr == num_records - 1) {
+            // Really we only need to check the last record (128 bytes), but we check the whole last sector.
+            if (check_for_text and sec_nr == num_sectors - 1) {
                 for (sector.dataBytes(), 0..) |b, i| {
                     if (text_mode == .Auto) {
                         if (b & 0x80 != 0) {
@@ -215,7 +216,6 @@ pub const DiskImage = struct {
                     }
                 }
             }
-
             try out_writer.writeAll(sector.dataBytes()[0..data_len]);
             total_rec_nr += recs_per_sector;
         }
@@ -284,6 +284,7 @@ pub const DiskImage = struct {
             // record_nr += (@as(u16, @intCast(nbytes)) + self.image_type.sector_size_data - 1) / self.image_type.sector_size_data;
         }) {
             num_records += @intCast((nbytes + 127) / 128);
+            //            if (record_count == 1006) @breakpoint();
             debug(
                 "data_len = {}, nbytes = {}, record_nr = {}, num_records = {}, entry_nr = {}, alloc_nr = {}, alloc_count = {}\n",
                 .{ file_data.len, nbytes, record_nr, num_records, extent_nr, alloc_nr, alloc_count },
@@ -330,9 +331,16 @@ pub const DiskImage = struct {
             nbytes = try file_reader.readSliceShort(file_data);
             @memset(file_data[nbytes..file_data.len], 0x1a);
 
-            record_nr += @intCast((nbytes + 127) / 128);
+            //          record_nr += @intCast((nbytes + 127) / 128);
+            // TODO: Is there a better way. This always needs to be +4
+            // because even when there is a short read, it still needs to create new
+            // extents and allocs etc.
+            record_nr += self.image_type.sector_size_data / 128;
             record_count += 1;
+
+            //            if (nbytes == 1) @breakpoint();
         }
+
         try self.directory.buildCookedEntry(extent_nr, self.image_type);
     }
 
@@ -611,6 +619,10 @@ pub const DiskImage = struct {
         }
     }
 
+    // TODO: The record number is really being sent as the sector number. i.e for 512k
+    // sectors it passes 0, 1, 2. Not 0, 4, 8. I think it should acrually be 0, 4, 8 as
+    // each record references a 128byte section of the 512k sector. We're just choosing
+    // to write 1 sector at a time.
     /// Convert between logical (allocation, record) to physical (track, sector) address.
     fn toPhysicalAddress(self: *const Self, address: LogicalAddress) PhysicalAddress {
         // TODO: puts some asserts in here to make sure logical address is not insane.

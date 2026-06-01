@@ -171,8 +171,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
-        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -208,7 +206,9 @@ test "disk overfilled" {
 
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
+        // TODO: FIX
         const big_file = try allocator.alloc(u8, fmt.largestFileBytes() + 1);
+        @memset(big_file, 'X');
         defer allocator.free(big_file);
         var big_stream: std.Io.Reader = .fixed(big_file);
 
@@ -260,6 +260,7 @@ test "overfill directory" {
             test_stream.seek = 0;
             try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
         }
+        test_stream.seek = 0;
         try std.testing.expectError(
             error.OutOfExtents,
             disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false),
