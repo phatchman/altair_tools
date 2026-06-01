@@ -2,7 +2,8 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
-// TODO: Forced put doesn;t work.
+// TODO: Forced put doesn;t work. Actually don't know this.
+// Rather the TODO: should be to add a -f --force option.
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
@@ -255,13 +256,13 @@ pub const DiskImage = struct {
         var file_buffer: [512]u8 = undefined; // TODO: Make this MAX_SECTOR_SIZE
         const file_data = file_buffer[0..self.image_type.sector_size_data];
 
-        var extent_nr: u16 = 0; // TODO: These should be undefined.
-        var alloc_nr: u16 = 0; // TODO: same
+        var extent_nr: u16 = undefined;
+        var alloc_nr: u16 = undefined;
         var record_nr: u16 = 0;
         var extent_count: u16 = 0;
         var alloc_count: u16 = 0;
         var num_records: u16 = 0;
-        var record_count: u16 = 0;
+        var sector_count: u16 = 0;
 
         var nbytes = try file_reader.readSliceShort(file_data);
         @memset(file_data[nbytes..file_data.len], 0x1a);
@@ -277,14 +278,8 @@ pub const DiskImage = struct {
             return;
         }
         var dir_entry: *RawDirEntry = undefined;
-        while (nbytes != 0) : ({
-            // Having the read in the continue expression was causing short reads for some reason.
-            // moved to end of loop.
-            // nbytes = try file_reader.readSliceShort(&file_buffer);
-            // record_nr += (@as(u16, @intCast(nbytes)) + self.image_type.sector_size_data - 1) / self.image_type.sector_size_data;
-        }) {
+        while (nbytes != 0) {
             num_records += @intCast((nbytes + 127) / 128);
-            //            if (record_count == 1006) @breakpoint();
             debug(
                 "data_len = {}, nbytes = {}, record_nr = {}, num_records = {}, entry_nr = {}, alloc_nr = {}, alloc_count = {}\n",
                 .{ file_data.len, nbytes, record_nr, num_records, extent_nr, alloc_nr, alloc_count },
@@ -304,7 +299,6 @@ pub const DiskImage = struct {
             if (record_nr % self.image_type.recs_per_alloc == 0) {
                 alloc_nr = try self.directory.allocationGetFree();
                 const raw_entry = &self.directory.raw_directories.items[extent_nr];
-                // TODO: Rename the params to this better.
                 try raw_entry.allocationSet(alloc_count, alloc_nr, self.image_type);
                 alloc_count += 1;
             }
@@ -317,9 +311,8 @@ pub const DiskImage = struct {
                 extent_count += 1;
             }
 
-            // TODO: Should be mod recs per alloc?
-            debug("Record_count = {}\n", .{record_count});
-            const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = @intCast(record_count % 256) });
+            // Note technically this should take
+            const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = @intCast(sector_count % 256) });
             var sector: DiskSector = .init(self.image_type, location.track);
             @memcpy(sector.dataBytes(), file_data);
             try self.writeSector(location, &sector);
@@ -331,14 +324,10 @@ pub const DiskImage = struct {
             nbytes = try file_reader.readSliceShort(file_data);
             @memset(file_data[nbytes..file_data.len], 0x1a);
 
-            //          record_nr += @intCast((nbytes + 127) / 128);
-            // TODO: Is there a better way. This always needs to be +4
-            // because even when there is a short read, it still needs to create new
-            // extents and allocs etc.
+            // This always advances by full records to ensure that
+            // new directory enteries are created and new allocs assigned for short-reads.
             record_nr += self.image_type.sector_size_data / 128;
-            record_count += 1;
-
-            //            if (nbytes == 1) @breakpoint();
+            sector_count += 1;
         }
 
         try self.directory.buildCookedEntry(extent_nr, self.image_type);

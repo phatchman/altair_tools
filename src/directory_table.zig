@@ -118,19 +118,18 @@ pub const RawDirEntry = struct {
     }
 
     /// Set allocation as controlled by this extent
-    pub fn allocationSet(self: *RawDirEntry, entry_nr: usize, record_nr: u16, image_type: *const DiskImageType) RawDirError!void {
+    pub fn allocationSet(self: *RawDirEntry, entry_nr: usize, alloc_nr: u16, image_type: *const DiskImageType) RawDirError!void {
         if (entry_nr >= self.allocationsCount(image_type)) {
-            std.debug.panic("{}, {}\n", .{ entry_nr, self.allocationsCount(image_type) });
             return RawDirError.InvalidEntryNumber;
         }
         // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
         if (image_type.OS == .cdos or image_type.total_allocs <= 256) {
             // 8 bit allocations
-            self.entry._allocations[entry_nr] = @intCast(record_nr & 0xff); // TODO: This mask won;t work for CDOS?
+            self.entry._allocations[entry_nr] = @intCast(alloc_nr & 0xff); // TODO: This mask won;t work for CDOS?
         } else {
             // 16 bit allocations.
             var alloc: [2]u8 = undefined;
-            std.mem.writeInt(u16, &alloc, record_nr, .little);
+            std.mem.writeInt(u16, &alloc, alloc_nr, .little);
             self.entry._allocations[entry_nr * 2] = alloc[0];
             self.entry._allocations[entry_nr * 2 + 1] = alloc[1];
         }
