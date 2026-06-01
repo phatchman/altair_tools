@@ -295,10 +295,11 @@ pub fn main(init_args: std.process.Init) !void {
         //.author = "Paul Hatchman",
     };
 
-    app.help_config.print_help_on_error = false;
-    r.run(&app) catch {
+    app.help_config.print_help_on_error = true;
+    r.run(&app) catch |err| {
         // De-init in the error case because exit(1) skips the defers
         // TODO: check how this works now
+        std.debug.print("Err: {t}\n", .{err});
         std.process.exit(1);
     };
     // TODO: This should be cleanExit etc.. But leaving this until the arg parsing memory leaks are resolved

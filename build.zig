@@ -38,30 +38,13 @@ pub fn build(b: *std.Build) void {
 
     // For each target build the library and exe's
     for (targets) |target| {
-        // TODO: This shouldn't need to be a static library
         const lib_mod = b.addModule("altair_disk", .{
             .root_source_file = b.path("src/lib.zig"),
             .target = target,
             .optimize = optimize,
         });
-        const lib = b.addLibrary(.{
-            .name = "altair_disk",
-            .root_module = lib_mod,
-            .linkage = .static,
-        });
-        if (targets.len > 1) {
-            const install = b.addInstallArtifact(lib, .{
-                .dest_dir = .{ .override = .{
-                    .custom = std.fmt.allocPrint(b.allocator, "lib/{s}-{s}", .{
-                        @tagName(target.result.cpu.arch),
-                        @tagName(target.result.os.tag),
-                    }) catch unreachable,
-                } },
-            });
-            b.default_step.dependOn(&install.step);
-        } else {
-            b.installArtifact(lib);
-        }
+        _ = lib_mod;
+
         const exe = b.addExecutable(.{
             .name = "altairdsk",
             .root_module = b.createModule(.{

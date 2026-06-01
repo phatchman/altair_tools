@@ -554,7 +554,7 @@ pub const DiskImage = struct {
                     .CDOS_LGSSDD => 0x20,
                     else => unreachable,
                 };
-                raw_item._allocations[1] = 1; // TODO: What is this?
+                raw_item.allocations[1] = 1; // TODO: What is this?
                 try self.rawEntryWrite(0);
             },
             else => return error.LabelingNotSupported,
