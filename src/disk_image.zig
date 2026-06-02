@@ -326,7 +326,7 @@ pub const DiskImage = struct {
             try self.writeSector(location, &sector);
 
             dir_entry.entry.num_records = @intCast((num_records - 1) % 128 + 1);
-            dir_entry.extentCountSet(extent_count);
+            dir_entry.extentCountSet(extent_count, self.image_type);
             try self.rawEntryWrite(extent_nr);
             nbytes = try file_reader.readSliceShort(file_data);
             @memset(file_data[nbytes..file_data.len], 0x1a);

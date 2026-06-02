@@ -53,10 +53,10 @@ pub const RawDirEntry = struct {
         }
 
         const max_entents = image_type.extents_per_alloc * image_type.total_allocs;
-        if (self.extentGet() >= max_entents) {
+        if (self.extentGet(image_type) >= max_entents) {
             log.err(
                 "Invalid directory entry: {} [Invalid extent: {}. Must be 0-{}]",
-                .{ extent_nr, self.extentGet(), max_entents },
+                .{ extent_nr, self.extentGet(image_type), max_entents },
             );
             return RawDirError.InvalidExtent;
         }
@@ -101,14 +101,23 @@ pub const RawDirEntry = struct {
     }
 
     /// Get extent as 16 bit value
-    pub fn extentGet(self: *const RawDirEntry) u16 {
-        return @as(u16, self.entry.extent_hi) * 32 + self.entry.extent_low;
+    pub fn extentGet(self: *const RawDirEntry, image_type: *const DiskImageType) u16 {
+        if (image_type.OS == .cpm) {
+            return @as(u16, self.entry.extent_hi) * 32 + self.entry.extent_low;
+        } else {
+            return @as(u16, self.entry.extent_hi) * 255 + self.entry.extent_low;
+        }
     }
 
     /// Set extent from 16 bit value
-    pub fn extentCountSet(self: *RawDirEntry, extent_count: u16) void {
-        self.entry.extent_low = @intCast(extent_count % 32);
-        self.entry.extent_hi = @intCast(extent_count / 32);
+    pub fn extentCountSet(self: *RawDirEntry, extent_count: u16, image_type: *const DiskImageType) void {
+        if (image_type.OS == .cpm) {
+            self.entry.extent_low = @intCast(extent_count % 32);
+            self.entry.extent_hi = @intCast(extent_count / 32);
+        } else {
+            self.entry.extent_low = @intCast(extent_count % 256);
+            self.entry.extent_hi = @intCast(extent_count / 256);
+        }
     }
 
     pub fn attribReadOnly(self: *const RawDirEntry) bool {
@@ -176,10 +185,10 @@ pub const RawDirEntry = struct {
 
     pub fn isFirstEntryForFile(self: *const RawDirEntry, image_type: *const DiskImageType) bool {
         //std.debug.print("isFirstExtentforFile: recs_per_extent {}, allocations[4] {}. extent {} = ", .{ image_type.recs_per_extent, self.entry.allocations[4], self.extentGet() });
-        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.entry.allocations[4] != 0 and self.extentGet() == 1) {
+        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.entry.allocations[4] != 0 and self.extentGet(image_type) == 1) {
             return true;
         }
-        return self.extentGet() == 0;
+        return self.extentGet(image_type) == 0;
     }
 };
 
@@ -218,7 +227,7 @@ pub const CookedDirEntry = struct {
 
         var result = CookedDirEntry{
             .user = raw_dir.entry.user,
-            .extent_nr = raw_dir.extentGet(),
+            .extent_nr = raw_dir.extentGet(image_type),
             .attribs = [_]u8{
                 if (raw_dir.attribReadOnly()) 'R' else 'W',
                 if (raw_dir.attribSystem()) 'S' else ' ',
@@ -381,12 +390,12 @@ pub const DirectoryTable = struct {
             raw_dirs_sorted.appendAssumeCapacity(raw_dir);
         }
 
-        std.mem.sort(*RawDirEntry, raw_dirs_sorted.items, {}, struct {
-            fn lessThan(_: void, lhs: *RawDirEntry, rhs: *RawDirEntry) bool {
+        std.mem.sort(*RawDirEntry, raw_dirs_sorted.items, image_type, struct {
+            fn lessThan(img_type: *const DiskImageType, lhs: *RawDirEntry, rhs: *RawDirEntry) bool {
                 if (std.mem.eql(u8, &lhs.entry.filename, &rhs.entry.filename)) {
                     if (std.mem.eql(u8, &lhs.entry.filetype, &rhs.entry.filetype)) {
                         if (lhs.entry.user == rhs.entry.user) {
-                            return lhs.extentGet() < rhs.extentGet();
+                            return lhs.extentGet(img_type) < rhs.extentGet(img_type);
                         } else {
                             return lhs.entry.user < rhs.entry.user;
                         }

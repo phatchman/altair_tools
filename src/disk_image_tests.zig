@@ -704,22 +704,22 @@ const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
-const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
 //const all_formats = .{CDOS_LGDSDD};
-// const all_formats = _: {
-//     const fields = std.meta.fields(DiskImageTypes);
-//     var result: [fields.len]*const DiskImageType = undefined;
-//     var idx: usize = 0;
-//     for (fields) |field| {
-//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-//         idx += 1;
-//     }
-//     const result_c = result;
-//     break :_ &result_c;
-// };
+const all_formats = _: {
+    const fields = std.meta.fields(DiskImageTypes);
+    var result: [fields.len]*const DiskImageType = undefined;
+    var idx: usize = 0;
+    for (fields) |field| {
+        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+        idx += 1;
+    }
+    const result_c = result;
+    break :_ &result_c;
+};
 
 test {
     std.testing.refAllDecls(@This());
