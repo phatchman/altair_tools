@@ -161,7 +161,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         kb_used += this_kb;
         try Console.stdout().print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
             entry.filenameOnly(),
-            entry.extension(),
+            entry.extensionOnly(),
             entry.recordsUsedInB(),
             this_kb,
             entry.user,
@@ -304,7 +304,7 @@ pub fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDi
             return error.CommandFailed;
         };
     }
-    var filename_buf: [dir_entry._filename.len + 3]u8 = undefined; // Underlying filename + _nn for the user.
+    var filename_buf: [dir_entry.filename.len + 3]u8 = undefined; // Underlying filename + _nn for the user.
     const out_filename = try if (add_user_extension)
         std.fmt.bufPrint(&filename_buf, "{s}_{d}", .{ dir_entry.filenameAndExtension(), dir_entry.user })
     else

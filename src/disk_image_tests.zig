@@ -7,7 +7,7 @@ const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    //    std.testing.log_level = .info;
+    // std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
         const compare_image = switch (fmt.type_id) {
@@ -20,6 +20,8 @@ test "disk formatted" {
             .CDOS_SMSSSD => @embedFile("test_disks/smsssd_fmt.dsk"),
             .CDOS_LGSSSD => @embedFile("test_disks/lgsssd_fmt.dsk"),
             .CDOS_LGSSDD => @embedFile("test_disks/lgssdd_fmt.dsk"),
+            .CDOS_LGDSSD => @embedFile("test_disks/lgdssd_fmt.dsk"),
+            .CDOS_LGDSDD => @embedFile("test_disks/lgdsdd_fmt.dsk"),
         };
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
@@ -29,15 +31,7 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-
-        // if (fmt.OS == .cdos) {
-        //     var label: DiskLabel = .{ .cdos = undefined };
-        //     @memcpy(&label.cdos.user_label, "ABCDEFGH");
-        //     label.cdos.date_mmddyy[0] = 12;
-        //     label.cdos.date_mmddyy[1] = 12;
-        //     label.cdos.date_mmddyy[2] = 12;
-        //     try disk_image.labelDisk(label);
-        // }
+        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -140,15 +134,21 @@ fn clearVariableBytes(in: []u8) []u8 {
     return in;
 }
 test "disk filled" {
-    //std.testing.log_level = .debug;
+    //    std.testing.log_level = .debug;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
-        std.log.info("Testing: {t} filled", .{fmt.type_id});
         const compare_image: ?[]u8 = switch (fmt.type_id) {
             .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_full.dsk")),
+            .HDD_5MB => try allocator.dupe(u8, @embedFile("test_disks/5mb_full.dsk")),
+            .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_full.dsk")),
+            .CDOS_LGSSSD => try allocator.dupe(u8, @embedFile("test_disks/lgsssd_full.dsk")),
+            .CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
+            .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
+            .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_full.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
+        std.log.info("Testing: {t} filled {s} compare image", .{ fmt.type_id, if (compare_image == null) "without" else "with" });
 
         const nr_sectors: usize = fmt.largestFileBytes() / fmt.sector_size_data;
         var big_file = try allocator.alloc(u8, nr_sectors * fmt.sector_size_data);
@@ -171,6 +171,8 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
+        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -698,13 +700,15 @@ const FDC_8MB = all_disk_types.getPtrConst(.FDD_8IN_8MB);
 const CDOS_SMSSSD = all_disk_types.getPtrConst(.CDOS_SMSSSD);
 const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
+const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
+const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 
 // Can be set to a limited set of formats when wanting to test a subset.
 const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
-//const all_formats = .{CDOS_LGSSDD};
+//const all_formats = .{CDOS_LGDSDD};
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
 //     var result: [fields.len]*const DiskImageType = undefined;

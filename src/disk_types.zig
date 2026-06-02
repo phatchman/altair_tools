@@ -13,6 +13,7 @@
 // TODO: Sector numbers are currently 1-based. There's no good reason
 // they should not be zero based instead.
 // Also some skew tables are 1-based and some are 0-based. how tf is that working?
+// TODO: Work out the magic mnumbers for CDOS. There is some way it knows the number of directories in a format.
 
 pub const OperatingSystem = enum { cpm, cdos };
 pub const DiskLabel = union(OperatingSystem) {
@@ -593,18 +594,6 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
     }
 };
 
-pub const DiskImageTypes = enum(usize) {
-    FDD_8IN = 0,
-    HDD_5MB,
-    HDD_5MB_1024,
-    FDD_TAR,
-    @"FDD_1.5MB",
-    FDD_8IN_8MB,
-    CDOS_SMSSSD,
-    CDOS_LGSSSD,
-    CDOS_LGSSDD,
-};
-
 // CDOS "Small"
 pub const DiskImageType_CDOS_SMSSSD = struct {
     const _skew_table = [_]u16{
@@ -688,7 +677,8 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
     const _skew_table = [_]u16{
         0, 11, 6,  1, 12, 7,  2,  13,
         8, 3,  14, 9, 4,  15, 10, 5,
-    };
+    }; // TODO: Surely we need the skew for track 0
+    // to upload the system tracks.
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
@@ -725,6 +715,88 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
     }
 };
 
+pub const DiskImageType_CDOS_LGDSSD = struct {
+    const _skew_table = [_]u16{
+        0,  6,  12, 18, 24, 4,  10, 16,
+        22, 2,  8,  14, 20, 1,  7,  13,
+        19, 25, 5,  11, 17, 23, 3,  9,
+        15, 21,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_LGDSSD,
+            .type_name = "CDOS_LGDSSD",
+            .description = "CDOS 8IN DSSD Disk",
+            .OS = .cdos,
+            .tracks = 154,
+            .reserved_tracks = 2,
+            .sectors_per_track = 26,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
+            .block_size = 2048,
+            .directories = 128,
+            .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
+            .image_size = 512512,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // track 0 has disk type information
+            .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
+        };
+        result.init();
+        return result;
+    }
+};
+
+pub const DiskImageType_CDOS_LGDSDD = struct {
+    const _skew_table = [_]u16{
+        0, 11, 6,  1, 12, 7,  2,  13,
+        8, 3,  14, 9, 4,  15, 10, 5,
+    }; // TODO: Surely we need the skew for track 0
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_LGDSDD,
+            .type_name = "CDOS_LGDSDD",
+            .description = "CDOS 8IN DSDD Disk",
+            .OS = .cdos,
+            .tracks = 154,
+            .reserved_tracks = 2,
+            .sectors_per_track = 16,
+            .sectors_per_track0 = 26,
+            .sector_size_raw = 512,
+            .sector_size_data = 512,
+            .sector_size_data0 = 128,
+            .sector_size_raw0 = 128,
+            .block_size = 2048,
+            .directories = 256,
+            .directory_allocs = 4, // TODO: This can be calculated directories * 32 / block_size.\
+            .two_byte_allocs = true,
+            .image_size = 1256704,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // track 0 is SD, rest DD
+            .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
+        };
+        result.init();
+        return result;
+    }
+};
+
+pub const DiskImageTypes = enum {
+    FDD_8IN,
+    HDD_5MB,
+    HDD_5MB_1024,
+    FDD_TAR,
+    @"FDD_1.5MB",
+    FDD_8IN_8MB,
+    CDOS_SMSSSD,
+    CDOS_LGSSSD,
+    CDOS_LGSSDD,
+    CDOS_LGDSSD,
+    CDOS_LGDSDD,
+};
+
 /// all available disk image formats.
 pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .init(.{
     .FDD_8IN = DiskImageType_MITS_8IN.init(),
@@ -736,6 +808,8 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .CDOS_SMSSSD = DiskImageType_CDOS_SMSSSD.init(),
     .CDOS_LGSSSD = DiskImageType_CDOS_LGSSSD.init(),
     .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
+    .CDOS_LGDSSD = DiskImageType_CDOS_LGDSSD.init(),
+    .CDOS_LGDSDD = DiskImageType_CDOS_LGDSDD.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

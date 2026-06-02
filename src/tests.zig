@@ -21,10 +21,10 @@ test "simple filename" {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, 0, Disk8IN);
+    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("FILENAME.COM", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameOnly());
-    try std.testing.expectEqualStrings("COM", cooked.extension());
+    try std.testing.expectEqualStrings("COM", cooked.extensionOnly());
 }
 
 test "filename no extension" {
@@ -37,10 +37,10 @@ test "filename no extension" {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, 0, Disk8IN);
+    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameOnly());
-    try std.testing.expectEqualStrings("", cooked.extension());
+    try std.testing.expectEqualStrings("", cooked.extensionOnly());
 }
 
 test "extension no filename" {
@@ -53,10 +53,10 @@ test "extension no filename" {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, 0, Disk8IN);
+    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings(".COM", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("", cooked.filenameOnly());
-    try std.testing.expectEqualStrings("COM", cooked.extension());
+    try std.testing.expectEqualStrings("COM", cooked.extensionOnly());
 }
 
 test "short filename no extension" {
@@ -69,10 +69,10 @@ test "short filename no extension" {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, 0, Disk8IN);
+    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("X", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("X", cooked.filenameOnly());
-    try std.testing.expectEqualStrings("", cooked.extension());
+    try std.testing.expectEqualStrings("", cooked.extensionOnly());
 }
 
 test "short extension no filename" {
@@ -85,10 +85,10 @@ test "short extension no filename" {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, 0, Disk8IN);
+    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings(".X", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("", cooked.filenameOnly());
-    try std.testing.expectEqualStrings("X", cooked.extension());
+    try std.testing.expectEqualStrings("X", cooked.extensionOnly());
 }
 
 test "translate valid filename" {
