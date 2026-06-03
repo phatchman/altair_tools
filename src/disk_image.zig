@@ -420,6 +420,7 @@ pub const DiskImage = struct {
                         &disk_sector,
                     );
                 }
+                //                log.debug("Formatting track:[{}] sector:[{}]", .{ track_nr, sector_nr });
                 try self.writer.interface().writeAll(disk_sector.rawBytes());
             }
         }
@@ -443,8 +444,8 @@ pub const DiskImage = struct {
                 raw_item.extent_low = switch (self.image_type.type_id) {
                     // TODO: Can we make it a compile error not to not have all
                     // of the cdos ones in this switch?
-                    .CDOS_SMSSSD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
-                    .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD => 0x10,
+                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
+                    .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
                     .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {
@@ -456,8 +457,8 @@ pub const DiskImage = struct {
                     raw_item.allocations[1] = 1; // TODO: What is this?
                 }
                 raw_item.num_records = switch (self.image_type.type_id) {
-                    .CDOS_SMSSSD, .CDOS_LGSSSD => 0x10, // TODO: What is this? num dirs?
-                    .CDOS_LGSSDD, .CDOS_LGDSSD => 0x20,
+                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10, // TODO: What is this? num dirs? or block size?
+                    .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                     .CDOS_LGDSDD => 0x40, // pretty sure this is num dirs
                     .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
                 };

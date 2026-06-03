@@ -164,6 +164,7 @@ pub const DiskImageType = struct {
     dir_entries_per_sector: u16 = undefined,
 
     pub fn init(self: *DiskImageType) void {
+        comptime std.debug.assert(self.skew_table.len == self.sectors_per_track);
         self.track_size = self.sector_size_raw * self.sectors_per_track;
         self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * self.sectors_per_track * self.sector_size_data / self.block_size;
         self.recs_per_extent = 128;
@@ -266,8 +267,7 @@ pub const DiskImageType = struct {
     }
 
     // By default, use the provided skew table, with no other adjustment required.
-    fn defaultSkewFn(skew_table: []const u16, track: u16, logical_sector: u16) u16 {
-        _ = track;
+    fn defaultSkewFn(skew_table: []const u16, _: u16, logical_sector: u16) u16 {
         return skew_table[logical_sector] + 1;
     }
 
@@ -594,6 +594,20 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
     }
 };
 
+/// Shared CDOS functions.
+const CDOS = struct {
+
+    // For the first sector on the first track, put the disk format label.
+    // This label is in the format <SM|LG><SS|DS><SD|DD>
+    // Note: The label is being taken from the disk type enum. Naming of the enum value is important!
+    fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
+        self.defaultFormattedSectorGet(address, sector);
+        if (address.track == 0 and address.sector == 1) {
+            @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
+        }
+    }
+};
+
 // CDOS "Small"
 pub const DiskImageType_CDOS_SMSSSD = struct {
     const _skew_table = [_]u16{
@@ -627,14 +641,104 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
     }
 };
 
-const CDOS = struct {
+pub const DiskImageType_CDOS_SMSSDD = struct {
+    const _skew_table = [_]u16{
+        0, 4, 8, 2, 6,
+        1, 5, 9, 3, 7,
+    };
 
-    // For the first sector on the first track, put the disk format label
-    fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        self.defaultFormattedSectorGet(address, sector);
-        if (address.track == 0 and address.sector == 1) {
-            @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
-        }
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_SMSSDD,
+            .type_name = "CDOS_SMSSDD",
+            .description = "CDOS 5.25\" SS DD Disk",
+            .OS = .cdos,
+            .tracks = 40,
+            .reserved_tracks = 2,
+            .sectors_per_track = 10,
+            .sector_size_raw = 512,
+            .sector_size_data = 512,
+            .sectors_per_track0 = 18,
+            .sector_size_raw0 = 128,
+            .sector_size_data0 = 128,
+            .block_size = 1024,
+            .directories = 64,
+            .directory_allocs = 2,
+            .image_size = 201984,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // First sector contains label
+            .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
+        };
+        result.init();
+        return result;
+    }
+};
+
+pub const DiskImageType_CDOS_SMDSSD = struct {
+    const _skew_table = [_]u16{
+        0, 5,  10, 15, 2, 7,  12, 17,
+        4, 9,  14, 1,  6, 11, 16, 3,
+        8, 13,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_SMDSSD,
+            .type_name = "CDOS_SMDSSD",
+            .description = "CDOS 5.25\" DS SD Disk",
+            .OS = .cdos,
+            .tracks = 80,
+            .reserved_tracks = 3,
+            .sectors_per_track = 18,
+            .sector_size_raw = 128,
+            .sector_size_data = 128,
+            .block_size = 1024,
+            .directories = 64,
+            .directory_allocs = 2,
+            .image_size = 184320,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // First sector contains label
+            .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
+        };
+        result.init();
+        return result;
+    }
+};
+
+pub const DiskImageType_CDOS_SMDSDD = struct {
+    const _skew_table = [_]u16{
+        0, 4, 8, 2, 6,
+        1, 5, 9, 3, 7,
+    };
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CDOS_SMDSDD,
+            .type_name = "CDOS_SMDSDD",
+            .description = "CDOS 5.25\" DS DD Disk",
+            .OS = .cdos,
+            .tracks = 80,
+            .reserved_tracks = 2,
+            .sectors_per_track = 10,
+            .sector_size_raw = 512,
+            .sector_size_data = 512,
+            .sectors_per_track0 = 18,
+            .sector_size_raw0 = 128,
+            .sector_size_data0 = 128,
+            .block_size = 2048,
+            .directories = 128,
+            .directory_allocs = 2,
+            //            .two_byte_allocs = true,
+            .image_size = 406784,
+            .detect_conditions = .none,
+            .varying_sector_format = true, // First sector contains label
+            .skew_table = &_skew_table,
+            .format_fn = CDOS.formattedSectorGet,
+        };
+        result.init();
+        return result;
     }
 };
 
@@ -791,6 +895,9 @@ pub const DiskImageTypes = enum {
     @"FDD_1.5MB",
     FDD_8IN_8MB,
     CDOS_SMSSSD,
+    CDOS_SMSSDD,
+    CDOS_SMDSSD,
+    CDOS_SMDSDD,
     CDOS_LGSSSD,
     CDOS_LGSSDD,
     CDOS_LGDSSD,
@@ -806,6 +913,9 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .@"FDD_1.5MB" = @"DiskImageType_FDD_1.5MB".init(),
     .FDD_8IN_8MB = DiskImageType_MITS_8IN_8MB.init(),
     .CDOS_SMSSSD = DiskImageType_CDOS_SMSSSD.init(),
+    .CDOS_SMSSDD = DiskImageType_CDOS_SMSSDD.init(),
+    .CDOS_SMDSSD = DiskImageType_CDOS_SMDSSD.init(),
+    .CDOS_SMDSDD = DiskImageType_CDOS_SMDSDD.init(),
     .CDOS_LGSSSD = DiskImageType_CDOS_LGSSSD.init(),
     .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
     .CDOS_LGDSSD = DiskImageType_CDOS_LGDSSD.init(),

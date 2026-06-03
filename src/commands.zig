@@ -198,7 +198,7 @@ pub fn directoryListRaw(_: Context, disk_image: *DiskImage, options: CommandLine
 
             try Console.stdout().print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
                 extent_nr,               entry.entry.user, entry.entry.filename,
-                entry.entry.filetype,    attribs,          entry.extentGet(),
+                entry.entry.filetype,    attribs,          entry.extentGet(disk_image.image_type),
                 entry.entry.num_records,
             });
 

@@ -18,6 +18,9 @@ test "disk formatted" {
             .FDD_TAR => @embedFile("test_disks/tar_fmt.dsk"),
             .@"FDD_1.5MB" => @embedFile("test_disks/1.5mb_fmt.dsk"),
             .CDOS_SMSSSD => @embedFile("test_disks/smsssd_fmt.dsk"),
+            .CDOS_SMSSDD => @embedFile("test_disks/smssdd_fmt.dsk"),
+            .CDOS_SMDSSD => @embedFile("test_disks/smdssd_fmt.dsk"),
+            .CDOS_SMDSDD => @embedFile("test_disks/smdsdd_fmt.dsk"),
             .CDOS_LGSSSD => @embedFile("test_disks/lgsssd_fmt.dsk"),
             .CDOS_LGSSDD => @embedFile("test_disks/lgssdd_fmt.dsk"),
             .CDOS_LGDSSD => @embedFile("test_disks/lgdssd_fmt.dsk"),
@@ -31,7 +34,6 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -134,13 +136,17 @@ fn clearVariableBytes(in: []u8) []u8 {
     return in;
 }
 test "disk filled" {
-    //    std.testing.log_level = .debug;
+    //std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         const compare_image: ?[]u8 = switch (fmt.type_id) {
             .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_full.dsk")),
             .HDD_5MB => try allocator.dupe(u8, @embedFile("test_disks/5mb_full.dsk")),
             .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_full.dsk")),
+            .CDOS_SMSSSD => try allocator.dupe(u8, @embedFile("test_disks/smsssd_full.dsk")),
+            .CDOS_SMSSDD => try allocator.dupe(u8, @embedFile("test_disks/smssdd_full.dsk")),
+            .CDOS_SMDSSD => try allocator.dupe(u8, @embedFile("test_disks/smdssd_full.dsk")),
+            .CDOS_SMDSDD => try allocator.dupe(u8, @embedFile("test_disks/smdsdd_full.dsk")),
             .CDOS_LGSSSD => try allocator.dupe(u8, @embedFile("test_disks/lgsssd_full.dsk")),
             .CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
@@ -171,8 +177,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
-        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -698,17 +702,19 @@ const TAR = all_disk_types.getPtrConst(.FDD_TAR);
 const FDC = all_disk_types.getPtrConst(.@"FDD_1.5MB");
 const FDC_8MB = all_disk_types.getPtrConst(.FDD_8IN_8MB);
 const CDOS_SMSSSD = all_disk_types.getPtrConst(.CDOS_SMSSSD);
+const CDOS_SMSSDD = all_disk_types.getPtrConst(.CDOS_SMSSDD);
+const CDOS_SMDSSD = all_disk_types.getPtrConst(.CDOS_SMDSSD);
+const CDOS_SMDSDD = all_disk_types.getPtrConst(.CDOS_SMDSDD);
 const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
-
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
-//const all_formats = .{CDOS_LGDSDD};
+//const all_formats = .{CDOS_SMDSDD};
 const all_formats = _: {
     const fields = std.meta.fields(DiskImageTypes);
     var result: [fields.len]*const DiskImageType = undefined;
