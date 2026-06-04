@@ -1,6 +1,5 @@
 //! Test all disk operations on each image format
 
-// TODO: Add labelling tests
 // TODO: Invalid images and recovery of images.
 
 const io = std.testing.io;
@@ -212,7 +211,6 @@ test "disk overfilled" {
 
     inline for (all_formats) |fmt| {
         std.log.info("Testing: {t} filled", .{fmt.type_id});
-        // TODO: FIX
         const big_file = try allocator.alloc(u8, fmt.largestFileBytes() + 1);
         @memset(big_file, 'X');
         defer allocator.free(big_file);
@@ -583,6 +581,39 @@ test "non-contiguous extent" {
     try std.testing.expectEqualSlices(u8, expected, &file_buffer);
 }
 
+test "autodetect image" {
+    //    std.testing.log_level = .info;
+    inline for (all_formats) |fmt| {
+        std.log.info("Testing autodect for: {s}", .{fmt.type_name});
+        const filename = switch (fmt.type_id) {
+            .FDD_8IN => "src/test_disks/8in_fmt.dsk",
+            .FDD_8IN_8MB => "src/test_disks/8mb_fmt.dsk",
+            .HDD_5MB => "src/test_disks/5mb_fmt.dsk",
+            .HDD_5MB_1024 => "src/test_disks/5mb_1024_fmt.dsk",
+            .FDD_TAR => "src/test_disks/tar_fmt.dsk",
+            .@"FDD_1.5MB" => "src/test_disks/1.5mb_fmt.dsk",
+            .CDOS_SMSSSD => "src/test_disks/smsssd_fmt.dsk",
+            .CDOS_SMSSDD => "src/test_disks/smssdd_fmt.dsk",
+            .CDOS_SMDSSD => "src/test_disks/smdssd_fmt.dsk",
+            .CDOS_SMDSDD => "src/test_disks/smdsdd_fmt.dsk",
+            .CDOS_LGSSSD => "src/test_disks/lgsssd_fmt.dsk",
+            .CDOS_LGSSDD => "src/test_disks/lgssdd_fmt.dsk",
+            .CDOS_LGDSSD => "src/test_disks/lgdssd_fmt.dsk",
+            .CDOS_LGDSDD => "src/test_disks/lgdsdd_fmt.dsk",
+        };
+        const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
+        var is_unique: bool = false;
+        const image_type = DiskImage.detectImageType(io, image_file, &is_unique);
+        std.log.info("Detected image type {?s}", .{if (image_type) |it| it.type_name else null});
+        if (fmt.type_id == .HDD_5MB or fmt.type_id == .HDD_5MB_1024) {
+            try std.testing.expectEqual(false, is_unique);
+            try std.testing.expectEqual(.HDD_5MB, if (image_type) |it| it.type_id else null);
+        } else {
+            try std.testing.expectEqual(true, is_unique);
+            try std.testing.expectEqual(fmt.type_id, if (image_type) |it| it.type_id else null);
+        }
+    }
+}
 /// Create readers and writers against a []const u8
 /// deinit() must be called to free allocated buffer
 const InMemoryConstImage = struct {
@@ -624,7 +655,6 @@ fn newMemoryDiskImage(raw_image: *InMemoryConstImage, image_type: *const DiskIma
 }
 
 fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const DiskImageType) !DiskImage {
-    // TODO: Always use these init fns or remove them.
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
     try disk_image.formatImage();
@@ -692,7 +722,7 @@ const std = @import("std");
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
-const DiskLabel = @import("disk_image.zig").DiskLabel;
+const DiskLabel = @import("disk_types.zig").DiskLabel;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);

@@ -178,7 +178,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
     );
     try Console.stdout().print(
         "{} directory entries and {}K bytes remain\n",
-        .{ disk_image.directoryFreeCount(), kb_free },
+        .{ disk_image.directory.rawEntryFreeCount(), kb_free },
     );
 
     return;
@@ -470,21 +470,11 @@ pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions)
         switch (err) {
             error.InvalidLabelFormat => printErrorMessage(current_command, .label_invalid, .{options.disk_label}, err),
             error.LabelingNotSupported => printErrorMessage(current_command, .labeling_not_supported, .{}, err),
+            error.LabelNotFound => printErrorMessage(current_command, .label_not_found, .{}, err),
             else => printErrorMessage(current_command, .unexpected, .{}, err),
         }
         return error.CommandFailed;
     };
-}
-
-var c: usize = 0;
-fn m() void {
-    std.debug.print("{}\n", .{c});
-    c += 1;
-}
-
-fn n(v: u8) void {
-    std.debug.print("{}:{c}\n", .{ c, v });
-    c += 1;
 }
 
 fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
@@ -548,6 +538,10 @@ pub fn labelShow(_: Context, disk_image: *DiskImage, _: CommandLineOptions) !voi
         switch (err) {
             error.LabelingNotSupported => {
                 printErrorMessage(current_command, .labeling_not_supported, .{}, err);
+                return error.CommandFailed;
+            },
+            error.LabelNotFound => {
+                printErrorMessage(current_command, .label_not_found, .{}, err);
                 return error.CommandFailed;
             },
         }
@@ -682,32 +676,36 @@ const ErrorMessage = enum {
     recover,
     labeling_not_supported,
     label_invalid,
+    label_not_found,
 };
 
-const error_messages = std.EnumArray(ErrorMessage, []const u8).init(.{
-    .unexpected = "Unexpected error",
-    .open_image = "Error opening disk image {s}",
-    .open_directory = "Error opening directory {s}",
-    .image_type_detect = "Can't detect image type. Use -h to see supported types and -T to force a type.",
-    .image_type_set = "Image type is not set correctly. Use -h to see supported types or -v to see the detected type.",
-    .image_init = "Initializing disk image {s}",
-    .image_load = "Loading directory table",
-    .no_matching_files = "No files found matching {s}",
-    .file_not_found_user = "File {s} does not exist for user {d}",
-    .file_not_found = "File {s} does not exist",
-    .file_create = "Error creating file {s}",
-    .file_open = "Error opening file {s}",
-    .file_copy = "Error copying file {s}",
-    .file_erase = "Error erasing {s}",
-    .file_write = "Error writing to {s}",
-    .file_seek = "Error seeking {s}",
-    .extract_cpm = "Error extracting sytem image to {s}",
-    .install_cpm = "Error installing system image from {s}",
-    .format = "Error formatting {s}",
-    .recover = "Error recovering image {s}",
-    .labeling_not_supported = "Labels are not supported for this image type",
-    .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy whhere <label> is up to 8 characters",
-});
+const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
+    .{
+        .unexpected = "Unexpected error",
+        .open_image = "Error opening disk image {s}",
+        .open_directory = "Error opening directory {s}",
+        .image_type_detect = "Can't detect image type. Use -h to see supported types and -T to force a type.",
+        .image_type_set = "Image type is not set correctly. Use -h to see supported types or -v to see the detected type.",
+        .image_init = "Initializing disk image {s}",
+        .image_load = "Loading directory table",
+        .no_matching_files = "No files found matching {s}",
+        .file_not_found_user = "File {s} does not exist for user {d}",
+        .file_not_found = "File {s} does not exist",
+        .file_create = "Error creating file {s}",
+        .file_open = "Error opening file {s}",
+        .file_copy = "Error copying file {s}",
+        .file_erase = "Error erasing {s}",
+        .file_write = "Error writing to {s}",
+        .file_seek = "Error seeking {s}",
+        .extract_cpm = "Error extracting sytem image to {s}",
+        .install_cpm = "Error installing system image from {s}",
+        .format = "Error formatting {s}",
+        .recover = "Error recovering image {s}",
+        .labeling_not_supported = "Labels are not supported for this image type",
+        .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy whhere <label> is up to 8 characters",
+        .label_not_found = "The first directory entry is not blank or a disk label",
+    },
+);
 
 const std = @import("std");
 const di = @import("disk_image.zig");

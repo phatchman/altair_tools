@@ -12,14 +12,11 @@
 
 // TODO: Sector numbers are currently 1-based. There's no good reason
 // they should not be zero based instead.
-// Also some skew tables are 1-based and some are 0-based. how tf is that working?
-// TODO: Work out the magic mnumbers for CDOS. There is some way it knows the number of directories in a format.
 
 pub const OperatingSystem = enum { cpm, cdos };
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
     cdos: struct {
-        //        disk_format_label: [6]u8, // e.g. LGSSDD for large single-sided double density,
         user_label: [8]u8,
         date_mmddyy: [3]u8,
     },
@@ -52,14 +49,15 @@ pub const PhysicalAddress = struct {
 pub const DiskSector = struct {
     // Hexdump raw sectors to debug output
     const DUMP = false;
+    pub const sector_size_max = 512;
 
-    backing_buffer: [512]u8,
+    backing_buffer: [sector_size_max]u8,
     sector_len_raw: u16,
     sector_len_data: u16,
     data_start: u8 = 0,
 
     pub fn init(image_type: *const DiskImageType, track_nr: u16) DiskSector {
-        std.debug.assert(image_type.sector_size_data <= 512);
+        std.debug.assert(image_type.sector_size_data <= sector_size_max);
         return .{
             .backing_buffer = undefined,
             .sector_len_data = image_type.sectorSizeDataForTrack(track_nr),
@@ -95,15 +93,6 @@ pub const DiskImageType = struct {
     pub const dir_entry_size: u16 = 32;
     pub const max_user = 15;
 
-    pub const AutoDetectConditions = enum {
-        // No special conditions
-        none,
-        // Also accepts images padded to 128 byte boundary
-        padded,
-        // Warn that this format has the same size as another format.
-        duplicate_size,
-    };
-
     // Internal name
     type_id: DiskImageTypes,
     // Friendly name, used in -T
@@ -136,8 +125,6 @@ pub const DiskImageType = struct {
     two_byte_allocs: bool = false,
     // Size of a disk image
     image_size: u32,
-    // Support detection of padded images etc.
-    detect_conditions: AutoDetectConditions,
     // Are all sectors formatted the same or do they vary per track?
     varying_sector_format: bool,
     // Which operating system is this?
@@ -153,6 +140,8 @@ pub const DiskImageType = struct {
     prepare_write_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultPrepareSectorForWrite,
     // For hard-sectored formats, return the offset from start of sector for various disk control bytes.
     offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffsetOf,
+    // Detect this image type
+    detect_fn: *const fn (self: *const DiskImageType, io: std.Io, file: std.Io.File) bool = defaultDetectFn,
 
     // Below are "constants" - These are initialised with "init".
     track_size: u16 = undefined,
@@ -169,7 +158,6 @@ pub const DiskImageType = struct {
         self.total_allocs = @as(u32, (self.tracks - self.reserved_tracks)) * self.sectors_per_track * self.sector_size_data / self.block_size;
         self.recs_per_extent = 128;
         self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
-        //        self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
         self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
 
         self.extents_per_alloc = self.block_size / dir_entry_size;
@@ -177,6 +165,7 @@ pub const DiskImageType = struct {
     }
 
     pub fn dump(self: *const DiskImageType) void {
+        // TODO: Work out what is important to show here.
         std.debug.print("Type:         {s}\n", .{self.type_name});
         std.debug.print("Sector Len:   {}\n", .{self.sector_size_raw});
         std.debug.print("Data Len:     {}\n", .{self.sector_size_data});
@@ -192,6 +181,10 @@ pub const DiskImageType = struct {
         std.debug.print("Dir Allocs:   {}\n", .{self.directory_allocs});
         std.debug.print("Num Dirs:     {}\n", .{self.directories});
         std.debug.print("Num Allocs:   {}\n", .{self.total_allocs});
+    }
+
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        return self.detect_fn(self, io, image_file);
     }
 
     /// Convert logical track/sector into physical sector.
@@ -226,20 +219,6 @@ pub const DiskImageType = struct {
     /// Get a freshly formatted sector.
     pub fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
         self.format_fn(self, address, sector);
-    }
-
-    /// TODO: PRob just create a stand-alone detection routine, rather than this cimplex nonsense.
-    /// Retruns true if supplied image_file is supported by this image type.
-    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
-        const image_size = image_file.length(io) catch {
-            return false;
-        };
-        const alt_size = if (self.detect_conditions == .padded) ((self.image_size + 127) / 128) * 128 else self.image_size;
-
-        if (image_size == self.image_size or image_size == alt_size) {
-            return true;
-        }
-        return false;
     }
 
     /// Return total number of sectors on disk.
@@ -282,6 +261,11 @@ pub const DiskImageType = struct {
     }
 
     fn defaultPrepareSectorForWrite(_: *const DiskImageType, _: PhysicalAddress, _: *DiskSector) void {}
+
+    fn defaultDetectFn(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        const image_size = image_file.length(io) catch return false;
+        return image_size == self.image_size or image_size == (self.image_size + 127) / 128 * 128;
+    }
 };
 
 /// MITS 8" floppy disk format
@@ -292,7 +276,8 @@ pub const DiskImageType = struct {
 /// 3) The rest of the sector contains control information such as track numbers, checksums and stop bits.
 /// 4) The layout of this control data is different for the first 6 tracks vs the rest of the disk.
 pub const DiskImageType_MITS_8IN = struct {
-    const _skew_table = [32]u16{
+    // Note that mits skew algorithm requires firist sector to be 1, not 0
+    const skew_table = [32]u16{
         1, 9,  17, 25, 3, 11, 19, 27,
         5, 13, 21, 29, 7, 15, 23, 31,
         2, 10, 18, 26, 4, 12, 20, 28,
@@ -316,25 +301,23 @@ pub const DiskImageType_MITS_8IN = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 337568,
-            .detect_conditions = .padded,
             .varying_sector_format = true,
             .skew_fn = skew,
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = formattedSectorGet,
             .prepare_write_fn = prepareSectorForWrite,
             .offset_fn = offsetOf,
-            //.writeable_sector_fn = writeableSectorGet,
         };
         result.init();
         return result;
     }
 
     /// For historical reasons, the skew changes based on the track number.
-    fn skew(skew_table: []const u16, track: u16, logical_sector: u16) u16 {
+    fn skew(table: []const u16, track: u16, logical_sector: u16) u16 {
         if (track < 6)
-            return skew_table[logical_sector];
+            return table[logical_sector];
 
-        return (((skew_table[logical_sector] - 1) * 17) % 32) + 1;
+        return (((table[logical_sector] - 1) * 17) % 32) + 1;
     }
 
     pub fn checksum(track: u16, sector_data: []u8) void {
@@ -414,7 +397,7 @@ pub const DiskImageType_MITS_8IN = struct {
 /// Has the same skew and 137 byte physical sectors as the
 /// standard 8" drive.
 pub const DiskImageType_MITS_8IN_8MB = struct {
-    const _skew_table = [32]u16{
+    const skew_table = [32]u16{
         1, 9,  17, 25, 3, 11, 19, 27,
         5, 13, 21, 29, 7, 15, 23, 31,
         2, 10, 18, 26, 4, 12, 20, 28,
@@ -436,10 +419,9 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .directories = 512,
             .directory_allocs = 4,
             .image_size = 8978432,
-            .detect_conditions = .none,
             .varying_sector_format = true,
             .skew_fn = DiskImageType_MITS_8IN.skew,
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = DiskImageType_MITS_8IN.formattedSectorGet,
             .prepare_write_fn = DiskImageType_MITS_8IN.prepareSectorForWrite,
             .offset_fn = DiskImageType_MITS_8IN.offsetOf,
@@ -487,7 +469,6 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
             .directory_allocs = 2,
             .two_byte_allocs = true,
             .image_size = 4988928,
-            .detect_conditions = .duplicate_size,
             .varying_sector_format = false,
             .skew_table = &skew_table,
         };
@@ -521,7 +502,7 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
 
 // Tarbell floppy disk format
 pub const DiskImageType_TARBELL_FDD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0,  6,  12, 18, 24, 4,  10, 16,
         22, 2,  8,  14, 20, 1,  7,  13,
         19, 25, 5,  11, 17, 23, 3,  9,
@@ -543,9 +524,8 @@ pub const DiskImageType_TARBELL_FDD = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 256256,
-            .detect_conditions = .none,
             .varying_sector_format = false,
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
         };
         result.init();
         return result;
@@ -554,7 +534,7 @@ pub const DiskImageType_TARBELL_FDD = struct {
 
 // FDC+ controller supports 1.5MB floppy disks
 pub const @"DiskImageType_FDD_1.5MB" = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0,  1,  2,  3,  4,  5,  6,  7,
         8,  9,  10, 11, 12, 13, 14, 15,
         16, 17, 18, 19, 20, 21, 22, 23,
@@ -584,8 +564,7 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
             .two_byte_allocs = true,
             .image_size = 1525760,
             .varying_sector_format = false,
-            .detect_conditions = .none,
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
         };
         result.init();
         // TODO: Hacky
@@ -595,7 +574,7 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
 };
 
 /// Shared CDOS functions.
-const CDOS = struct {
+pub const CDOS = struct {
 
     // For the first sector on the first track, put the disk format label.
     // This label is in the format <SM|LG><SS|DS><SD|DD>
@@ -606,11 +585,30 @@ const CDOS = struct {
             @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
         }
     }
+
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        if (!DiskImageType.defaultDetectFn(self, io, image_file)) return false;
+        var buf: [128]u8 = undefined;
+        var reader = image_file.reader(io, &.{});
+        reader.interface.readSliceAll(&buf) catch return false;
+        // Check for the disk label
+        if (std.mem.eql(u8, buf[120..126], @tagName(self.type_id)[5..])) {
+            return true;
+        }
+        // One of the CDOS images that ships with the Altair Duino doesn't
+        // have a disk type label. So we look for the operating system instead.
+        if (self.type_id == .CDOS_LGSSSD) {
+            reader.seekTo(256) catch return false;
+            reader.interface.readSliceAll(&buf) catch return false;
+            return std.mem.eql(u8, buf[6..14], "CDOS.COM");
+        }
+        return false;
+    }
 };
 
 // CDOS "Small"
 pub const DiskImageType_CDOS_SMSSSD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 5,  10, 15, 2, 7,  12, 17,
         4, 9,  14, 1,  6, 11, 16, 3,
         8, 13,
@@ -631,10 +629,10 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 92160,
-            .detect_conditions = .none,
             .varying_sector_format = true, // First sector contains label
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -642,7 +640,7 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
 };
 
 pub const DiskImageType_CDOS_SMSSDD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 4, 8, 2, 6,
         1, 5, 9, 3, 7,
     };
@@ -665,10 +663,10 @@ pub const DiskImageType_CDOS_SMSSDD = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 201984,
-            .detect_conditions = .none,
             .varying_sector_format = true, // First sector contains label
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -676,7 +674,7 @@ pub const DiskImageType_CDOS_SMSSDD = struct {
 };
 
 pub const DiskImageType_CDOS_SMDSSD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 5,  10, 15, 2, 7,  12, 17,
         4, 9,  14, 1,  6, 11, 16, 3,
         8, 13,
@@ -697,10 +695,10 @@ pub const DiskImageType_CDOS_SMDSSD = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 184320,
-            .detect_conditions = .none,
             .varying_sector_format = true, // First sector contains label
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -708,7 +706,7 @@ pub const DiskImageType_CDOS_SMDSSD = struct {
 };
 
 pub const DiskImageType_CDOS_SMDSDD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 4, 8, 2, 6,
         1, 5, 9, 3, 7,
     };
@@ -730,12 +728,11 @@ pub const DiskImageType_CDOS_SMDSDD = struct {
             .block_size = 2048,
             .directories = 128,
             .directory_allocs = 2,
-            //            .two_byte_allocs = true,
             .image_size = 406784,
-            .detect_conditions = .none,
             .varying_sector_format = true, // First sector contains label
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -744,7 +741,7 @@ pub const DiskImageType_CDOS_SMDSDD = struct {
 
 // CDOS "Large"
 pub const DiskImageType_CDOS_LGSSSD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0,  6,  12, 18, 24, 4,  10, 16,
         22, 2,  8,  14, 20, 1,  7,  13,
         19, 25, 5,  11, 17, 23, 3,  9,
@@ -766,10 +763,10 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
             .directories = 64,
             .directory_allocs = 2,
             .image_size = 256256,
-            .detect_conditions = .none,
             .varying_sector_format = true, // First sector contains a label
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -778,7 +775,7 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
 
 // For all Cromemco DD disks have the, the first track is SD
 pub const DiskImageType_CDOS_LGSSDD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 11, 6,  1, 12, 7,  2,  13,
         8, 3,  14, 9, 4,  15, 10, 5,
     }; // TODO: Surely we need the skew for track 0
@@ -802,16 +799,12 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .directories = 128,
             .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
             .image_size = 625920,
-            .detect_conditions = .none,
             .varying_sector_format = true, // track 0 is SD, rest DD
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
-        // Sigh, this format is used by Michah CPM, which works on Cromemco machines,
-        // but only uses single byte allocs. I've yet to find and actual CDOS image using
-        // the Single Sided Double Density Format.
-
         // So since we're using single byte allocs on this format we have to restrict to using
         // 254 of the 300 available allocations.
         result.total_allocs = 254;
@@ -820,7 +813,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
 };
 
 pub const DiskImageType_CDOS_LGDSSD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0,  6,  12, 18, 24, 4,  10, 16,
         22, 2,  8,  14, 20, 1,  7,  13,
         19, 25, 5,  11, 17, 23, 3,  9,
@@ -842,10 +835,10 @@ pub const DiskImageType_CDOS_LGDSSD = struct {
             .directories = 128,
             .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
             .image_size = 512512,
-            .detect_conditions = .none,
             .varying_sector_format = true, // track 0 has disk type information
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;
@@ -853,7 +846,7 @@ pub const DiskImageType_CDOS_LGDSSD = struct {
 };
 
 pub const DiskImageType_CDOS_LGDSDD = struct {
-    const _skew_table = [_]u16{
+    const skew_table = [_]u16{
         0, 11, 6,  1, 12, 7,  2,  13,
         8, 3,  14, 9, 4,  15, 10, 5,
     }; // TODO: Surely we need the skew for track 0
@@ -877,10 +870,10 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
             .directory_allocs = 4, // TODO: This can be calculated directories * 32 / block_size.\
             .two_byte_allocs = true,
             .image_size = 1256704,
-            .detect_conditions = .none,
             .varying_sector_format = true, // track 0 is SD, rest DD
-            .skew_table = &_skew_table,
+            .skew_table = &skew_table,
             .format_fn = CDOS.formattedSectorGet,
+            .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
         return result;

@@ -61,7 +61,6 @@ pub const RawDirEntry = struct {
             return RawDirError.InvalidExtent;
         }
 
-        // TODO: Magic nrs
         if (self.entry.num_records > 128) {
             log.err(
                 "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
@@ -85,8 +84,7 @@ pub const RawDirEntry = struct {
         return self.entry.user > DiskImageType.max_user;
     }
 
-    // TODO: Think of a better way. This is only valid for cdos.
-    // Directory entry doesn't currently hold the image type. so can't easily check OS
+    /// is this a disk label, instead of a normal dir entry?
     pub fn isLabel(self: *const RawDirEntry) bool {
         return self.entry.user == 0x81;
     }
@@ -133,10 +131,9 @@ pub const RawDirEntry = struct {
         if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
-        // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
         if (!image_type.two_byte_allocs) {
             // 8 bit allocations
-            self.entry.allocations[entry_nr] = @intCast(alloc_nr & 0xff); // TODO: This mask won;t work for CDOS?
+            self.entry.allocations[entry_nr] = @intCast(alloc_nr & 0xff);
         } else {
             // 16 bit allocations.
             var alloc: [2]u8 = undefined;
@@ -153,7 +150,6 @@ pub const RawDirEntry = struct {
             return RawDirError.InvalidEntryNumber;
         }
 
-        // TODO: This is not true. Each format needs a flag for 8 or 16 bit allocs.
         if (!image_type.two_byte_allocs) {
             return self.entry.allocations[entry_nr];
         } else {
@@ -163,9 +159,7 @@ pub const RawDirEntry = struct {
     }
 
     /// How many allocations are controlled by this extent?
-    pub fn allocationsCount(self: *const RawDirEntry, image_type: *const DiskImageType) u16 {
-        _ = self;
-        // TODO: Just return the actual number from image_type. And then we don't even need this fn.
+    pub fn allocationsCount(_: *const RawDirEntry, image_type: *const DiskImageType) u16 {
         return if (image_type.two_byte_allocs)
             @min(8, image_type.allocs_per_extent)
         else
@@ -253,17 +247,6 @@ pub const CookedDirEntry = struct {
         if (image_type.recs_per_extent > 128 and num_allocs > 4) {
             self.num_records += 128;
         }
-
-        // TODO:!
-        // Ensure all raw entires are for the same file
-        //if (@import("builtin").mode == .Debug) {
-        //    const filename = self.raw_indexes.items[0].filename;
-        //    const filetype = self.raw_indexes.items[0].filetype;
-        //    for (self.raw_indexes[1..]) |raw| {
-        //        std.debug.assert(std.mem.eql(filename, raw.filename));
-        //        std.debug.assert(std.mem.eql(filetype, raw.filetype));
-        //    }
-        //}
     }
 
     pub fn filenameAndExtension(self: *const CookedDirEntry) []const u8 {
@@ -292,7 +275,7 @@ pub const CookedDirEntry = struct {
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
 
-        try cooked.allocations.ensureUnusedCapacity(arena, 16); // TODO: HARDCODED
+        try cooked.allocations.ensureUnusedCapacity(arena, raw.entry.allocations.len);
         for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
@@ -374,7 +357,7 @@ pub const DirectoryTable = struct {
             sector_nr += 1;
         }) {
             const logical_address = LogicalAddress{
-                .allocation = sector_nr / (image_type.block_size / image_type.sector_size_data), // TODO: This is recs per block
+                .allocation = sector_nr / (image_type.block_size / image_type.sector_size_data),
                 .record = @intCast(sector_nr % image_type.recs_per_alloc),
             };
             // Read the raw CPM directory entries and add them to the raw_directories array.
@@ -409,8 +392,6 @@ pub const DirectoryTable = struct {
         }.lessThan);
 
         // Create the CookedDirEntries and remove any used allocations from the free alocations set.
-        // TODO: This does assume that the "first" extent always appears in the raw entry before the
-        // later extents. This should always be true, but is not documented to be the case.
         for (raw_dirs_sorted.items, 0..) |dir, i| {
             if (!dir.isDeleted()) {
                 const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.items[0])) / @sizeOf(RawDirEntry);
@@ -461,8 +442,6 @@ pub const DirectoryTable = struct {
             // std.debug.print("TRUE\n", .{});
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, image_type));
         } else {
-            // TODO: Currently relies on contiguous raw entries for the one file (i.e. must be sorted first)
-            // Consider changing this to a name lookup instead?
             if (self.cooked_directories.items.len == 0) {
                 log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.entry.filename, entry.entry.filetype });
                 return error.InvalidImageFile;
@@ -726,5 +705,5 @@ pub const FileNameIterator = struct {
 const std = @import("std");
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImage = @import("disk_image.zig").DiskImage;
-const DiskSector = @import("disk_image.zig").DiskSector;
+const DiskSector = @import("disk_types.zig").DiskSector;
 const LogicalAddress = @import("disk_image.zig").LogicalAddress;

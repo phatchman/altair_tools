@@ -2,8 +2,7 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
-// TODO: Forced put doesn;t work. Actually don't know this.
-// Rather the TODO: should be to add a -f --force option.
+// TODO: Allow the "force" option to be set from the cli.
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
@@ -97,14 +96,12 @@ pub const SeekableWriter = union(enum) {
 
 /// Interface for opening and maniplating various Altair CPM disk images.
 pub const DiskImage = struct {
-    const Self = @This();
+    const filename_len = 12;
 
     reader: SeekableReader,
     writer: SeekableWriter,
     image_type: *const DiskImageType,
     directory: DirectoryTable,
-    // TODO: Why is this a field?
-    _filename_conversion_buf: [12]u8, // Used to convert local to CPM filenames 8.3 = 12 chars.
 
     /// Initilize a DiskImage from an opened image file.
     /// Image file must at least have read permissions if the loadDirectories() is called.
@@ -116,13 +113,12 @@ pub const DiskImage = struct {
             .writer = writer,
             .image_type = image_type,
             .directory = try .init(gpa, image_type),
-            ._filename_conversion_buf = @splat(0),
         };
     }
 
     /// Close the existing image file and open a new one.
     /// closes any files before an error is returned.
-    pub fn reinit(self: *Self, gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter) !void {
+    pub fn reinit(self: *DiskImage, gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter) !void {
         self.deinit();
         self.reader = reader;
         self.writer = writer;
@@ -131,44 +127,38 @@ pub const DiskImage = struct {
 
     /// Cleanup.
     /// Caller should close underlying file after calling deinit()
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DiskImage) void {
         self.directory.deinit();
     }
 
     /// Load the directory table.
     /// If raw_only is false, CookedDirectories are also loaded,
     /// which are an easier to use verion of the raw cpm directories
-    pub fn loadDirectories(self: *Self, raw_only: bool) DirectoryLoadError!void {
+    pub fn loadDirectories(self: *DiskImage, raw_only: bool) DirectoryLoadError!void {
         try self.directory.load(self, raw_only);
     }
 
     /// Return disk free capacity.
-    pub fn capacityFreeInKB(self: *const Self) usize {
+    pub fn capacityFreeInKB(self: *const DiskImage) usize {
         const free_allocs = self.directory.free_allocations.count();
         return free_allocs * (self.image_type.block_size / 1024);
     }
 
     /// Return disk total capacity
-    pub fn capacityTotalInKB(self: *const Self) usize {
+    pub fn capacityTotalInKB(self: *const DiskImage) usize {
         const image_type = self.image_type;
         return @as(usize, (image_type.total_allocs - image_type.directory_allocs)) * image_type.block_size / 1024;
     }
 
-    // TODO: it's poor zig style to just forward calls like this?
-    /// Return number of available directory entries
-    pub fn directoryFreeCount(self: *const Self) usize {
-        return self.directory.rawEntryFreeCount();
-    }
-
     pub const TextMode = enum { Auto, Text, Binary };
 
-    pub fn copyFromImage(self: *Self, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+    pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
         const num_records = entry.num_records;
         // Check for empty file.
         if (entry.allocations.items.len == 0) {
             return;
         }
-        const recs_per_sector = (self.image_type.sector_size_data / 128); // TODO: Hard coded.
+        const recs_per_sector = (self.image_type.sector_size_data / 128); // Recs always represent 128 bytes
         const num_sectors = (num_records + recs_per_sector - 1) / recs_per_sector;
         var total_rec_nr: u16 = 0;
         for (0..num_sectors) |sec_nr| {
@@ -224,10 +214,26 @@ pub const DiskImage = struct {
 
     /// Try and auto-detect what type of disk image this is
     pub fn detectImageType(io: std.Io, image_file: File, is_unique: *bool) ?*const DiskImageType {
+        is_unique.* = true;
         for (&all_disk_types.values) |*dt| {
             if (dt.isCorrectFormat(io, image_file)) {
-                is_unique.* = dt.detect_conditions != .duplicate_size;
-                return dt;
+                switch (dt.type_id) {
+                    .HDD_5MB, .HDD_5MB_1024 => {
+                        is_unique.* = false;
+                        return dt;
+                    },
+                    .FDD_TAR => {
+                        const lgsssd = all_disk_types.getPtrConst(.CDOS_LGSSSD);
+                        // TAR and CDOS_LGSSSD are same size, but can be distinguished
+                        // by the CDOS disk label.
+                        if (lgsssd.isCorrectFormat(io, image_file)) {
+                            continue;
+                        } else {
+                            return dt;
+                        }
+                    },
+                    else => return dt,
+                }
             }
         }
         return null;
@@ -239,11 +245,11 @@ pub const DiskImage = struct {
     }
 
     /// Copy a file from file_reader to the disk image.
-    pub fn copyToImage(self: *Self, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
+    pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
         const cpm_user = user orelse 0;
         const basename = std.fs.path.basename(to_filename);
-        const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &self._filename_conversion_buf);
-
+        var conversion_buf: [filename_len]u8 = undefined;
+        const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &conversion_buf);
         if (self.directory.findByFilename(cpm_filename, user)) |existing_entry| {
             if (force) {
                 try self.erase(existing_entry);
@@ -252,7 +258,7 @@ pub const DiskImage = struct {
             }
         }
 
-        var file_buffer: [512]u8 = undefined; // TODO: Make this MAX_SECTOR_SIZE
+        var file_buffer: [DiskSector.sector_size_max]u8 = undefined;
         const file_data = file_buffer[0..self.image_type.sector_size_data];
 
         var extent_nr: u16 = undefined;
@@ -363,25 +369,31 @@ pub const DiskImage = struct {
     /// Erase a file.
     /// Note that this invalidates any pointers to existing CookedDirEntries
     /// Including any iterators.
-    pub fn erase(self: *Self, to_erase: *CookedDirEntry) !void {
+    pub fn erase(self: *DiskImage, to_erase: *CookedDirEntry) !void {
         return self.directory.eraseEntry(to_erase, self);
     }
 
-    pub fn extractCPM(self: *Self, io: std.Io, out_file: File) !void {
+    fn sectorsForTrack(self: *const DiskImage, track_nr: usize) usize {
+        if (track_nr == 0)
+            return self.image_type.sectors_per_track0 orelse self.image_type.sectors_per_track
+        else
+            return self.image_type.sectors_per_track;
+    }
+
+    pub fn extractCPM(self: *DiskImage, io: std.Io, out_file: File) !void {
         try self.reader.seekTo(0);
+        var writer = out_file.writer(io, &.{});
 
         for (0..self.image_type.reserved_tracks) |track_nr| {
             var sector: DiskSector = .init(self.image_type, @intCast(track_nr));
-            for (0..self.image_type.sectors_per_track) |_| {
-                // TODO: Log error here?
+            for (0..self.sectorsForTrack(track_nr)) |_| {
                 self.reader.interface().readSliceAll(sector.dataBytes()) catch return error.InvalidImageFile;
-                var writer = out_file.writer(io, &.{});
                 try writer.interface.writeAll(sector.dataBytes());
             }
         }
     }
 
-    pub fn installCPM(self: *Self, io: std.Io, in_file: File) !void {
+    pub fn installCPM(self: *DiskImage, io: std.Io, in_file: File) !void {
         const in_size = try in_file.length(io);
         const expected_size = self.image_type.reserved_tracks * self.image_type.track_size;
         if (in_size != expected_size) {
@@ -394,7 +406,7 @@ pub const DiskImage = struct {
         try self.writer.seekTo(0);
     }
 
-    pub fn formatImage(self: *Self) !void {
+    pub fn formatImage(self: *DiskImage) !void {
         var disk_sector: DiskSector = undefined;
         const varying_sector_format = self.image_type.varying_sector_format;
 
@@ -426,7 +438,7 @@ pub const DiskImage = struct {
         }
     }
 
-    pub fn labelDisk(self: *Self, label: DiskLabel) !void {
+    pub fn labelDisk(self: *DiskImage, label: DiskLabel) !void {
         switch (self.image_type.OS) {
             .cdos => {},
             else => return error.LabelingNotSupported,
@@ -434,7 +446,11 @@ pub const DiskImage = struct {
         switch (label) {
             .cdos => |lbl| {
                 std.debug.assert(self.image_type.OS == .cdos);
-                const raw_item = &self.directory.raw_directories.items[0].entry;
+
+                const raw_entry = &self.directory.raw_directories.items[0];
+                const raw_item = &raw_entry.entry;
+                // Either user shuld be 0xe5 from a fresh format / deleted entry or should be 0x81 to indicate a label.
+                if (!raw_entry.isLabel() and raw_item.user != 0xe5) return error.LabelNotFound;
                 @memset(std.mem.asBytes(raw_item), 0x00);
                 raw_item.user = 0x81;
                 @memcpy(&raw_item.filename, &lbl.user_label);
@@ -442,8 +458,6 @@ pub const DiskImage = struct {
                 raw_item.filetype[1] = lbl.date_mmddyy[1];
                 raw_item.filetype[2] = lbl.date_mmddyy[2];
                 raw_item.extent_low = switch (self.image_type.type_id) {
-                    // TODO: Can we make it a compile error not to not have all
-                    // of the cdos ones in this switch?
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
                     .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
@@ -469,12 +483,13 @@ pub const DiskImage = struct {
     }
 
     /// Return any disk label in `label`
-    pub fn labelGet(self: *const Self, label: *DiskLabel) !void {
+    pub fn labelGet(self: *const DiskImage, label: *DiskLabel) !void {
         switch (self.image_type.OS) {
             .cdos => {
                 label.* = .{ .cdos = undefined };
-                // TODO: Do some validation of the label here
-                const raw_item = &self.directory.raw_directories.items[0].entry;
+                const raw_entry = &self.directory.raw_directories.items[0];
+                const raw_item = &raw_entry.entry;
+                if (!raw_entry.isLabel()) return error.LabelNotFound;
                 @memcpy(&label.cdos.user_label, &raw_item.filename);
                 label.cdos.date_mmddyy[0] = raw_item.filetype[0];
                 label.cdos.date_mmddyy[1] = raw_item.filetype[1];
@@ -485,7 +500,7 @@ pub const DiskImage = struct {
     }
 
     /// Try and recover an image with invalid directory entries
-    pub fn tryRecovery(self: *Self) !void {
+    pub fn tryRecovery(self: *DiskImage) !void {
         try self.loadDirectories(true);
         for (self.directory.raw_directories.items, 0..) |*raw_dir, i| {
             var saveable = true;
@@ -526,18 +541,15 @@ pub const DiskImage = struct {
         }
     }
 
-    // TODO: The record number is really being sent as the sector number. i.e for 512k
-    // sectors it passes 0, 1, 2. Not 0, 4, 8. I think it should acrually be 0, 4, 8 as
-    // each record references a 128byte section of the 512k sector. We're just choosing
-    // to write 1 sector at a time.
     /// Convert between logical (allocation, record) to physical (track, sector) address.
-    fn toPhysicalAddress(self: *const Self, address: LogicalAddress) PhysicalAddress {
-        // TODO: puts some asserts in here to make sure logical address is not insane.
+    // This really should take record number but uses sector number instead. i.e for 512k
+    // sectors it passes 0, 1, 2. Not 0, 4, 8 when there are 4 records per sector.
+    // Everything works 100% fine with sectors, so I'm not inclined to change it.
+    fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAddress {
         const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
         const absolute_sector = address.allocation * sectors_per_alloc + (address.record % sectors_per_alloc);
         const track: u16 = self.image_type.reserved_tracks + (absolute_sector / self.image_type.sectors_per_track);
-        // TODO: Need to account for track 0 here?
         const logical_sector = absolute_sector % self.image_type.sectors_per_track;
 
         log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
@@ -545,10 +557,9 @@ pub const DiskImage = struct {
         return PhysicalAddress{ .track = track, .sector = physical_sector };
     }
 
-    // TODO: Check all of the errors.
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
     /// Read a single 128bytes sector
-    pub fn readSector(self: *Self, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
+    pub fn readSector(self: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
         // Sometimes the data is not at the start of the sector. So adjust
         const data_offset = self.image_type.seekOffset(physical_location);
@@ -563,7 +574,7 @@ pub const DiskImage = struct {
 
     const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single sector.
-    pub fn writeSector(self: *Self, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
+    pub fn writeSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
         self.image_type.prepareSectorForWrite(location, sector);
         const sector_offset = self.image_type.seekOffset(location);
         log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ location.track, location.sector, sector_offset });
@@ -574,7 +585,7 @@ pub const DiskImage = struct {
     }
 
     /// write a CPM diretory entry (RawDirEntry)
-    pub fn rawEntryWrite(self: *Self, extent_nr: u16) (WriteSectorError || RawDirError)!void {
+    pub fn rawEntryWrite(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
         // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.items[extent_nr].extentGet() });
         // Make sure entry is valid before written.
         const this_entry = &self.directory.raw_directories.items[extent_nr];
@@ -596,11 +607,12 @@ pub const DiskImage = struct {
 
 const std = @import("std");
 const Console = @import("console.zig");
-const DiskImageType = @import("disk_types.zig").DiskImageType;
-const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;
+const disk_types = @import("disk_types.zig");
+const DiskImageType = disk_types.DiskImageType;
+const PhysicalAddress = disk_types.PhysicalAddress;
 // TODO: Should not be pub. Fix up the other imports
-pub const DiskSector = @import("disk_types.zig").DiskSector;
-pub const DiskLabel = @import("disk_types.zig").DiskLabel;
+const DiskSector = disk_types.DiskSector;
+const DiskLabel = disk_types.DiskLabel;
 const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 const DirectoryLoadError = DirectoryTable.DirectoryLoadError;
