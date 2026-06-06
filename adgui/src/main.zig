@@ -1030,8 +1030,8 @@ fn makeDirectoriesUsageGraph() !void {
         defer files_box.deinit();
         if (commands.disk_image) |disk_image| {
             const max_directories = disk_image.image_type.directories;
-            const used_directories = disk_image.directoryFreeCount();
-            const free_directories = max_directories - used_directories;
+            const free_directories = disk_image.directory.rawEntryFreeCount();
+            const used_directories = max_directories - free_directories;
             const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
             const width = percentage * 250;
             {

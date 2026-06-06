@@ -10,10 +10,21 @@
 // 4) Add a freshly formatted version of the image to src/test_images
 // 5) Add a format test and any other relevant tests to disk_image_tests.zig
 
-// TODO: Sector numbers are currently 1-based. There's no good reason
-// they should not be zero based instead.
+// TODO: Sector numbers are currently 1-based. There's no good reason they should not be zero based instead.
+// TODO: Later version of CDOS encode the total number of directories in the 1st directory entry.
+//       - Support setting the number of directories at runtime
+//       - Support reading the 1st dir entry and deconding the number of directories
+//       - Support setting the number of directories at format time
+//       - STAT/L on CDOS allows rewriting the entire label, including disk format!
+//         ```
+//         Single or Double sided diskette (S = Single, D = Double) <D> -
+//         Name . . . . . . . . . . . . . . . . . . <ABCDEFGH> -
+//         Date . . . . . . . . . . . . . . . . . . <12/12/12> -
+//         Number of directory entries (64-512) . . . .  <128> -
+//         ```
 
 pub const OperatingSystem = enum { cpm, cdos };
+
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
     cdos: struct {
@@ -41,7 +52,7 @@ pub const DiskLabel = union(OperatingSystem) {
 pub const PhysicalAddress = struct {
     track: u16,
     sector: u16,
-    pub const zero: PhysicalAddress = .{ .track = 0, .sector = 0 };
+    pub const zero: PhysicalAddress = .{ .track = 0, .sector = 1 };
 };
 
 /// Represents a single disk sector.
@@ -129,7 +140,6 @@ pub const DiskImageType = struct {
     varying_sector_format: bool,
     // Which operating system is this?
     OS: OperatingSystem,
-
     // Skew from logical to physical sector
     skew_fn: *const fn (skew_table: []const u16, track: u16, sector: u16) u16 = defaultSkewFn,
     // Defines logical to physical skews.
@@ -212,6 +222,7 @@ pub const DiskImageType = struct {
         }
     }
 
+    /// Allows for calculating checksums etc before the sector is written
     pub fn prepareSectorForWrite(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
         self.prepare_write_fn(self, address, sector);
     }
@@ -418,6 +429,7 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .block_size = 4096,
             .directories = 512,
             .directory_allocs = 4,
+            .two_byte_allocs = true,
             .image_size = 8978432,
             .varying_sector_format = true,
             .skew_fn = DiskImageType_MITS_8IN.skew,
@@ -427,10 +439,9 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .offset_fn = DiskImageType_MITS_8IN.offsetOf,
         };
         result.init();
-        // TODO: hackiness. Calculate these properly
+        // TODO: These should be calculated, correctly in init, instead of being set here.
         result.allocs_per_extent = 16;
         result.recs_per_extent = 256;
-        result.two_byte_allocs = true; // TODO: Check this
         return result;
     }
 };
@@ -567,7 +578,7 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
             .skew_table = &skew_table,
         };
         result.init();
-        // TODO: Hacky
+        // This should be calculated correctly in init, instead of being set here.
         result.allocs_per_extent = 16;
         return result;
     }
@@ -593,6 +604,7 @@ pub const CDOS = struct {
         reader.interface.readSliceAll(&buf) catch return false;
         // Check for the disk label
         if (std.mem.eql(u8, buf[120..126], @tagName(self.type_id)[5..])) {
+            // Currently only support the "default" number of directories for CDOS formats.
             return true;
         }
         // One of the CDOS images that ships with the Altair Duino doesn't
@@ -752,7 +764,7 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
         var result = DiskImageType{
             .type_id = .CDOS_LGSSSD,
             .type_name = "CDOS_LGSSSD",
-            .description = "CDOS 8IN 'Large' Disk",
+            .description = "CDOS 8\" SSSD Disk",
             .OS = .cdos,
             .tracks = 77,
             .reserved_tracks = 2,
@@ -774,18 +786,18 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
 };
 
 // For all Cromemco DD disks have the, the first track is SD
+// Note that no skew is performed when reading/writing the reserved track 0 and 1.
 pub const DiskImageType_CDOS_LGSSDD = struct {
     const skew_table = [_]u16{
         0, 11, 6,  1, 12, 7,  2,  13,
         8, 3,  14, 9, 4,  15, 10, 5,
-    }; // TODO: Surely we need the skew for track 0
-    // to upload the system tracks.
+    };
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
             .type_id = .CDOS_LGSSDD,
             .type_name = "CDOS_LGSSDD",
-            .description = "CDOS 8IN SSDD Disk",
+            .description = "CDOS 8\" SSDD Disk",
             .OS = .cdos,
             .tracks = 77,
             .reserved_tracks = 2,
@@ -797,7 +809,7 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .sector_size_raw0 = 128,
             .block_size = 2048,
             .directories = 128,
-            .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
+            .directory_allocs = 2,
             .image_size = 625920,
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_table = &skew_table,
@@ -824,7 +836,7 @@ pub const DiskImageType_CDOS_LGDSSD = struct {
         var result = DiskImageType{
             .type_id = .CDOS_LGDSSD,
             .type_name = "CDOS_LGDSSD",
-            .description = "CDOS 8IN DSSD Disk",
+            .description = "CDOS 8\" DSSD Disk",
             .OS = .cdos,
             .tracks = 154,
             .reserved_tracks = 2,
@@ -833,7 +845,7 @@ pub const DiskImageType_CDOS_LGDSSD = struct {
             .sector_size_data = 128,
             .block_size = 2048,
             .directories = 128,
-            .directory_allocs = 2, // TODO: This can be calculated directories * 32 / block_size.
+            .directory_allocs = 2,
             .image_size = 512512,
             .varying_sector_format = true, // track 0 has disk type information
             .skew_table = &skew_table,
@@ -849,13 +861,13 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
     const skew_table = [_]u16{
         0, 11, 6,  1, 12, 7,  2,  13,
         8, 3,  14, 9, 4,  15, 10, 5,
-    }; // TODO: Surely we need the skew for track 0
+    };
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
             .type_id = .CDOS_LGDSDD,
             .type_name = "CDOS_LGDSDD",
-            .description = "CDOS 8IN DSDD Disk",
+            .description = "CDOS 8\" DSDD Disk",
             .OS = .cdos,
             .tracks = 154,
             .reserved_tracks = 2,
@@ -867,7 +879,7 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
             .sector_size_raw0 = 128,
             .block_size = 2048,
             .directories = 256,
-            .directory_allocs = 4, // TODO: This can be calculated directories * 32 / block_size.\
+            .directory_allocs = 4,
             .two_byte_allocs = true,
             .image_size = 1256704,
             .varying_sector_format = true, // track 0 is SD, rest DD

@@ -87,7 +87,7 @@ pub const DirectoryEntry = struct {
 
     pub fn extension(self: *const DirectoryEntry) []const u8 {
         return switch (self.entry) {
-            .image => |*dir| dir.extension(),
+            .image => |*dir| dir.extensionOnly(),
             .local => |*dir| dir.extension,
         };
     }
@@ -195,16 +195,22 @@ pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type
         self.image_file.?.close(io);
         return err;
     };
-    try self.disk_image.?.loadDirectories(false);
+    self.disk_image.?.loadDirectories(false) catch |err| {
+        self.closeImage(io);
+        return err;
+    };
 }
 
 pub fn closeImage(self: *Self, io: std.Io) void {
     if (self.disk_image) |*existing| {
         existing.deinit();
         self.disk_image = null;
-        self.image_file.?.close(io);
+    }
+    if (self.image_file) |image_file| {
+        image_file.close(io);
         self.image_file = null;
     }
+
     self.reader = null;
     self.writer = null;
 }
@@ -217,6 +223,8 @@ pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type:
     self.reader = self.image_file.?.reader(io, &.{});
     self.writer = self.image_file.?.writer(io, &.{});
     self.disk_image = try .init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
+    errdefer self.closeImage(io);
+
     try self.disk_image.?.formatImage();
     try self.disk_image.?.loadDirectories(false);
 }

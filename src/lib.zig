@@ -1,6 +1,5 @@
 //! Export all library namespaces.
 
-// TODO: Fix up the namespacing. Types should stay in their namespaces.
 pub const disk_image = @import("disk_image.zig");
 pub const disk_types = @import("disk_types.zig");
 pub const directory_table = @import("directory_table.zig");

@@ -258,7 +258,7 @@ pub const DiskImage = struct {
             }
         }
 
-        var file_buffer: [DiskSector.sector_size_max]u8 = undefined;
+        var file_buffer: [DiskSector.sector_size_max]u8 = @splat(0xe5);
         const file_data = file_buffer[0..self.image_type.sector_size_data];
 
         var extent_nr: u16 = undefined;
@@ -275,7 +275,9 @@ pub const DiskImage = struct {
         var sector_count: u16 = 0;
 
         var nbytes = try file_reader.readSliceShort(file_data);
-        @memset(file_data[nbytes..file_data.len], 0x1a);
+        // Set any unused portion of the current record to ^Z
+        // The rest of the unused portion of the sector is filled with 0xe5
+        @memset(file_data[nbytes .. (nbytes + 127) / 128 * 128], 0x1a);
         debug("nbytes = {}, sector_data_size = {}\n", .{ nbytes, self.image_type.sector_size_data });
 
         // short circuit handling on zero-length files.
@@ -334,8 +336,9 @@ pub const DiskImage = struct {
             dir_entry.entry.num_records = @intCast((num_records - 1) % 128 + 1);
             dir_entry.extentCountSet(extent_count, self.image_type);
             try self.rawEntryWrite(extent_nr);
+            @memset(file_data, 0xe5);
             nbytes = try file_reader.readSliceShort(file_data);
-            @memset(file_data[nbytes..file_data.len], 0x1a);
+            @memset(file_data[nbytes .. (nbytes + 127) / 128 * 128], 0x1a);
 
             // This always advances by full records to ensure that
             // new directory entries are created and new allocs assigned for short-reads
@@ -463,17 +466,22 @@ pub const DiskImage = struct {
                     .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {
-                    raw_item.reserved = 0x80; // TODO: What is all zis?
+                    // This is the allocations taken up by the directory table.
+                    // In this case 4 allocations (0, 1, 2 and 3).
+                    raw_item.reserved = 0x80;
                     raw_item.allocations[2] = 0x01;
                     raw_item.allocations[4] = 0x02;
                     raw_item.allocations[6] = 0x03;
                 } else {
-                    raw_item.allocations[1] = 1; // TODO: What is this?
+                    raw_item.allocations[1] = 1; // The other directories by default take up 2 allocations.
                 }
+                // This is indirectly the number of directories available.
+                // It's actually the number of records used by the directory table (4 32 bytes entires per 128 byte record.)
+                // 0x10 * 4 = 64, 0x20 * 4 = 128, 0x40 * 4 = 256
                 raw_item.num_records = switch (self.image_type.type_id) {
-                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10, // TODO: What is this? num dirs? or block size?
+                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
-                    .CDOS_LGDSDD => 0x40, // pretty sure this is num dirs
+                    .CDOS_LGDSDD => 0x40,
                     .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
                 };
                 try self.rawEntryWrite(0);
@@ -610,7 +618,6 @@ const Console = @import("console.zig");
 const disk_types = @import("disk_types.zig");
 const DiskImageType = disk_types.DiskImageType;
 const PhysicalAddress = disk_types.PhysicalAddress;
-// TODO: Should not be pub. Fix up the other imports
 const DiskSector = disk_types.DiskSector;
 const DiskLabel = disk_types.DiskLabel;
 const DirectoryTable = @import("directory_table.zig").DirectoryTable;

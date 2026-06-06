@@ -268,7 +268,7 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn recordsUsedInB(self: *const CookedDirEntry) u32 {
-        return self.num_records * self.image_type.sector_size_data;
+        return self.num_records * 128;
     }
 
     /// Add any new allocations to the list of used allocations.
@@ -364,6 +364,25 @@ pub const DirectoryTable = struct {
             try image.readSector(logical_address, &sector);
             const entries: []RawDirEntry = std.mem.bytesAsSlice(RawDirEntry, sector.dataBytes());
             self.raw_directories.appendSliceAssumeCapacity(entries);
+        }
+
+        // For CDOS, Check that the number of directories etc is the "default" value for that disk
+        // Support for other directories counrs is a TODO
+        if (self.raw_directories.items.len > 0 and self.raw_directories.items[0].isLabel()) {
+            const raw_item = self.raw_directories.items[0];
+            const expected_num_records: u8 = switch (image.image_type.type_id) {
+                .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
+                .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
+                .CDOS_LGDSDD => 0x40,
+                .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
+            };
+            if (expected_num_records != raw_item.entry.num_records) {
+                if (!@import("builtin").is_test) log.err(
+                    "CDOS disks with a non-default number of directories are not currently supported. Expected {}, actual {}",
+                    .{ @as(u16, expected_num_records) * 4, @as(u16, raw_item.entry.num_records) * 4 },
+                );
+                return error.InvalidImageFile;
+            }
         }
 
         // building the cooked dirs needs sorted raw_dirs.
@@ -478,7 +497,7 @@ pub const DirectoryTable = struct {
                 try disk_image.rawEntryWrite(@intCast(idx));
             }
         }
-        // Finally removed the deleted CookedDir.
+        // Finally remove the deleted CookedDir.
         _ = self.cooked_directories.orderedRemove(cooked_index);
     }
 
@@ -607,7 +626,7 @@ pub const DirectoryTable = struct {
     pub fn rawEntryFreeCount(self: *const DirectoryTable) usize {
         var count: usize = 0;
         for (self.raw_directories.items) |dir| {
-            if (!dir.isDeleted() and !dir.isLabel()) {
+            if (dir.isDeleted() and !dir.isLabel()) {
                 count += 1;
             }
         }

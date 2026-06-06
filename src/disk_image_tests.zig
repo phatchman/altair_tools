@@ -243,6 +243,8 @@ test "overfill directory" {
             .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_dirs.dsk")),
             .HDD_5MB => try allocator.dupe(u8, @embedFile("test_disks/5mb_dirs.dsk")),
             .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_dirs.dsk")),
+            .CDOS_SMSSSD => try allocator.dupe(u8, @embedFile("test_disks/smsssd_dirs.dsk")),
+            .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_dirs.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -257,6 +259,7 @@ test "overfill directory" {
         test_image.init(image_file);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImageFmt(image_file, fmt);
 
         var name_buf: [256]u8 = undefined;
         const max_dirs = if (fmt.OS == .cdos) fmt.directories - 1 else fmt.directories;
@@ -275,6 +278,8 @@ test "overfill directory" {
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
+        // test the before and after reinit free count.
+        try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
 
         try reinitDiskImage(&disk_image);
 
@@ -283,7 +288,7 @@ test "overfill directory" {
         var out_file: std.Io.Writer = .fixed(out_buf);
         const cooked_dir = disk_image.directory.findByFilename(try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{max_dirs - 1}), null);
         try std.testing.expect(cooked_dir != null);
-
+        try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
         try disk_image.copyFromImage(cooked_dir.?, &out_file, .Auto);
         try std.testing.expectEqualSlices(u8, &test_file, out_buf);
     }
@@ -614,6 +619,17 @@ test "autodetect image" {
         }
     }
 }
+
+test "non-standard CDOS" {
+    //    std.testing.log_level = .info;
+    var test_image: InMemoryConstImage = undefined;
+    try test_image.init(std.testing.allocator, @embedFile("test_disks/lgdsdd_64dirs.dsk"));
+    defer test_image.deinit(std.testing.allocator);
+
+    const disk_image = newMemoryDiskImage(&test_image, CDOS_LGDSDD);
+    try std.testing.expectError(error.InvalidImageFile, disk_image);
+}
+
 /// Create readers and writers against a []const u8
 /// deinit() must be called to free allocated buffer
 const InMemoryConstImage = struct {
@@ -706,6 +722,22 @@ fn saveImage(contents: []const u8) void {
     };
 }
 
+fn saveImageFmt(contents: []const u8, fmt: *const DiskImageType) void {
+    var file_name: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer file_name.deinit();
+    file_name.writer.print("TEST_OUT_{s}", .{fmt.type_name}) catch unreachable;
+    var file = std.Io.Dir.cwd().createFile(std.testing.io, file_name.written(), .{}) catch {
+        return;
+    };
+    defer file.close(std.testing.io);
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(std.testing.io, &buffer);
+    defer writer.flush() catch {};
+    writer.interface.writeAll(contents) catch {
+        return;
+    };
+}
+
 fn saveFile(contents: []const u8) void {
     var file = std.Io.Dir.cwd().createFile(std.testing.io, "TEST_OUT.BIN", .{}) catch {
         return;
@@ -744,7 +776,7 @@ const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
-//const all_formats = .{CDOS_SMDSDD};
+// const all_formats = .{CDOS_SMSSSD};
 const all_formats = _: {
     const fields = std.meta.fields(DiskImageTypes);
     var result: [fields.len]*const DiskImageType = undefined;

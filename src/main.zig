@@ -28,7 +28,7 @@
 // SOFTWARE.
 //
 
-// TODO: Errors not being shown for invalie options e.g. -q
+// TODO: Errors not being shown for invalid options e.g. -q
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
@@ -295,14 +295,10 @@ pub fn main(init_args: std.process.Init) !void {
         //.author = "Paul Hatchman",
     };
 
-    app.help_config.print_help_on_error = true;
-    r.run(&app) catch |err| {
-        // De-init in the error case because exit(1) skips the defers
-        // TODO: check how this works now
-        std.debug.print("Err: {t}\n", .{err});
+    app.help_config.print_help_on_error = false;
+    r.run(&app) catch {
         std.process.exit(1);
     };
-    // TODO: This should be cleanExit etc.. But leaving this until the arg parsing memory leaks are resolved
     std.process.cleanExit(init.io);
 }
 
@@ -346,6 +342,7 @@ pub fn validateOptions() !bool {
 
     var stderr = std.Io.File.stderr().writer(init.io, &.{});
     var p: cli.Printer = .init(&stderr);
+    defer p.flush();
 
     if (option_count > 1) {
         cli.printError(&p, &app,
@@ -407,7 +404,7 @@ pub fn validateOptions() !bool {
 }
 
 pub const std_options: std.Options = .{
-    .log_level = .debug, // TODO: check this.
+    .log_level = .debug,
     // Define logFn to override the std implementation
     .logFn = log,
 };
@@ -417,7 +414,7 @@ var error_collection: std.ArrayListUnmanaged([]const u8) = .empty;
 
 /// Custom log function that collects errors to be displayed at the end for:
 /// .altair_disk, .altair_disk_lib scopes
-/// Redirects .debug, .infor and .warn to stdout.
+/// Redirects .debug, .info and .warn to stdout.
 /// Any errors not for .altair_disk, .altair_disk_lib are logged straight to stderr instead.
 pub fn log(
     comptime message_level: std.log.Level,
