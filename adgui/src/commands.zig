@@ -5,21 +5,26 @@ const DiskImageTypes = ad.DiskImageTypes;
 const allocator = @import("main.zig").allocator;
 
 disk_image: ?ad.DiskImage = null,
-current_dir: ?std.fs.Dir = null,
+// Only valid when disk_image is not null;
+image_file: ?std.Io.File = null,
+reader: ?std.Io.File.Reader = null,
+writer: ?std.Io.File.Writer = null,
+
+current_dir: ?std.Io.Dir = null,
 image_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 
 const Self = @This(); // TODO: This should be Commands?
 pub const CopyMode = enum { AUTO, ASCII, BINARY };
 
-pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+pub fn deinit(self: *Self, gpa: std.mem.Allocator, io: std.Io) void {
     freeDirList(gpa, &self.image_directory_list);
     freeDirList(gpa, &self.local_directory_list);
     if (self.disk_image) |*disk_image| {
         disk_image.deinit();
     }
     if (self.current_dir) |*current_dir| {
-        current_dir.close();
+        current_dir.close(io);
         self.current_dir = null;
     }
 }
@@ -82,7 +87,7 @@ pub const DirectoryEntry = struct {
 
     pub fn extension(self: *const DirectoryEntry) []const u8 {
         return switch (self.entry) {
-            .image => |*dir| dir.extension(),
+            .image => |*dir| dir.extensionOnly(),
             .local => |*dir| dir.extension,
         };
     }
@@ -167,45 +172,59 @@ pub const DirIterator = struct {
     }
 };
 
-pub fn detectImageType(_: *Self, filename: []const u8) !?DiskImageTypes {
-    var image_file = try std.fs.cwd().openFile(filename, .{ .mode = .read_only });
-    defer image_file.close();
+pub fn detectImageType(_: *Self, io: std.Io, filename: []const u8) !?DiskImageTypes {
+    var image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
+    defer image_file.close(io);
     var is_unique = true;
-    if (DiskImage.detectImageType(image_file, &is_unique)) |image_type| {
+    if (DiskImage.detectImageType(io, image_file, &is_unique)) |image_type| {
         return image_type.type_id;
     } else {
         return null;
     }
 }
 
-pub fn openExistingImage(self: *Self, filename: []const u8, img_type: DiskImageTypes) !void {
-    var cwd = std.fs.cwd();
+pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type: DiskImageTypes) !void {
+    var cwd = std.Io.Dir.cwd();
 
-    if (self.disk_image) |*existing| {
-        existing.deinit();
-    }
-    const image_file = try cwd.openFile(filename, .{ .mode = .read_write });
+    self.closeImage(io);
+    self.image_file = try cwd.openFile(io, filename, .{ .mode = .read_write });
     const image_type = ad.all_disk_types.getPtrConst(img_type);
-    self.disk_image = DiskImage.init(allocator, image_file, image_type) catch |err| {
-        image_file.close();
+    self.reader = self.image_file.?.reader(io, &.{});
+    self.writer = self.image_file.?.writer(io, &.{});
+    self.disk_image = DiskImage.init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type) catch |err| {
+        self.image_file.?.close(io);
         return err;
     };
-    try self.disk_image.?.loadDirectories(false);
+    self.disk_image.?.loadDirectories(false) catch |err| {
+        self.closeImage(io);
+        return err;
+    };
 }
 
-pub fn closeImage(self: *Self) void {
+pub fn closeImage(self: *Self, io: std.Io) void {
     if (self.disk_image) |*existing| {
         existing.deinit();
         self.disk_image = null;
     }
+    if (self.image_file) |image_file| {
+        image_file.close(io);
+        self.image_file = null;
+    }
+
+    self.reader = null;
+    self.writer = null;
 }
 
-pub fn createNewImage(self: *Self, filename: []const u8, image_type: *const ad.DiskImageType) !void {
-    var cwd = std.fs.cwd();
+pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType) !void {
+    var cwd = std.Io.Dir.cwd();
 
-    self.closeImage();
-    const image_file = try cwd.createFile(filename, .{ .read = true });
-    self.disk_image = try .init(allocator, image_file, image_type);
+    self.closeImage(io);
+    self.image_file = try cwd.createFile(io, filename, .{ .read = true });
+    self.reader = self.image_file.?.reader(io, &.{});
+    self.writer = self.image_file.?.writer(io, &.{});
+    self.disk_image = try .init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
+    errdefer self.closeImage(io);
+
     try self.disk_image.?.formatImage();
     try self.disk_image.?.loadDirectories(false);
 }
@@ -231,23 +250,23 @@ pub fn dump(self: *Self) void {
     }
 }
 
-pub fn openLocalDirectory(self: *Self, dir_path: []const u8) !void {
+pub fn openLocalDirectory(self: *Self, io: std.Io, dir_path: []const u8) !void {
     if (self.current_dir) |*current_dir| {
-        current_dir.close();
+        current_dir.close(io);
         self.current_dir = null;
     }
-    self.current_dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    self.current_dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
 }
 
-pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEntry {
+pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator, io: std.Io) ![]DirectoryEntry {
     freeDirList(gpa, &self.local_directory_list);
 
     if (self.current_dir) |dir| {
         var itr = dir.iterate();
-        while (try itr.next()) |entry| {
+        while (try itr.next(io)) |entry| {
             if (entry.kind == .file) {
                 const size = size: {
-                    const stat = dir.statFile(entry.name) catch {
+                    const stat = dir.statFile(io, entry.name, .{}) catch {
                         break :size 0;
                     };
                     break :size stat.size;
@@ -266,7 +285,7 @@ pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEn
     return self.local_directory_list.items;
 }
 
-pub fn getFile(self: *Self, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
+pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
     const Local = struct {
         fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
             return switch (mode) {
@@ -278,13 +297,14 @@ pub fn getFile(self: *Self, src: *const DirectoryEntry, dest_dir: []const u8, co
     };
 
     if (self.disk_image) |*image| {
-        var dir = try std.fs.cwd().openDir(dest_dir, .{});
-        defer dir.close();
+        var dir = try std.Io.Dir.cwd().openDir(io, dest_dir, .{});
+        defer dir.close(io);
         switch (src.entry) {
             .image => |cooked_entry| {
-                var out_file = try dir.createFile(cooked_entry.filenameAndExtension(), .{ .exclusive = if (force) false else true });
-                defer out_file.close();
-                try image.copyFromImage(&cooked_entry, out_file, Local.xlateCopyMode(copy_mode));
+                var out_file = try dir.createFile(io, cooked_entry.filenameAndExtension(), .{ .exclusive = if (force) false else true });
+                defer out_file.close(io);
+                var writer = out_file.writer(io, &.{});
+                try image.copyFromImage(&cooked_entry, &writer.interface, Local.xlateCopyMode(copy_mode));
             },
             else => {
                 std.debug.panic("{s} needs a {s}", .{ @src().fn_name, @typeName(@TypeOf(.image)) });
@@ -293,15 +313,17 @@ pub fn getFile(self: *Self, src: *const DirectoryEntry, dest_dir: []const u8, co
     }
 }
 
-pub fn putFile(self: *Self, filename: []const u8, dirname: []const u8, user: usize, force: bool) !void {
+pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, force: bool) !void {
     const cpm_user = if (user < 16) @as(u8, @intCast(user)) else null;
     if (self.disk_image) |*image| {
-        var cwd = try std.fs.cwd().openDir(dirname, .{});
-        defer cwd.close();
-        var in_file = try cwd.openFile(filename, .{ .mode = .read_only });
-        defer in_file.close();
+        var cwd = try std.Io.Dir.cwd().openDir(io, dirname, .{});
+        defer cwd.close(io);
+        var in_file = try cwd.openFile(io, filename, .{ .mode = .read_only });
+        defer in_file.close(io);
 
-        try image.copyToImage(in_file, filename, cpm_user, force);
+        var buf: [4096]u8 = undefined;
+        var reader = in_file.reader(io, &buf);
+        try image.copyToImage(&reader.interface, filename, cpm_user, force);
     }
 }
 
@@ -317,19 +339,19 @@ pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry) !void {
     }
 }
 
-pub fn getSystem(self: *Self, out_filename: []const u8) !void {
+pub fn getSystem(self: *Self, io: std.Io, out_filename: []const u8) !void {
     if (self.disk_image) |*image| {
-        var out_file = try std.fs.cwd().createFile(out_filename, .{});
-        defer out_file.close();
-        try image.extractCPM(out_file);
+        var out_file = try std.Io.Dir.cwd().createFile(io, out_filename, .{});
+        defer out_file.close(io);
+        try image.extractCPM(io, out_file);
     }
 }
 
-pub fn putSystem(self: *Self, in_filename: []const u8) !void {
+pub fn putSystem(self: *Self, io: std.Io, in_filename: []const u8) !void {
     if (self.disk_image) |*image| {
-        var in_file = try std.fs.cwd().openFile(in_filename, .{ .mode = .read_only });
-        defer in_file.close();
-        try image.installCPM(in_file);
+        var in_file = try std.Io.Dir.cwd().openFile(io, in_filename, .{ .mode = .read_only });
+        defer in_file.close(io);
+        try image.installCPM(io, in_file);
     }
 }
 

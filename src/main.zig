@@ -27,30 +27,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-pub const global_allocator = gpa.allocator();
 
-// This arena lasts the lifetime of the application.
-pub var arena = std.heap.ArenaAllocator.init(global_allocator);
+// TODO: Errors not being shown for invalid options e.g. -q
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
+var init: *const std.process.Init = undefined;
 
 /// Main processing takes place here
 fn do_main() !void {
-    var stdin_buffered = std.io.bufferedReader(std.io.getStdIn().reader());
-    const stdin_buffered_reader = stdin_buffered.reader().any();
-    var stdout_buffered = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const stdout_buffered_writer = stdout_buffered.writer().any();
-    const stderr_writer_any = std.io.getStdErr().writer().any();
-
-    Console.init(
-        &stdin_buffered,
-        &stdin_buffered_reader,
-        &stdout_buffered,
-        &stdout_buffered_writer,
-        &stderr_writer_any,
-    );
+    Console.init(init.io);
     defer Console.deinit();
+    defer options.deinit(init.gpa);
 
     if (!(validateOptions() catch false)) {
         // validate options prints the error.
@@ -60,18 +48,18 @@ fn do_main() !void {
     // Print out log messages in verbose mode on exit.
     defer {
         if (error_collection.items.len > 0) {
-            Console.stderr.print("The following errors were encountered:\n", .{}) catch {};
+            Console.stderr().print("The following errors were encountered:\n", .{}) catch {};
             for (error_collection.items) |message| {
-                Console.stderr.print("{s}\n", .{message}) catch {};
+                Console.stderr().print("{s}\n", .{message}) catch {};
             }
             if (options.do_recover) {
-                Console.stderr.print("It is normal to see errors when running --recover\n", .{}) catch {};
+                Console.stderr().print("It is normal to see errors when running --recover\n", .{}) catch {};
             }
         }
     }
 
     // Start of processing.
-    Commands.dispatch(options) catch |err| {
+    Commands.dispatch(init.io, init.gpa, options) catch |err| {
         switch (err) {
             error.CommandFailed, error.CommandFailedCanContinue => return error.ErrorExit,
             else => return err,
@@ -86,6 +74,7 @@ pub const CommandLineOptions = struct {
     system_image_put: []const u8 = undefined,
     recovery_image_file: []const u8 = undefined,
     get_out_dir: []const u8 = undefined,
+    disk_label: []const u8 = undefined,
     // All command options need to be in the format do_xxxx to be
     // included in the dispatch table.
     do_directory: bool = false,
@@ -101,23 +90,35 @@ pub const CommandLineOptions = struct {
     do_cpm_get: bool = false,
     do_cpm_put: bool = false,
     do_recover: bool = false,
+    do_label_get: bool = false,
+    do_label_set: bool = false,
     text_mode: bool = false,
     bin_mode: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
     cpm_user: ?u8 = null,
     disk_image_type: ?ImageType = null,
+
+    pub fn deinit(self: *CommandLineOptions, gpa: std.mem.Allocator) void {
+        gpa.free(self.image_file);
+        for (self.multiple_files) |filename| {
+            gpa.free(filename);
+        }
+        gpa.free(self.multiple_files);
+        gpa.free(self.system_image_get);
+        gpa.free(self.system_image_put);
+        gpa.free(self.recovery_image_file);
+        gpa.free(self.get_out_dir);
+        gpa.free(self.disk_label);
+    }
 };
 
-var options = CommandLineOptions{};
+var options: CommandLineOptions = .{};
 var app: cli.App = undefined;
-pub fn main() !void {
-    defer {
-        arena.deinit();
-        _ = gpa.deinit();
-    }
+pub fn main(init_args: std.process.Init) !void {
+    init = &init_args;
 
-    var r = try cli.AppRunner.init(arena.allocator());
+    var r = cli.AppRunner.init(init);
     app = cli.App{
         .command = cli.Command{
             .target = cli.CommandTarget{
@@ -275,6 +276,19 @@ pub fn main() !void {
                     .short_alias = 'V',
                     .value_ref = r.mkRef(&options.very_verbose),
                 },
+                .{
+                    .long_name = "label-set",
+                    .help = "Label set - Set the disk label and timestamp on CDOS disks",
+                    .short_alias = 'L',
+                    .value_name = "label",
+                    .value_ref = r.mkRef(&options.disk_label),
+                },
+                .{
+                    .long_name = "label",
+                    .help = "Label get - Get the disk label and timestamp from CDOS disks",
+                    .short_alias = 'l',
+                    .value_ref = r.mkRef(&options.do_label_get),
+                },
             },
         },
         .version = "0.9",
@@ -283,11 +297,9 @@ pub fn main() !void {
 
     app.help_config.print_help_on_error = false;
     r.run(&app) catch {
-        // De-init in the error case because exit(1) skips the defers
-        arena.deinit();
-        _ = gpa.deinit();
         std.process.exit(1);
     };
+    std.process.cleanExit(init.io);
 }
 
 /// Generate help text for all disk image types. The first entry is considered the default.
@@ -307,6 +319,7 @@ pub fn validateOptions() !bool {
     options.do_cpm_get = options.system_image_get.len != 0;
     options.do_cpm_put = options.system_image_put.len != 0;
     options.do_recover = options.recovery_image_file.len != 0;
+    options.do_label_set = options.disk_label.len != 0;
 
     // Can only by one of directory, get/multi, put/multi, etc
     const single_options = [_]bool{
@@ -314,7 +327,7 @@ pub fn validateOptions() !bool {
         options.do_format,      options.do_get,       options.do_get_multi,
         options.do_put,         options.do_put_multi, options.do_raw_dir,
         options.do_cpm_get,     options.do_cpm_put,   options.do_recover,
-        options.do_information,
+        options.do_information, options.do_label_get, options.do_label_set,
     };
 
     var option_count: usize = 0;
@@ -327,17 +340,22 @@ pub fn validateOptions() !bool {
         options.do_directory = true;
     }
 
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+    var p: cli.Printer = .init(&stderr);
+    defer p.flush();
+
     if (option_count > 1) {
-        cli.printError(&app,
+        cli.printError(&p, &app,
             \\You may only specify one of:
-            \\       --directory, 
-            \\       --raw
-            \\       --info
+            \\       --directory,
+            \\       --raw,
+            \\       --info,
             \\       --format,
             \\       --get, --get-multiple,
             \\       --put, --put-multiple,
             \\       --erase, --erase-multiple,
-            \\       --extract-cpm, --write-cpm
+            \\       --extract-cpm, --write-cpm,
+            \\       -- label, --label-set,
             \\       --recover
             \\
         , .{});
@@ -346,9 +364,9 @@ pub fn validateOptions() !bool {
 
     if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
         if (options.multiple_files.len != 0) {
-            cli.printError(&app,
+            cli.printError(&p, &app,
                 \\No filenames are allowed for:
-                \\       --directory, 
+                \\       --directory,
                 \\       --raw
                 \\       --info
                 \\       --format
@@ -359,7 +377,7 @@ pub fn validateOptions() !bool {
     }
     if (options.do_get or options.do_put or options.do_erase) {
         if (options.multiple_files.len != 1) {
-            cli.printError(&app,
+            cli.printError(&p, &app,
                 \\You must specify exactly one filename for:
                 \\       --get, --put, --erase
                 \\
@@ -368,7 +386,7 @@ pub fn validateOptions() !bool {
         }
     }
     if (options.get_out_dir.len != 0 and !(options.do_get or options.do_get_multi)) {
-        cli.printError(&app,
+        cli.printError(&p, &app,
             \\You may only use --out with:
             \\ --get, --get-multiple
             \\
@@ -378,7 +396,7 @@ pub fn validateOptions() !bool {
 
     if (options.cpm_user) |user| {
         if (user > 15) {
-            cli.printError(&app, "User must be between 0 and 15.", .{});
+            cli.printError(&p, &app, "User must be between 0 and 15.", .{});
             return false;
         }
     }
@@ -386,9 +404,7 @@ pub fn validateOptions() !bool {
 }
 
 pub const std_options: std.Options = .{
-    // Set the log level to info
     .log_level = .debug,
-
     // Define logFn to override the std implementation
     .logFn = log,
 };
@@ -398,36 +414,36 @@ var error_collection: std.ArrayListUnmanaged([]const u8) = .empty;
 
 /// Custom log function that collects errors to be displayed at the end for:
 /// .altair_disk, .altair_disk_lib scopes
-/// Redirects .debug, .infor and .warn to stdout.
+/// Redirects .debug, .info and .warn to stdout.
 /// Any errors not for .altair_disk, .altair_disk_lib are logged straight to stderr instead.
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
     switch (scope) {
         .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
-        else => return std.io.getStdErr().writer().print(@tagName(message_level) ++ ": " ++ format, args) catch {},
+        else => return std.debug.print(@tagName(message_level) ++ ": " ++ format, args),
     }
     switch (message_level) {
         .info, .warn => {
             if (options.verbose) {
-                Console.stdout.print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
+                Console.stdout().print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .debug => {
             if (options.very_verbose) {
-                Console.stdout.print(format, args) catch {};
+                Console.stdout().print(format, args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .err => {
-            const message = std.fmt.allocPrint(arena.allocator(), format, args) catch {
+            const message = std.fmt.allocPrint(init.arena.allocator(), format, args) catch {
                 return;
             };
-            error_collection.append(arena.allocator(), message) catch {};
+            error_collection.append(init.arena.allocator(), message) catch {};
         },
     }
 }

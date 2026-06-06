@@ -10,6 +10,8 @@ pub fn build(b: *std.Build) void {
     // Strip debug symbols
     const strip_debug_symbols = b.option(bool, "strip-exe", "Strip debugging information") orelse false;
 
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &[0][]const u8{};
+
     // Add other supported targets here as required.
     const all_targets = [_]std.Build.ResolvedTarget{
         b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .windows }),
@@ -41,32 +43,19 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        const lib = b.addStaticLibrary(.{
-            .name = "altair_disk",
-            .root_module = lib_mod,
-        });
-        if (targets.len > 1) {
-            const install = b.addInstallArtifact(lib, .{
-                .dest_dir = .{ .override = .{
-                    .custom = std.fmt.allocPrint(b.allocator, "lib/{s}-{s}", .{
-                        @tagName(target.result.cpu.arch),
-                        @tagName(target.result.os.tag),
-                    }) catch unreachable,
-                } },
-            });
-            b.default_step.dependOn(&install.step);
-        } else {
-            b.installArtifact(lib);
-        }
+        _ = lib_mod;
+
         const exe = b.addExecutable(.{
             .name = "altairdsk",
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .strip = strip_debug_symbols,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .strip = strip_debug_symbols,
+            }),
         });
-        const zigcli = b.dependency("cli", .{ .target = target, .optimize = optimize });
-        exe.root_module.addImport("zig-cli", zigcli.module("zig-cli"));
+        const zigcli = b.dependency("cli", .{});
+        exe.root_module.addImport("zig-cli", zigcli.module("cli"));
         if (targets.len > 1) {
             const install = b.addInstallArtifact(exe, .{
                 .dest_dir = .{ .override = .{
@@ -92,23 +81,14 @@ pub fn build(b: *std.Build) void {
         }
         run_step.dependOn(&run_cmd.step);
 
-        // Unit tests
-        const lib_unit_tests = b.addTest(.{
+        const exe_unit_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
-        });
-        const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
-
-        const exe_unit_tests = b.addTest(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
+        }), .filters = test_filters });
 
         const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-        test_step.dependOn(&run_lib_unit_tests.step);
         test_step.dependOn(&run_exe_unit_tests.step);
 
         // Don't output binary. Used for Zig "build on save" feature.

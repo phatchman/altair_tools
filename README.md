@@ -18,6 +18,12 @@ altairdsk allows you to:
 
 _Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
+### LLM / "AI" Usage Disclosure ###
+* No LLMs have been used to write any code or documentation in this repository.
+* Everything in this project has been human crafted.
+* An LLM has been used as a code review tool (coderabbit). 
+* Contributions must not contain any LLM content or be derived from LLM content.
+
 ## Supported Disk Image Types
 
 | Type              | Description   |

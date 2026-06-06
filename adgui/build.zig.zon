@@ -28,7 +28,7 @@
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.16.0",
 
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
@@ -37,8 +37,8 @@
     // internet connectivity.
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui/#ecce8ef3b945ca06ba118c917bef788bcdd3ee26",
-            .hash = "dvui-0.2.0-AQFJmRurzQCN_B3Hj0163S1LcJtN_QmDwbeRjE09uxG7",
+            .url = "git+https://github.com/david-vanderson/dvui.git#eedd5385867332f546cf2cede3cc22ea40ec536e",
+            .hash = "dvui-0.5.0-dev-AQFJmUPe9QC9J3xGMmG_3iZ2Mn1CTl0Hioow2pVsb7-1",
         },
         .altair_disk = .{
             .path = "..",
