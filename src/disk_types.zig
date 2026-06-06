@@ -232,15 +232,6 @@ pub const DiskImageType = struct {
         self.format_fn(self, address, sector);
     }
 
-    /// Return total number of sectors on disk.
-    pub fn sectorCount(self: *const DiskImageType) u16 {
-        if (self.sectors_per_track0) |track0| {
-            return track0 + (self.tracks - 1) * self.sectors_per_track;
-        } else {
-            return self.tracks * self.sectors_per_track;
-        }
-    }
-
     /// How large is the data portion of the sector for this track?
     pub fn sectorSizeDataForTrack(self: *const DiskImageType, track_nr: u16) u16 {
         return if (track_nr > 0) self.sector_size_data else self.sector_size_data0 orelse self.sector_size_data;

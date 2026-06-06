@@ -390,22 +390,26 @@ pub const DiskImage = struct {
         for (0..self.image_type.reserved_tracks) |track_nr| {
             var sector: DiskSector = .init(self.image_type, @intCast(track_nr));
             for (0..self.sectorsForTrack(track_nr)) |_| {
-                self.reader.interface().readSliceAll(sector.dataBytes()) catch return error.InvalidImageFile;
-                try writer.interface.writeAll(sector.dataBytes());
+                self.reader.interface().readSliceAll(sector.rawBytes()) catch return error.InvalidImageFile;
+                try writer.interface.writeAll(sector.rawBytes());
             }
         }
     }
 
     pub fn installCPM(self: *DiskImage, io: std.Io, in_file: File) !void {
         const in_size = try in_file.length(io);
-        const expected_size = self.image_type.reserved_tracks * self.image_type.track_size;
+        const image_type = self.image_type;
+        // This is safe as only track 0 can have a different sector count.
+        const expected_size = self.sectorsForTrack(0) * @as(usize, image_type.sector_size_raw0 orelse image_type.sector_size_raw) +
+            (self.image_type.reserved_tracks - 1) * self.sectorsForTrack(1) * image_type.sector_size_raw;
         if (in_size != expected_size) {
+            log.err("Expected system image size of {}, actual size is {}", .{ expected_size, in_size });
             return error.InvalidImageFile;
         }
 
         var buf: [4096]u8 = undefined;
         var file_reader = in_file.reader(io, &buf);
-        _ = try file_reader.interface.streamRemaining(self.writer.interface());
+        _ = try file_reader.interface.stream(self.writer.interface(), .unlimited);
         try self.writer.seekTo(0);
     }
 

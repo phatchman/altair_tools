@@ -17,10 +17,14 @@ altairdsk allows you to:
 
 _Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
-### LLM / "AI" Usage Disclosure ###
-* No LLMs have been used to write any code or documentation in this repository.
-* Everything in this project has been human crafted.
-* An LLM has been used as a code review tool (coderabbit). 
+[Go straight to the command examples](#command-line)<br>
+[Go straight to the gui examples](docs/ADGUI.md)
+
+
+### LLM / "AI" Disclosure and Policy ###
+* Everything in this repository is human crafted.
+* No LLMs have been used to write any line of code or documentation.
+* An LLM has been used as a code review tool (coderabbit).
 * Contributions must not contain any LLM content or be derived from LLM content.
 
 ## Supported Disk Image Types
@@ -33,6 +37,19 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 | HDD_5MB_1024      | The MITS 5MB hard disk, but modified for 1024 directory entries. Note you need the modified CP/M image to use this format. See https://github.com/ratboy666/hd1024 |
 | FDD_1.5MB         | FDC+ 1.5MB images |
 | FDD_8IN_8MB       | FDC+ 8MB "floppy" images |
+| CDOS_SMSSSD       | CDOS 5.12" Single Sided Single Density |
+| CDOS_SMSSDD       | CDOS 5.12" Single Sided Double Density |
+| CDOS_SMDSSD       | CDOS 5.12" Double Sided Single Density |
+| CDOS_LGDSDD       | CDOS 8" Double Sided Double Density |
+| CDOS_LGSSSD       | CDOS 8" Single Sided Single Density |
+| CDOS_LGSSDD       | CDOS 8" Single Sided Double Density |
+| CDOS_LGDSSD       | CDOS 8" Double Sided Single Density |
+| CDOS_LGDSDD       | CDOS 8" Double Sided Double Density |
+
+_Things to note_
+1) The CDOS formats do not currently support a non-standard number of directory entries and the image will fail to open.
+2) FDD_TAR and CDOS_LGSSSD are the same image file size. Normally the correct format can be determined from a disk type label that CDOS places in the first track and sector.
+3) Early CDOS, including images shipped with AltairDuino, don't have the disk type label. As a fallback altairdsk looks to see if the CDOS boot loader is installed on track 0. However, it is still quite possible that CDOS_LGSSSD can be mistakenly identified as FDD_TAR. Please check if the image type is detected correctly using the --info option.
 
 While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 

@@ -129,7 +129,7 @@ pub const DirectoryEntry = struct {
 
     pub fn deinit(self: *DirectoryEntry, gpa: std.mem.Allocator) void {
         switch (self.entry) {
-            .image => {}, // We didn;t init these. don't deinit.
+            .image => {}, // We didn't init these. don't deinit.
             .local => |*dir| dir.deinit(gpa),
         }
     }
@@ -192,7 +192,7 @@ pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type
     self.reader = self.image_file.?.reader(io, &.{});
     self.writer = self.image_file.?.writer(io, &.{});
     self.disk_image = DiskImage.init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type) catch |err| {
-        self.image_file.?.close(io);
+        self.closeImage(io);
         return err;
     };
     self.disk_image.?.loadDirectories(false) catch |err| {

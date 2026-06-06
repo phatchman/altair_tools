@@ -2333,6 +2333,7 @@ pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const 
     @memcpy(&filename, "IMG000.DSK");
     var num_part = filename[3..6];
     var cwd = try std.Io.Dir.cwd().openDir(io, directory, .{});
+    defer cwd.close();
     for (0..999) |file_num| {
         num_part[2] = '0' + @as(u8, @intCast(file_num % 10));
         if (file_num % 10 == 0) {

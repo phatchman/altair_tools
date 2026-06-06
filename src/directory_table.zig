@@ -294,7 +294,7 @@ pub const CookedDirEntry = struct {
     }
 
     /// Return a slice representing the value of a space-termianted string.
-    fn rawSlice(str: []const u8) []const u8 {
+    pub fn rawSlice(str: []const u8) []const u8 {
         return str[0..rawStrlen(str)];
     }
 };
@@ -367,7 +367,7 @@ pub const DirectoryTable = struct {
         }
 
         // For CDOS, Check that the number of directories etc is the "default" value for that disk
-        // Support for other directories counrs is a TODO
+        // Support for other directories counts is a TODO
         if (self.raw_directories.items.len > 0 and self.raw_directories.items[0].isLabel()) {
             const raw_item = self.raw_directories.items[0];
             const expected_num_records: u8 = switch (image.image_type.type_id) {
@@ -490,8 +490,8 @@ pub const DirectoryTable = struct {
         // Delete all the raw_entries and write to disk.
         for (self.raw_directories.items, 0..) |*item, idx| {
             if (item.entry.user == cooked_dir.user and
-                std.mem.eql(u8, item.entry.filename[0..cooked_dir.filenameOnly().len], cooked_dir.filenameOnly()) and
-                std.mem.eql(u8, item.entry.filetype[0..cooked_dir.extensionOnly().len], cooked_dir.extensionOnly()))
+                std.mem.eql(u8, CookedDirEntry.rawSlice(&item.entry.filename), cooked_dir.filenameOnly()) and
+                std.mem.eql(u8, CookedDirEntry.rawSlice(&item.entry.filetype), cooked_dir.extensionOnly()))
             {
                 item.setDeleted();
                 try disk_image.rawEntryWrite(@intCast(idx));

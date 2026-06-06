@@ -41,7 +41,7 @@ test "disk formatted" {
 test "8in alt size" {
     var is_unique: bool = undefined;
     var image_file = try std.Io.Dir.cwd().openFile(io, "src/test_disks/8in_fmt_alt.dsk", .{ .mode = .read_only });
-    errdefer image_file.close(io);
+    defer image_file.close(io);
 
     const image_type = DiskImage.detectImageType(io, image_file, &is_unique);
     try std.testing.expect(image_type != null); // Image type should be detected as 8IN
@@ -553,13 +553,21 @@ test "erase" {
 
     var disk_image = try newMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
+    const initial_free_count = disk_image.directory.rawEntryFreeCount();
 
-    const to_erase = disk_image.directory.findByFilename("filename.exe", null);
+    const to_erase = disk_image.directory.findByFilename("file.txt", null);
     try std.testing.expect(to_erase != null);
     try disk_image.erase(to_erase.?);
 
-    const erased = disk_image.directory.findByFilename("filename.exe", null);
+    const erased = disk_image.directory.findByFilename("file.txt", null);
     try std.testing.expect(erased == null);
+
+    try std.testing.expectEqual(initial_free_count + 1, disk_image.directory.rawEntryFreeCount());
+
+    // Make sure it is really erased
+    try reinitDiskImage(&disk_image);
+    try std.testing.expectEqual(initial_free_count + 1, disk_image.directory.rawEntryFreeCount());
+    try std.testing.expectEqual(null, disk_image.directory.findByFilename("file.txt", null));
 
     const compare_file = @embedFile("test_disks/erase_post.dsk");
     try std.testing.expectEqualSlices(u8, compare_file, image_file.buffer);

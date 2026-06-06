@@ -35,7 +35,7 @@ const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 var init: *const std.process.Init = undefined;
 
 /// Main processing takes place here
-fn do_main() !void {
+fn do_main() error{ErrorExit}!void {
     Console.init(init.io);
     defer Console.deinit();
     defer options.deinit(init.gpa);
@@ -61,8 +61,7 @@ fn do_main() !void {
     // Start of processing.
     Commands.dispatch(init.io, init.gpa, options) catch |err| {
         switch (err) {
-            error.CommandFailed, error.CommandFailedCanContinue => return error.ErrorExit,
-            else => return err,
+            error.CommandFailed, error.CommandFailedCanContinue, error.WriteFailed => return error.ErrorExit,
         }
     };
 }
@@ -96,6 +95,7 @@ pub const CommandLineOptions = struct {
     bin_mode: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
+    force: bool = false,
     cpm_user: ?u8 = null,
     disk_image_type: ?ImageType = null,
 
@@ -289,6 +289,12 @@ pub fn main(init_args: std.process.Init) !void {
                     .short_alias = 'l',
                     .value_ref = r.mkRef(&options.do_label_get),
                 },
+                .{
+                    .long_name = "force",
+                    .help = "Force overwrite of existing files with get or put",
+                    .short_alias = 'f',
+                    .value_ref = r.mkRef(&options.force),
+                },
             },
         },
         .version = "0.9",
@@ -335,6 +341,12 @@ pub fn validateOptions() !bool {
         if (value)
             option_count += 1;
     }
+    if (options.do_format and options.do_label_set) {
+        // Format will handle the labelling.
+        option_count -= 1;
+        options.do_label_set = false;
+    }
+
     if (option_count == 0) {
         // Default to directory listing
         options.do_directory = true;
@@ -347,7 +359,7 @@ pub fn validateOptions() !bool {
     if (option_count > 1) {
         cli.printError(&p, &app,
             \\You may only specify one of:
-            \\       --directory,
+            \\       --dir,
             \\       --raw,
             \\       --info,
             \\       --format,
@@ -355,8 +367,8 @@ pub fn validateOptions() !bool {
             \\       --put, --put-multiple,
             \\       --erase, --erase-multiple,
             \\       --extract-cpm, --write-cpm,
-            \\       -- label, --label-set,
-            \\       --recover
+            \\       --label, --recover
+            \\       --label-set (except with --format),
             \\
         , .{});
         return false;
@@ -366,7 +378,7 @@ pub fn validateOptions() !bool {
         if (options.multiple_files.len != 0) {
             cli.printError(&p, &app,
                 \\No filenames are allowed for:
-                \\       --directory,
+                \\       --dir,
                 \\       --raw
                 \\       --info
                 \\       --format
@@ -399,6 +411,12 @@ pub fn validateOptions() !bool {
             cli.printError(&p, &app, "User must be between 0 and 15.", .{});
             return false;
         }
+    }
+
+    if (options.force and
+        !(options.do_get or options.do_cpm_put or options.do_get_multi or options.do_put_multi))
+    {
+        cli.printError(&p, &app, "force can only be used with get or put operations", .{});
     }
     return true;
 }
