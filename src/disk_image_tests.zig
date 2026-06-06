@@ -259,7 +259,6 @@ test "overfill directory" {
         test_image.init(image_file);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImageFmt(image_file, fmt);
 
         var name_buf: [256]u8 = undefined;
         const max_dirs = if (fmt.OS == .cdos) fmt.directories - 1 else fmt.directories;
@@ -709,6 +708,7 @@ fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer
     return disk_image;
 }
 
+// Save a disk image buffer to TEST_OUT.DSK
 fn saveImage(contents: []const u8) void {
     var file = std.Io.Dir.cwd().createFile(std.testing.io, "TEST_OUT.DSK", .{}) catch {
         return;
@@ -722,10 +722,11 @@ fn saveImage(contents: []const u8) void {
     };
 }
 
+// Save an image with a filename including the image format.
 fn saveImageFmt(contents: []const u8, fmt: *const DiskImageType) void {
     var file_name: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer file_name.deinit();
-    file_name.writer.print("TEST_OUT_{s}", .{fmt.type_name}) catch unreachable;
+    file_name.writer.print("TEST_OUT_{s}.DSK", .{fmt.type_name}) catch unreachable;
     var file = std.Io.Dir.cwd().createFile(std.testing.io, file_name.written(), .{}) catch {
         return;
     };
@@ -738,6 +739,7 @@ fn saveImageFmt(contents: []const u8, fmt: *const DiskImageType) void {
     };
 }
 
+// Save a test file buffer to TEST_OUT.BIN
 fn saveFile(contents: []const u8) void {
     var file = std.Io.Dir.cwd().createFile(std.testing.io, "TEST_OUT.BIN", .{}) catch {
         return;
