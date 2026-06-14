@@ -128,21 +128,17 @@ pub const DiskSector = union(enum) {
     cpm_512: extern struct { data: [512]u8 },
 
     pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
-        switch (image_type.type_id) {
-            .FDD_8IN, .FDD_8IN_8MB => return if (track_nr < 6)
+        return switch (image_type.type_id) {
+            .FDD_8IN, .FDD_8IN_8MB => if (track_nr < 6)
                 .{ .mits_track_0_5 = undefined }
             else
                 .{ .mits_track_6_76 = undefined },
-            else => {
-                // TODO: This is pretty common .functionise it
-                const sector_size = if (track_nr == 0) image_type.sector_size_data0 orelse image_type.sector_size_data else image_type.sector_size_data;
-                switch (sector_size) {
-                    128 => return .{ .cpm_128 = undefined },
-                    512 => return .{ .cpm_512 = undefined },
-                    else => unreachable,
-                }
+            else => switch (image_type.sectorSizeDataForTrack(track_nr)) {
+                128 => .{ .cpm_128 = undefined },
+                512 => .{ .cpm_512 = undefined },
+                else => unreachable,
             },
-        }
+        };
     }
 
     pub fn initFormatted(image_type: *const DiskImageType, location: PhysicalAddress) DiskSector {
@@ -178,6 +174,7 @@ pub const DiskSector = union(enum) {
         return result;
     }
 
+    /// Calculate the checksum for MITS hard-sectored 8" disks
     fn mitsChecksum(self: *DiskSector, location: PhysicalAddress) u8 {
         var csum: u8 = 0;
 
@@ -193,6 +190,7 @@ pub const DiskSector = union(enum) {
         return csum;
     }
 
+    /// Called just before the sector is written to disk.
     pub fn prepareWrite(self: *DiskSector, location: PhysicalAddress) void {
         switch (self.*) {
             inline .mits_track_0_5, .mits_track_6_76 => |*sector| {
@@ -216,12 +214,14 @@ pub const DiskSector = union(enum) {
     }
 
     /// Return the whole sector, including the data portion.
+    /// Only different to dataBytes() for hard-sectored disks
     pub fn rawBytes(self: *DiskSector) []u8 {
         return switch (self.*) {
             inline else => |*sector| return std.mem.asBytes(sector),
         };
     }
 
+    /// Offset to the start of teh data
     pub fn dataStart(self: *const DiskSector) u8 {
         return switch (self.*) {
             inline else => |sector| @offsetOf(@TypeOf(sector), "data"),
