@@ -184,7 +184,7 @@ pub const DiskImage = struct {
             var data_len: usize = if (sec_nr == num_sectors - 1)
                 (((num_records - 1) % recs_per_sector) + 1) * 128
             else
-                sector.sector_len_data;
+                sector.dataLen();
             const check_for_text = text_mode != .Binary;
 
             // CPM doesn't actually know how long a file is, except in multiples of 128 byte records.
@@ -327,7 +327,7 @@ pub const DiskImage = struct {
             // But instead it is being passed the sector number. It's easier to work this method
             // rather than the correct CPM way and gives the same results.
             const location = self.toPhysicalAddress(.{ .allocation = alloc_nr, .record = @intCast(sector_count % self.image_type.recs_per_extent) });
-            var sector: DiskSector = .init(self.image_type, location.track);
+            var sector: DiskSector = .initFormatted(self.image_type, location);
             @memcpy(sector.dataBytes(), file_data);
             try self.writeSector(location, &sector);
 
@@ -386,7 +386,7 @@ pub const DiskImage = struct {
         var writer = out_file.writer(io, &.{});
 
         for (0..self.image_type.reserved_tracks) |track_nr| {
-            var sector: DiskSector = .init(self.image_type, @intCast(track_nr));
+            var sector: DiskSector = .initUnformatted(self.image_type, @intCast(track_nr));
             for (0..self.sectorsForTrack(track_nr)) |_| {
                 self.reader.interface().readSliceAll(sector.rawBytes()) catch return error.InvalidImageFile;
                 try writer.interface.writeAll(sector.rawBytes());
@@ -420,7 +420,8 @@ pub const DiskImage = struct {
 
         // Small optimization. If the format does not vary, just get the formatted sector only once.
         if (!varying_sector_format) {
-            self.image_type.formattedSectorGet(.zero, &disk_sector);
+            disk_sector = .initFormatted(self.image_type, .any);
+            //            self.image_type.formattedSectorGet(.any, &disk_sector);
         }
 
         for (0..self.image_type.tracks) |track_nr| {
@@ -432,12 +433,14 @@ pub const DiskImage = struct {
             for (1..sectors_per_track + 1) |sector_nr| {
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
-                    self.image_type.formattedSectorGet(
-                        .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) },
-                        &disk_sector,
-                    );
+                    disk_sector = .initFormatted(self.image_type, .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) });
+                    // self.image_type.formattedSectorGet(
+                    //     .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) },
+                    //     &disk_sector,
+                    // );
                 }
-                //                log.debug("Formatting track:[{}] sector:[{}]", .{ track_nr, sector_nr });
+                //std.debug.print("Formatting type: [{s}] track:[{}] sector:[{}] sector_type: [{t}] data_len: [{}]\n", .{ self.image_type.type_name, track_nr, sector_nr, disk_sector, self.image_type.sector_size_data });
+                //std.debug.dumpHex(disk_sector.rawBytes());
                 try self.writer.interface().writeAll(disk_sector.rawBytes());
             }
         }
@@ -577,7 +580,7 @@ pub const DiskImage = struct {
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, data_offset });
 
         try self.reader.seekTo(@intCast(data_offset));
-        sector.* = .init(self.image_type, physical_location.track);
+        sector.* = .initUnformatted(self.image_type, physical_location.track);
         try self.reader.interface().readSliceAll(sector.rawBytes());
         try sector.dump(physical_location, data_offset);
     }
@@ -585,7 +588,7 @@ pub const DiskImage = struct {
     const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single sector.
     pub fn writeSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
-        self.image_type.prepareSectorForWrite(location, sector);
+        sector.prepareWrite(location);
         const sector_offset = self.image_type.seekOffset(location);
         log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ location.track, location.sector, sector_offset });
         try self.writer.seekTo(sector_offset);
@@ -604,7 +607,7 @@ pub const DiskImage = struct {
         }
 
         const location = self.toPhysicalAddress(.{ .allocation = extent_nr / self.image_type.extents_per_alloc, .record = @intCast(extent_nr / self.image_type.dir_entries_per_sector) });
-        var sector: DiskSector = .init(self.image_type, location.track);
+        var sector: DiskSector = .initFormatted(self.image_type, location);
 
         // start_index is the index of the directory entry that is at
         // the beginning of this sector

@@ -53,38 +53,179 @@ pub const DiskLabel = union(OperatingSystem) {
 pub const PhysicalAddress = struct {
     track: u16,
     sector: u16,
-    pub const zero: PhysicalAddress = .{ .track = 0, .sector = 1 };
+    /// Use when track and sector aren't important
+    pub const any: PhysicalAddress = .{ .track = 0, .sector = 1 };
+};
+
+const Sector = union(enum) {
+    track_0_5: extern struct {
+        track_nr: u8,
+        address: u16 align(1),
+        data: [128]u8,
+        stop: u8,
+        checksum: u8,
+        unused: [4]u8,
+    },
+    track_6_76: extern struct {
+        track_nr: u8,
+        sector_nr: u8,
+        file_nr: u8,
+        bytes_written: u8,
+        checksum: u8,
+        next_track: u8,
+        next_sector: u8,
+        data: [128]u8,
+        stop: u8,
+        unused: u8,
+    },
+
+    pub fn format(self: *const Sector, writer: *std.Io.Writer) !void {
+        switch (self.*) {
+            .track_0_5 => |tk| {
+                try writer.print(
+                    "TK[{x:02}] AD[{x:04}] ST[{x:02}] CK[{x:02}]",
+                    .{ tk.track_nr, tk.address, tk.stop, tk.checksum },
+                );
+            },
+            .track_6_76 => |tk| {
+                try writer.print(
+                    "TK[{x:02}] SK[{x:02}] FN[{x:04}] NB[{x:02}] CK[{x:02}] NT[{x:02}] NS[{x:02}] ST[{x:02}]",
+                    .{ tk.track_nr, tk.sector_nr, tk.file_nr, tk.bytes_written, tk.checksum, tk.next_track, tk.next_sector, tk.stop },
+                );
+            },
+        }
+    }
 };
 
 /// Represents a single disk sector.
 /// For MITS hard-sectored disks, the raw on-disk sector length is different to the data length.
-pub const DiskSector = struct {
+pub const DiskSector = union(enum) {
     // Hexdump raw sectors to debug output
     const DUMP = false;
     pub const sector_size_max = 512;
 
-    backing_buffer: [sector_size_max]u8,
-    sector_len_raw: u16,
-    sector_len_data: u16,
-    data_start: u8 = 0,
+    mits_track_0_5: extern struct {
+        track_nr: u8,
+        address: u16 align(1),
+        data: [128]u8,
+        stop: u8,
+        checksum: u8,
+        zero: [4]u8,
+    },
+    mits_track_6_76: extern struct {
+        track_nr: u8,
+        sector_nr: u8,
+        file_nr: u8,
+        nbytes: u8,
+        checksum: u8,
+        next_track: u8,
+        next_sector: u8,
+        data: [128]u8,
+        stop: u8,
+        zero: u8,
+    },
+    cpm_128: extern struct { data: [128]u8 },
+    cpm_512: extern struct { data: [512]u8 },
 
-    pub fn init(image_type: *const DiskImageType, track_nr: u16) DiskSector {
-        std.debug.assert(image_type.sector_size_data <= sector_size_max);
-        return .{
-            .backing_buffer = undefined,
-            .sector_len_data = image_type.sectorSizeDataForTrack(track_nr),
-            .sector_len_raw = image_type.sectorSizeRawForTrack(track_nr),
-            .data_start = image_type.offsetOf(.data, track_nr),
-        };
+    pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
+        switch (image_type.type_id) {
+            .FDD_8IN, .FDD_8IN_8MB => return if (track_nr < 6)
+                .{ .mits_track_0_5 = undefined }
+            else
+                .{ .mits_track_6_76 = undefined },
+            else => {
+                // TODO: This is pretty common .functionise it
+                const sector_size = if (track_nr == 0) image_type.sector_size_data0 orelse image_type.sector_size_data else image_type.sector_size_data;
+                switch (sector_size) {
+                    128 => return .{ .cpm_128 = undefined },
+                    512 => return .{ .cpm_512 = undefined },
+                    else => unreachable,
+                }
+            },
+        }
     }
+
+    pub fn initFormatted(image_type: *const DiskImageType, location: PhysicalAddress) DiskSector {
+        var result: DiskSector = .initUnformatted(image_type, location.track);
+        @memset(result.rawBytes(), 0xe5);
+        switch (result) {
+            .mits_track_0_5 => |*sector| {
+                result.rawBytes()[1] = 0x00;
+                result.rawBytes()[2] = 0x01;
+                sector.track_nr = @truncate(location.track | 0x80);
+                sector.stop = 0xff;
+                @memset(&sector.zero, 0x00);
+                sector.checksum = result.mitsChecksum(location);
+            },
+            .mits_track_6_76 => |*sector| {
+                result.rawBytes()[1] = 0x00;
+                result.rawBytes()[2] = 0x01;
+                sector.track_nr = @truncate(location.track | 0x80);
+                sector.stop = 0xff;
+                sector.zero = 0x00;
+                sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                sector.checksum = result.mitsChecksum(location);
+            },
+            else => {
+                @memset(result.rawBytes(), 0xe5);
+                if (image_type.OS == .cdos) {
+                    if (location.track == 0 and location.sector == 1) {
+                        @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]); // Remove the CDOS_
+                    }
+                }
+            },
+        }
+        return result;
+    }
+
+    fn mitsChecksum(self: *DiskSector, location: PhysicalAddress) u8 {
+        var csum: u8 = 0;
+
+        for (self.dataBytes()) |b| {
+            csum +%= b;
+        }
+        if (location.track >= 6) {
+            csum +%= self.rawBytes()[2];
+            csum +%= self.rawBytes()[3];
+            csum +%= self.rawBytes()[5];
+            csum +%= self.rawBytes()[6];
+        }
+        return csum;
+    }
+
+    pub fn prepareWrite(self: *DiskSector, location: PhysicalAddress) void {
+        switch (self.*) {
+            inline .mits_track_0_5, .mits_track_6_76 => |*sector| {
+                sector.checksum = self.mitsChecksum(location);
+            },
+            else => {},
+        }
+    }
+
     /// Return the data portion of the sector
     pub fn dataBytes(self: *DiskSector) []u8 {
-        return self.backing_buffer[self.data_start .. self.sector_len_data + self.data_start];
+        switch (self.*) {
+            inline else => |*sector| return &sector.data,
+        }
     }
 
-    /// Return the whoel sector, including the data portion.
+    pub fn dataLen(self: *const DiskSector) u16 {
+        return switch (self.*) {
+            inline else => |sector| sector.data.len,
+        };
+    }
+
+    /// Return the whole sector, including the data portion.
     pub fn rawBytes(self: *DiskSector) []u8 {
-        return self.backing_buffer[0..self.sector_len_raw];
+        return switch (self.*) {
+            inline else => |*sector| return std.mem.asBytes(sector),
+        };
+    }
+
+    pub fn dataStart(self: *const DiskSector) u8 {
+        return switch (self.*) {
+            inline else => |sector| @offsetOf(@TypeOf(sector), "data"),
+        };
     }
 
     /// Hexdump raw sector information.
@@ -92,7 +233,8 @@ pub const DiskSector = struct {
         if (!DUMP)
             return;
         std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
-        std.debug.dumpHex(self.rawBytes());
+        // TODO: add format function so we can dump the raw bytes.
+        std.debug.dumpHex(std.mem.asBytes(self));
     }
 };
 
@@ -145,12 +287,6 @@ pub const DiskImageType = struct {
     skew_fn: *const fn (skew_table: []const u16, track: u16, sector: u16) u16 = defaultSkewFn,
     // Defines logical to physical skews.
     skew_table: []const u16 = undefined,
-    // Format disk
-    format_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultFormattedSectorGet,
-    // Create the hard-sector meta data for mits formats.
-    prepare_write_fn: *const fn (self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void = defaultPrepareSectorForWrite,
-    // For hard-sectored formats, return the offset from start of sector for various disk control bytes.
-    offset_fn: *const fn (otype: DiskImageType.OffsetType, track: u16) u8 = defaultOffsetOf,
     // Detect this image type
     detect_fn: *const fn (self: *const DiskImageType, io: std.Io, file: std.Io.File) bool = defaultDetectFn,
 
@@ -205,12 +341,6 @@ pub const DiskImageType = struct {
         return self.skew_fn(self.skew_table, track, logical_sector);
     }
 
-    const OffsetType = enum { track, sector, data, stop, zero, checksum };
-    /// Return the offset of sector meta-data fields for hard-sectored formats.
-    pub fn offsetOf(self: *const DiskImageType, otype: OffsetType, track_nr: u16) u8 {
-        return self.offset_fn(otype, track_nr);
-    }
-
     /// Convert a physical track / sector into a seek offset
     pub fn seekOffset(self: *const DiskImageType, location: PhysicalAddress) usize {
         if (self.sector_size_data0) |sector_size0| {
@@ -221,16 +351,6 @@ pub const DiskImageType = struct {
         } else {
             return @as(usize, location.track) * self.track_size + (location.sector - 1) * self.sector_size_raw;
         }
-    }
-
-    /// Allows for calculating checksums etc before the sector is written
-    pub fn prepareSectorForWrite(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        self.prepare_write_fn(self, address, sector);
-    }
-
-    /// Get a freshly formatted sector.
-    pub fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        self.format_fn(self, address, sector);
     }
 
     /// How large is the data portion of the sector for this track?
@@ -252,18 +372,6 @@ pub const DiskImageType = struct {
     fn defaultSkewFn(skew_table: []const u16, _: u16, logical_sector: u16) u16 {
         return skew_table[logical_sector] + 1;
     }
-
-    // By default just need to fill each sector with 0xe5
-    fn defaultFormattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        sector.* = .init(self, address.track);
-        @memset(sector.dataBytes(), 0xe5);
-    }
-
-    fn defaultOffsetOf(_: DiskImageType.OffsetType, _: u16) u8 {
-        return 0;
-    }
-
-    fn defaultPrepareSectorForWrite(_: *const DiskImageType, _: PhysicalAddress, _: *DiskSector) void {}
 
     fn defaultDetectFn(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
         const image_size = image_file.length(io) catch return false;
@@ -307,9 +415,6 @@ pub const DiskImageType_MITS_8IN = struct {
             .varying_sector_format = true,
             .skew_fn = skew,
             .skew_table = &skew_table,
-            .format_fn = formattedSectorGet,
-            .prepare_write_fn = prepareSectorForWrite,
-            .offset_fn = offsetOf,
         };
         result.init();
         return result;
@@ -321,78 +426,6 @@ pub const DiskImageType_MITS_8IN = struct {
             return table[logical_sector];
 
         return (((table[logical_sector] - 1) * 17) % 32) + 1;
-    }
-
-    pub fn checksum(track: u16, sector_data: []u8) void {
-        var csum: u8 = 0;
-        const data_start = offsetOf(.data, track);
-        const data_end = data_start + sector_data_size;
-        for (sector_data[data_start..data_end]) |b| {
-            csum +%= b;
-        }
-        if (track >= 6) {
-            csum +%= sector_data[2];
-            csum +%= sector_data[3];
-            csum +%= sector_data[5];
-            csum +%= sector_data[6];
-        }
-        sector_data[offsetOf(.checksum, track)] = csum;
-    }
-
-    /// In addition to storing the sector data, need to store control meta data including,
-    /// track and sector number, stop byte, zero byte and checksum.
-    fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        sector.* = .init(self, address.track);
-        @memset(sector.rawBytes(), 0xe5);
-        const raw_sector = sector.rawBytes();
-        raw_sector[1] = 0x00;
-        raw_sector[2] = 0x01;
-        raw_sector[offsetOf(.track, address.track)] = @truncate(address.track | 0x80);
-        raw_sector[offsetOf(.stop, address.track)] = 0xff;
-        raw_sector[offsetOf(.zero, address.track)] = 0x00;
-
-        // For tracks < 6, zero from zero byte to end of sector.
-        if (address.track < 6) {
-            @memset(raw_sector[offsetOf(.zero, 0)..], 0x00);
-        } else {
-            raw_sector[offsetOf(.sector, address.track)] = @intCast(((address.sector - 1) * 17) % 32);
-        }
-        checksum(address.track, raw_sector);
-    }
-
-    /// Set all of the control meta data for the sector.
-    fn prepareSectorForWrite(_: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        // Fill the non-data parts of the sector with 0xe5.
-        @memset(sector.backing_buffer[0..sector.data_start], 0xe5);
-        @memset(sector.backing_buffer[sector.data_start + sector_data_size ..], 0xe5);
-
-        // Then set the required control bytes and checksum
-        const raw_sector = sector.rawBytes();
-        raw_sector[1] = 0x00;
-        raw_sector[2] = 0x01;
-        raw_sector[offsetOf(.track, address.track)] = @truncate(address.track | 0x80);
-        raw_sector[offsetOf(.stop, address.track)] = 0xff;
-        raw_sector[offsetOf(.zero, address.track)] = 0x00;
-        if (address.track < 6) {
-            @memset(raw_sector[offsetOf(.zero, 0)..], 0x00);
-        } else {
-            raw_sector[offsetOf(.sector, address.track)] = @intCast(((address.sector - 1) * 17) % 32);
-        }
-        checksum(address.track, raw_sector);
-    }
-
-    /// Return the byte offset into the sector where data and meta-data is stored.
-    /// This position varies for the first 6 tracks compared to the rest of the disk.
-    fn offsetOf(otype: DiskImageType.OffsetType, track: u16) u8 {
-        const first_six = track < 6;
-        return switch (otype) {
-            .data => return if (first_six) 3 else 7,
-            .track => 0,
-            .sector => return if (first_six) 0 else 1,
-            .stop => return if (first_six) 131 else 135,
-            .zero => return if (first_six) 133 else 136,
-            .checksum => return if (first_six) 132 else 4,
-        };
     }
 };
 
@@ -426,9 +459,6 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .varying_sector_format = true,
             .skew_fn = DiskImageType_MITS_8IN.skew,
             .skew_table = &skew_table,
-            .format_fn = DiskImageType_MITS_8IN.formattedSectorGet,
-            .prepare_write_fn = DiskImageType_MITS_8IN.prepareSectorForWrite,
-            .offset_fn = DiskImageType_MITS_8IN.offsetOf,
         };
         result.init();
         // TODO: These should be calculated, correctly in init, instead of being set here.
@@ -578,17 +608,6 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
 
 /// Shared CDOS functions.
 pub const CDOS = struct {
-
-    // For the first sector on the first track, put the disk format label.
-    // This label is in the format <SM|LG><SS|DS><SD|DD>
-    // Note: The label is being taken from the disk type enum. Naming of the enum value is important!
-    fn formattedSectorGet(self: *const DiskImageType, address: PhysicalAddress, sector: *DiskSector) void {
-        self.defaultFormattedSectorGet(address, sector);
-        if (address.track == 0 and address.sector == 1) {
-            @memcpy(sector.dataBytes()[120..126], @tagName(self.type_id)[5..]); // Remove the CDOS_
-        }
-    }
-
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
         if (!DiskImageType.defaultDetectFn(self, io, image_file)) return false;
         var buf: [128]u8 = undefined;
@@ -635,7 +654,6 @@ pub const DiskImageType_CDOS_SMSSSD = struct {
             .image_size = 92160,
             .varying_sector_format = true, // First sector contains label
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -669,7 +687,6 @@ pub const DiskImageType_CDOS_SMSSDD = struct {
             .image_size = 201984,
             .varying_sector_format = true, // First sector contains label
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -701,7 +718,6 @@ pub const DiskImageType_CDOS_SMDSSD = struct {
             .image_size = 184320,
             .varying_sector_format = true, // First sector contains label
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -735,7 +751,6 @@ pub const DiskImageType_CDOS_SMDSDD = struct {
             .image_size = 406784,
             .varying_sector_format = true, // First sector contains label
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -769,7 +784,6 @@ pub const DiskImageType_CDOS_LGSSSD = struct {
             .image_size = 256256,
             .varying_sector_format = true, // First sector contains a label
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -805,7 +819,6 @@ pub const DiskImageType_CDOS_LGSSDD = struct {
             .image_size = 625920,
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -841,7 +854,6 @@ pub const DiskImageType_CDOS_LGDSSD = struct {
             .image_size = 512512,
             .varying_sector_format = true, // track 0 has disk type information
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
@@ -876,7 +888,6 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
             .image_size = 1256704,
             .varying_sector_format = true, // track 0 is SD, rest DD
             .skew_table = &skew_table,
-            .format_fn = CDOS.formattedSectorGet,
             .detect_fn = CDOS.isCorrectFormat,
         };
         result.init();
