@@ -215,7 +215,7 @@ pub fn closeImage(self: *Self, io: std.Io) void {
     self.writer = null;
 }
 
-pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType) !void {
+pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType, label: ?ad.DiskLabel) !void {
     var cwd = std.Io.Dir.cwd();
 
     self.closeImage(io);
@@ -227,6 +227,13 @@ pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type:
 
     try self.disk_image.?.formatImage();
     try self.disk_image.?.loadDirectories(false);
+    if (label) |lbl| {
+        try self.disk_image.?.labelDisk(lbl);
+    }
+}
+
+pub fn labelGet(self: *Self, label: *ad.DiskLabel) !void {
+    try self.disk_image.?.labelGet(label);
 }
 
 pub fn directoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEntry {

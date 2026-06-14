@@ -2,8 +2,6 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
-// TODO: Allow the "force" option to be set from the cli.
-
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;

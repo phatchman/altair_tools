@@ -29,7 +29,12 @@ pub fn build(b: *std.Build) void {
         exe.subsystem = .Windows;
     }
 
-    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .linux_display_backend = .X11 });
+    const dvui_dep = b.dependency("dvui", .{
+        .target = target,
+        // TODO: This works around a bug in translate-c which won;t compile dvui in ReleaseSafe mode
+        .optimize = if (optimize == .ReleaseSafe) .ReleaseFast else optimize,
+        .linux_display_backend = .X11,
+    });
     exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
     exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
     b.installArtifact(exe);

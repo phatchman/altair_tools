@@ -28,7 +28,8 @@ pub const OperatingSystem = enum { cpm, cdos };
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
     cdos: struct {
-        user_label: [8]u8,
+        pub const user_label_len: u8 = 8;
+        user_label: [user_label_len]u8,
         date_mmddyy: [3]u8,
     },
 
@@ -278,7 +279,7 @@ pub const DiskImageType = struct {
 /// 3) The rest of the sector contains control information such as track numbers, checksums and stop bits.
 /// 4) The layout of this control data is different for the first 6 tracks vs the rest of the disk.
 pub const DiskImageType_MITS_8IN = struct {
-    // Note that mits skew algorithm requires firist sector to be 1, not 0
+    // Note that mits skew algorithm requires first sector to be 1, not 0
     const skew_table = [32]u16{
         1, 9,  17, 25, 3, 11, 19, 27,
         5, 13, 21, 29, 7, 15, 23, 31,

@@ -374,7 +374,9 @@ pub fn validateOptions() !bool {
         return false;
     }
 
-    if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
+    if (options.do_directory or options.do_raw_dir or options.do_information or
+        options.do_format or options.do_label_get or options.do_label_set)
+    {
         if (options.multiple_files.len != 0) {
             cli.printError(&p, &app,
                 \\No filenames are allowed for:
@@ -382,7 +384,8 @@ pub fn validateOptions() !bool {
                 \\       --raw
                 \\       --info
                 \\       --format
-                \\
+                \\       --label
+                \\       --label-set
             , .{});
             return false;
         }
@@ -414,8 +417,9 @@ pub fn validateOptions() !bool {
     }
 
     if (options.force and
-        !(options.do_get or options.do_cpm_put or options.do_get_multi or options.do_put_multi))
+        !(options.do_get or options.do_put or options.do_get_multi or options.do_put_multi))
     {
+        std.debug.print("{any}\n", .{options});
         cli.printError(&p, &app, "force can only be used with get or put operations", .{});
     }
     return true;

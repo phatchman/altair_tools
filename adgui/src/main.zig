@@ -35,7 +35,7 @@
 //              1) From windows into app
 //              2) From app to local OS (SDL doesn't currently support this)
 //              2) Between application grids - "Phase 2"
-//       [_]
+//       [_] BUG when typing in a filename on the make transfer dialog. Typing a 'y' or 'n' will triugger the button instead.
 //
 
 const adgui_version = "0.10.0";
@@ -150,6 +150,7 @@ pub fn main(init: std.process.Init) !void {
         // on windows graphical apps have no console, so output goes to nowhere - attach it manually. related: https://github.com/ziglang/zig/issues/4196
         _ = winapi.AttachConsole(0xFFFFFFFF);
     }
+
     std.log.info("SDL version: {}", .{Backend.getSDLVersion()});
     io = init.io;
 
@@ -179,10 +180,6 @@ pub fn main(init: std.process.Init) !void {
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), allocator, backend.backend(), .{});
     defer win.deinit();
-    defer {
-        if (theme_set)
-            global_theme.deinit(allocator);
-    }
 
     open_local: {
         commands.openLocalDirectory(init.io, local_path_selection.?) catch {
@@ -267,7 +264,6 @@ fn handleEvent(event: *const Backend.c.SDL_Event) void {
     }
 }
 var theme_set = false;
-var global_theme: dvui.Theme = undefined;
 
 fn setTheme() !void {
     if (theme_set)
@@ -681,7 +677,7 @@ fn makeGridHeader(id: GridType) !void {
     }
 }
 
-// TODO: Thius needs some cleanup / refactoring. Especially for the guard / return cases.
+// TODO: This needs some cleanup / refactoring. Especially for the guard / return cases.
 fn makeGridBody(id: GridType) !void {
     const directory_list = getDirectoryById(id);
     var should_display = true;
@@ -1198,35 +1194,10 @@ pub fn makeTransferDialog() !void {
     const KeyState = enum { none, yes, no, yes_all, no_all, enter };
     var key_state: KeyState = .none;
 
-    const evts = dvui.events();
-    for (evts) |*e| {
-        if (e.handled or e.evt != .key) continue;
-        const ke = e.evt.key;
-        if (ke.action != .down) continue;
-
-        switch (ke.code) {
-            .y => {
-                if (ke.mod == .lshift or ke.mod == .rshift) {
-                    key_state = .yes_all;
-                } else {
-                    key_state = .yes;
-                }
-            },
-            .n => {
-                if (ke.mod == .lshift or ke.mod == .rshift) {
-                    key_state = .no_all;
-                } else {
-                    key_state = .no;
-                }
-            },
-            .space, .enter => {
-                key_state = .enter;
-            },
-            else => {},
-        }
-    }
-
     defer outer_vbox.deinit();
+
+    var al: dvui.Alignment = .init(@src(), 0);
+    defer al.deinit();
     {
         var scroll = dvui.scrollArea(
             @src(),
@@ -1279,6 +1250,7 @@ pub fn makeTransferDialog() !void {
                     } else {
                         dvui.labelNoFmt(@src(), "File name:", .{}, .{ .gravity_y = 0.5 });
                     }
+                    al.spacer(@src(), 0);
 
                     var entry = dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
                     errdefer entry.deinit();
@@ -1316,8 +1288,6 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "Altair Disk Images *.dsk;*.img",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textSet(filename, false);
-                                entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
                         } else if (CommandState.buttons.save_file_selector) {
@@ -1330,8 +1300,6 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "System Images *.bin;*.cpm",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textSet(filename, false);
-                                entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
                         } else {
@@ -1346,25 +1314,104 @@ pub fn makeTransferDialog() !void {
                                 .filter_description = "System Images *.bin;*.cpm",
                             })) |filename| {
                                 try CommandState.setFileSelectorBuffer(filename);
-                                entry.textSet(filename, false);
-                                entry.textLayout.selection.moveCursor(filename.len, false);
                                 dvui.refresh(null, @src(), null);
                             }
                         }
                     }
                 }
-
                 if (CommandState.buttons.type_selector) {
-                    var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
-                    defer hbox.deinit();
+                    var vb = dvui.box(@src(), .{}, .{});
+                    defer vb.deinit();
+                    {
+                        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                        defer hbox.deinit();
 
-                    dvui.labelNoFmt(@src(), "Format:    ", .{}, .{ .gravity_y = 0.5 });
-
-                    if (dvui.dropdown(@src(), &ad.all_disk_type_names, .{ .choice = &static.choice }, .{}, .{})) {
-                        CommandState.image_type = &ad.all_disk_types.values[static.choice];
+                        dvui.labelNoFmt(@src(), "Format:    ", .{}, .{ .gravity_y = 0.5 });
+                        al.spacer(@src(), 0);
+                        if (dvui.dropdown(@src(), &ad.all_disk_type_names, .{ .choice = &static.choice }, .{}, .{})) {
+                            CommandState.image_type = &ad.all_disk_types.values[static.choice];
+                        }
+                    }
+                    if (CommandState.image_type) |img_type| {
+                        var label_str: []u8 = undefined;
+                        if (img_type.OS == .cdos) {
+                            {
+                                var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+                                defer hbox.deinit();
+                                dvui.labelNoFmt(@src(), "Label: ", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+                                al.spacer(@src(), 0);
+                                var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = @FieldType(DiskLabel, "cdos").user_label_len } } }, .{});
+                                label_str = te.textGet();
+                                te.deinit();
+                            }
+                            {
+                                var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+                                defer hbox.deinit();
+                                dvui.labelNoFmt(@src(), "Date: ", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+                                al.spacer(@src(), 0);
+                                const size = dvui.themeGet().font_body.sizeM(2, 1);
+                                const mm = dvui.textEntryNumber(
+                                    @src(),
+                                    u8,
+                                    .{ .min = 1, .max = 12, .placeholder = "mm", .character_limit = 2 },
+                                    .{ .min_size_content = size, .max_size_content = .cast(size) },
+                                );
+                                dvui.labelNoFmt(@src(), "/", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+                                const dd = dvui.textEntryNumber(
+                                    @src(),
+                                    u8,
+                                    .{ .min = 1, .max = 31, .placeholder = "dd", .character_limit = 2 },
+                                    .{ .min_size_content = size, .max_size_content = .cast(size) },
+                                );
+                                dvui.labelNoFmt(@src(), "/", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+                                const yy = dvui.textEntryNumber(
+                                    @src(),
+                                    u8,
+                                    .{ .min = 0, .max = 99, .placeholder = "yy", .character_limit = 2 },
+                                    .{ .min_size_content = size, .max_size_content = .cast(size) },
+                                );
+                                if (mm.value == .Valid and dd.value == .Valid and yy.value == .Valid) {
+                                    var label: ad.DiskLabel = .{ .cdos = undefined };
+                                    @memset(&label.cdos.user_label, ' ');
+                                    @memcpy(label.cdos.user_label[0..label_str.len], label_str);
+                                    label.cdos.date_mmddyy[0] = @intCast(mm.value.Valid);
+                                    label.cdos.date_mmddyy[1] = @intCast(dd.value.Valid);
+                                    label.cdos.date_mmddyy[2] = @intCast(yy.value.Valid);
+                                    CommandState.label = label;
+                                }
+                            }
+                        }
                     }
                 }
             }
+            const evts = dvui.events();
+            for (evts) |*e| {
+                if (e.handled or e.evt != .key) continue;
+                const ke = e.evt.key;
+                if (ke.action != .down) continue;
+
+                switch (ke.code) {
+                    .y => {
+                        if (ke.mod == .lshift or ke.mod == .rshift) {
+                            key_state = .yes_all;
+                        } else {
+                            key_state = .yes;
+                        }
+                    },
+                    .n => {
+                        if (ke.mod == .lshift or ke.mod == .rshift) {
+                            key_state = .no_all;
+                        } else {
+                            key_state = .no;
+                        }
+                    },
+                    .space, .enter => {
+                        key_state = .enter;
+                    },
+                    else => {},
+                }
+            }
+
             // Check we have some type of filename.
             if (empty_file_selector) {
                 CommandState.err_message = "Please enter a new image filename";
@@ -1445,7 +1492,7 @@ pub fn makeTransferDialog() !void {
         }
     }
 
-    for (evts) |*e| {
+    for (dvui.events()) |*e| {
         if (e.handled or e.evt != .key) continue;
         if (!e.handled) e.handle(@src(), dialog_win.data());
     }
@@ -2222,7 +2269,7 @@ fn newButtonHandler() !void {
         pub fn createNewImage(image_path: []const u8, _: ButtonHandler.Options) !void {
             image_directories = null;
             const image_type = CommandState.image_type orelse ad.all_disk_types.getPtrConst(.FDD_8IN);
-            try commands.createNewImage(io, image_path, image_type);
+            try commands.createNewImage(io, image_path, image_type, CommandState.label);
             try setImagePath(image_path);
             image_directories = try commands.directoryListing(allocator);
             sortDirectories(.image, null, false);
@@ -2290,8 +2337,21 @@ fn infoButtonHandler() !void {
                 const image_type = disk_image.image_type;
                 const arena = CommandState.arena.allocator();
                 // This is a bit hacky - using the filename to display the info.
-                // If the display of this goes wonky, it"", 's probably because we are treng it as a filename, rather than a label.
+                // If the display of this goes wonky, it's probably because we are tryng it as a filename, rather than a label.
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Format", image_type.type_name })));
+                switch (image_type.OS) {
+                    .cdos => {
+                        var label: ad.DiskLabel = undefined;
+                        try commands.labelGet(&label);
+                        try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Label", label.cdos.user_label })));
+                        try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(
+                            arena,
+                            "{s:<12}: {d:02}/{d:02}/{d:02} (mm/dd/yy)",
+                            .{ "Date", label.cdos.date_mmddyy[0], label.cdos.date_mmddyy[1], label.cdos.date_mmddyy[2] },
+                        )));
+                    },
+                    .cpm => {},
+                }
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks })));
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size })));
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Res Track", image_type.reserved_tracks })));
@@ -2333,7 +2393,7 @@ pub fn findNewImageName(gpa: std.mem.Allocator, directory: []const u8) ![]const 
     @memcpy(&filename, "IMG000.DSK");
     var num_part = filename[3..6];
     var cwd = try std.Io.Dir.cwd().openDir(io, directory, .{});
-    defer cwd.close();
+    defer cwd.close(io);
     for (0..999) |file_num| {
         num_part[2] = '0' + @as(u8, @intCast(file_num % 10));
         if (file_num % 10 == 0) {
@@ -2513,3 +2573,4 @@ const Commands = @import("commands.zig");
 const DirectoryEntry = Commands.DirectoryEntry;
 const CopyMode = Commands.CopyMode;
 const Backend = dvui.backend;
+const DiskLabel = ad.DiskLabel;

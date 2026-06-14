@@ -254,11 +254,10 @@ pub fn getFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
         while (itr.next()) |entry| {
             found_file = true;
             _getFile(ctx, disk_image, .{ .dir_entry = entry }, options) catch |err| {
-                if (err == error.CommandFailCanContinue) {
-                    continue;
-                } else {
-                    return error.CommandFailed;
-                }
+                return switch (err) {
+                    error.CommandFailedCanContinue => continue,
+                    else => error.CommandFailed,
+                };
             };
         } else {
             if (!found_file) {
@@ -276,7 +275,7 @@ pub const FileNameOrCookedDir = union(enum) {
     filename: []const u8,
     dir_entry: *const CookedDirEntry,
 };
-pub fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: CommandLineOptions) CommandError!void {
+fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, options: CommandLineOptions) CommandError!void {
     const directory_table = disk_image.directory;
 
     // If passed in a filename, then look it up. Otherwise use the dir_entry passed in.
@@ -323,8 +322,15 @@ pub fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDi
     else
         std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()}) catch unreachable;
 
-    var out_file = cwd.createFile(ctx.io, out_filename, .{ .read = false }) catch |err| {
-        printErrorMessage(current_command, .file_create, .{out_filename}, err);
+    var out_file = cwd.createFile(ctx.io, out_filename, .{ .read = false, .exclusive = !options.force }) catch |err| {
+        switch (err) {
+            error.PathAlreadyExists => {
+                printErrorMessage(current_command, .file_exists, .{out_filename}, err);
+            },
+            else => {
+                printErrorMessage(current_command, .file_create, .{out_filename}, err);
+            },
+        }
         return error.CommandFailedCanContinue;
     };
     defer out_file.close(ctx.io);
@@ -697,6 +703,7 @@ const ErrorMessage = enum {
     file_not_found_user,
     file_not_found,
     file_create,
+    file_exists,
     file_open,
     file_copy,
     file_erase,
@@ -725,6 +732,7 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
         .file_not_found_user = "File {s} does not exist for user {d}",
         .file_not_found = "File {s} does not exist",
         .file_create = "Error creating file {s}",
+        .file_exists = "Error creating file {s}. Use --force to overwrite",
         .file_open = "Error opening file {s}",
         .file_copy = "Error copying file {s}",
         .file_erase = "Error erasing {s}",
