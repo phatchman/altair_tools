@@ -18,6 +18,7 @@ adgui/zig-pkg/
 *.HLP
 *.ps1
 *.bak
+adgui/tst
 cdos/
 tmp/
 legacy/
@@ -26,3 +27,4 @@ adgui/disks
 .vscode
 adgui/.vscode
 !src/test_disks/*.DSK
+adgui/tst/New folder/8BIT.HEX

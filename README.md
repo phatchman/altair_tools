@@ -20,8 +20,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 [Go straight to the command examples](#command-line)<br>
 [Go straight to the gui examples](docs/ADGUI.md)
 
-
-### LLM / "AI" Disclosure and Policy ###
+### LLM / "AI" Disclosure and Policy
 * Everything in this repository is human crafted.
 * No LLMs have been used to write any line of code or documentation.
 * An LLM has been used as a code review tool (coderabbit).
@@ -40,7 +39,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 | CDOS_SMSSSD       | CDOS 5.12" Single Sided Single Density |
 | CDOS_SMSSDD       | CDOS 5.12" Single Sided Double Density |
 | CDOS_SMDSSD       | CDOS 5.12" Double Sided Single Density |
-| CDOS_LGDSDD       | CDOS 8" Double Sided Double Density |
+| CDOS_SMDSDD       | CDOS 5.12" Double Sided Double Density |
 | CDOS_LGSSSD       | CDOS 8" Single Sided Single Density |
 | CDOS_LGSSDD       | CDOS 8" Single Sided Double Density |
 | CDOS_LGDSSD       | CDOS 8" Double Sided Single Density |
