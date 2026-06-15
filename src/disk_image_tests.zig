@@ -25,7 +25,7 @@ test "disk formatted" {
             .CDOS_LGDSSD => @embedFile("test_disks/lgdssd_fmt.dsk"),
             .CDOS_LGDSDD => @embedFile("test_disks/lgdsdd_fmt.dsk"),
             // TODO:
-            .ADOS_8IN => @embedFile("test_disks/8in_fmt.dsk"),
+            .ADOS_8IN => @embedFile("test_disks/ados_basic_fmt.dsk"),
         };
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
@@ -35,6 +35,7 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }

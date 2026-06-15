@@ -147,35 +147,36 @@ pub const DiskSector = union(enum) {
         @memset(result.rawBytes(), 0xe5);
         switch (result) {
             .mits_track_0_5 => |*sector| {
-                result.rawBytes()[1] = 0x00;
-                result.rawBytes()[2] = 0x01;
-                sector.track_nr = @truncate(location.track | 0x80);
-                sector.stop = 0xff;
-                @memset(&sector.zero, 0x00);
-                sector.checksum = result.mitsChecksum(location);
+                // At least PIP in altair basic doesn't cause the first 6 tracks to be initialized.
+                // I still need to test with altair dos.
+                if (image_type.OS == .cpm) {
+                    result.rawBytes()[1] = 0x00;
+                    result.rawBytes()[2] = 0x01;
+                    sector.track_nr = @truncate(location.track | 0x80);
+                    sector.stop = 0xff;
+                    @memset(&sector.zero, 0x00);
+                    sector.checksum = result.mitsChecksum(location);
+                }
             },
             .mits_track_6_76 => |*sector| {
-                result.rawBytes()[1] = 0x00;
-                result.rawBytes()[2] = 0x01;
-                sector.track_nr = @truncate(location.track | 0x80);
-                sector.stop = 0xff;
-                sector.zero = 0x00;
-                sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
-                sector.checksum = result.mitsChecksum(location);
+                // TODO: ADOS needs to fill with zero and we work out what other things it sets.
+                if (image_type.OS == .cpm) {
+                    result.rawBytes()[1] = 0x00;
+                    result.rawBytes()[2] = 0x01;
+                    sector.track_nr = @truncate(location.track | 0x80);
+                    sector.stop = 0xff;
+                    sector.zero = 0x00;
+                    sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                    sector.checksum = result.mitsChecksum(location);
+                }
             },
             else => {
                 @memset(result.rawBytes(), 0xe5);
                 switch (image_type.OS) {
-                    .cdos => {
-                        if (location.track == 0 and location.sector == 1) {
-                            @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]); // Remove the CDOS_
-                        }
-                    },
-                    .ados => {
-                        if (location.track < 6) {
-                            if (location.track % 2 == 0)
-                        }
-                    }
+                    // Apply the disk label to the first sector for CDOS
+                    .cdos => if (location.track == 0 and location.sector == 1)
+                        @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]), // Remove the CDOS_
+                    else => {},
                 }
             },
         }
