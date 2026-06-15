@@ -338,7 +338,7 @@ pub const DiskImage = struct {
             nbytes = try file_reader.readSliceShort(file_data);
             @memset(file_data[nbytes .. (nbytes + 127) / 128 * 128], 0x1a);
 
-            // This always advances by full records to ensure that
+            // record_nr always advances by full records to ensure that
             // new directory entries are created and new allocs assigned for short-reads
             // on the last read of the file.
             record_nr += self.image_type.sector_size_data / 128;
@@ -396,10 +396,9 @@ pub const DiskImage = struct {
 
     pub fn installCPM(self: *DiskImage, io: std.Io, in_file: File) !void {
         const in_size = try in_file.length(io);
-        const image_type = self.image_type;
         // This is safe as only track 0 can have a different sector count.
-        const expected_size = self.sectorsForTrack(0) * @as(usize, image_type.sector_size_raw0 orelse image_type.sector_size_raw) +
-            (self.image_type.reserved_tracks - 1) * self.sectorsForTrack(1) * image_type.sector_size_raw;
+        const expected_size = self.sectorsForTrack(0) * self.image_type.sectorSizeRawForTrack(0) +
+            (self.image_type.reserved_tracks - 1) * self.sectorsForTrack(1) * self.image_type.sectorSizeRawForTrack(1);
         if (in_size != expected_size) {
             log.err("Expected system image size of {}, actual size is {}", .{ expected_size, in_size });
             return error.InvalidImageFile;
@@ -434,10 +433,6 @@ pub const DiskImage = struct {
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
                     disk_sector = .initFormatted(self.image_type, .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) });
-                    // self.image_type.formattedSectorGet(
-                    //     .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) },
-                    //     &disk_sector,
-                    // );
                 }
                 //std.debug.print("Formatting type: [{s}] track:[{}] sector:[{}] sector_type: [{t}] data_len: [{}]\n", .{ self.image_type.type_name, track_nr, sector_nr, disk_sector, self.image_type.sector_size_data });
                 //std.debug.dumpHex(disk_sector.rawBytes());
@@ -468,7 +463,7 @@ pub const DiskImage = struct {
                 raw_item.extent_low = switch (self.image_type.type_id) {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
-                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
+                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB, .ADOS_8IN => unreachable,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {
                     // This is the allocations taken up by the directory table.
@@ -487,7 +482,7 @@ pub const DiskImage = struct {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                     .CDOS_LGDSDD => 0x40,
-                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
+                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB, .ADOS_8IN => unreachable,
                 };
                 try self.rawEntryWrite(0);
             },

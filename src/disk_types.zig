@@ -23,7 +23,7 @@
 //         Number of directory entries (64-512) . . . .  <128> -
 //         ```
 
-pub const OperatingSystem = enum { cpm, cdos };
+pub const OperatingSystem = enum { cpm, cdos, ados };
 
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
@@ -32,10 +32,11 @@ pub const DiskLabel = union(OperatingSystem) {
         user_label: [user_label_len]u8,
         date_mmddyy: [3]u8,
     },
+    ados: void,
 
     pub fn format(self: *const DiskLabel, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.*) {
-            .cpm => {},
+            .cpm, .ados => {},
             .cdos => |lbl| try writer.print("Label: {s}  Date: {c}{c}/{c}{c}/{c}{c}", .{
                 lbl.user_label,
                 lbl.date_mmddyy[0] / 10 + '0',
@@ -164,9 +165,16 @@ pub const DiskSector = union(enum) {
             },
             else => {
                 @memset(result.rawBytes(), 0xe5);
-                if (image_type.OS == .cdos) {
-                    if (location.track == 0 and location.sector == 1) {
-                        @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]); // Remove the CDOS_
+                switch (image_type.OS) {
+                    .cdos => {
+                        if (location.track == 0 and location.sector == 1) {
+                            @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]); // Remove the CDOS_
+                        }
+                    },
+                    .ados => {
+                        if (location.track < 6) {
+                            if (location.track % 2 == 0)
+                        }
                     }
                 }
             },
@@ -895,6 +903,51 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
     }
 };
 
+// Atair DOS
+
+pub const DiskImageType_ADOS_8IN = struct {
+    // Note that mits skew algorithm requires first sector to be 1, not 0
+    const skew_table = [32]u16{
+        1, 9,  17, 25, 3, 11, 19, 27,
+        5, 13, 21, 29, 7, 15, 23, 31,
+        2, 10, 18, 26, 4, 12, 20, 28,
+        6, 14, 22, 30, 8, 16, 24, 32,
+    };
+    const sector_size = 137; // Note non-standard sector size.
+    const sector_data_size = 128;
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .FDD_8IN,
+            .type_name = "ADOS_8IN",
+            .description = "Altair DOS & BASIC 8\" Floppy Disk ",
+            .OS = .ados,
+            .tracks = 77,
+            .reserved_tracks = 2,
+            .sectors_per_track = 32,
+            .sector_size_raw = sector_size,
+            .sector_size_data = sector_data_size,
+            .block_size = 1024,
+            .directories = 256,
+            .directory_allocs = 4,
+            .image_size = 337568,
+            .varying_sector_format = true,
+            .skew_fn = DiskImageType_MITS_8IN.skew,
+            .skew_table = &skew_table,
+        };
+        result.init();
+        return result;
+    }
+
+    /// For historical reasons, the skew changes based on the track number.
+    fn skew(table: []const u16, track: u16, logical_sector: u16) u16 {
+        if (track < 6)
+            return table[logical_sector];
+
+        return (((table[logical_sector] - 1) * 17) % 32) + 1;
+    }
+};
+
 pub const DiskImageTypes = enum {
     FDD_8IN,
     HDD_5MB,
@@ -910,6 +963,7 @@ pub const DiskImageTypes = enum {
     CDOS_LGSSDD,
     CDOS_LGDSSD,
     CDOS_LGDSDD,
+    ADOS_8IN,
 };
 
 /// all available disk image formats.
@@ -928,6 +982,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .CDOS_LGSSDD = DiskImageType_CDOS_LGSSDD.init(),
     .CDOS_LGDSSD = DiskImageType_CDOS_LGDSSD.init(),
     .CDOS_LGDSDD = DiskImageType_CDOS_LGDSDD.init(),
+    .ADOS_8IN = DiskImageType_ADOS_8IN.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

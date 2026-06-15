@@ -189,7 +189,6 @@ pub const RawDirEntry = struct {
 /// An easier to use version of the raw entry.
 pub const CookedDirEntry = struct {
     user: u8,
-    extent_nr: u16,
     attribs: [2]u8,
     num_records: u32,
     num_allocs: u32,
@@ -221,7 +220,6 @@ pub const CookedDirEntry = struct {
 
         var result = CookedDirEntry{
             .user = raw_dir.entry.user,
-            .extent_nr = raw_dir.extentGet(image_type),
             .attribs = [_]u8{
                 if (raw_dir.attribReadOnly()) 'R' else 'W',
                 if (raw_dir.attribSystem()) 'S' else ' ',
@@ -374,7 +372,14 @@ pub const DirectoryTable = struct {
                 .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                 .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                 .CDOS_LGDSDD => 0x40,
-                .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB => unreachable,
+                .FDD_8IN,
+                .HDD_5MB,
+                .HDD_5MB_1024,
+                .FDD_TAR,
+                .@"FDD_1.5MB",
+                .FDD_8IN_8MB,
+                .ADOS_8IN,
+                => unreachable,
             };
             if (expected_num_records != raw_item.entry.num_records) {
                 if (!@import("builtin").is_test) log.err(
@@ -444,10 +449,7 @@ pub const DirectoryTable = struct {
                 if (!std.mem.eql(u8, lhs.filenameAndExtension(), rhs.filenameAndExtension())) {
                     return std.mem.lessThan(u8, lhs.filenameAndExtension(), rhs.filenameAndExtension());
                 }
-                if (lhs.user != rhs.user) {
-                    return lhs.user < rhs.user;
-                }
-                return lhs.extent_nr < rhs.extent_nr;
+                return lhs.user < rhs.user;
             }
         }.lessThan);
     }

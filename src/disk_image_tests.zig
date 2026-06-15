@@ -24,6 +24,8 @@ test "disk formatted" {
             .CDOS_LGSSDD => @embedFile("test_disks/lgssdd_fmt.dsk"),
             .CDOS_LGDSSD => @embedFile("test_disks/lgdssd_fmt.dsk"),
             .CDOS_LGDSDD => @embedFile("test_disks/lgdsdd_fmt.dsk"),
+            // TODO:
+            .ADOS_8IN => @embedFile("test_disks/8in_fmt.dsk"),
         };
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
@@ -612,6 +614,8 @@ test "autodetect image" {
             .CDOS_LGSSDD => "src/test_disks/lgssdd_fmt.dsk",
             .CDOS_LGDSSD => "src/test_disks/lgdssd_fmt.dsk",
             .CDOS_LGDSDD => "src/test_disks/lgdsdd_fmt.dsk",
+            // TODO:
+            .ADOS_8IN => "src/test_disks/8in_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -683,7 +687,7 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     try disk_image.formatImage();
     try disk_image.loadDirectories(false);
     switch (image_type.OS) {
-        .cpm => {},
+        .cpm, .ados => {},
         .cdos => {
             var label: DiskLabel = .{ .cdos = undefined };
             @memcpy(&label.cdos.user_label, "ABCDEFGH");
