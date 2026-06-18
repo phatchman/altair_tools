@@ -67,13 +67,13 @@ fn do_main() error{ErrorExit}!void {
 }
 
 pub const CommandLineOptions = struct {
-    image_file: []const u8 = undefined,
-    multiple_files: [][]const u8 = undefined,
-    system_image_get: []const u8 = undefined,
-    system_image_put: []const u8 = undefined,
-    recovery_image_file: []const u8 = undefined,
-    get_out_dir: []const u8 = undefined,
-    disk_label: []const u8 = undefined,
+    image_file: []const u8 = "",
+    multiple_files: [][]const u8 = &.{},
+    system_image_get: []const u8 = "",
+    system_image_put: []const u8 = "",
+    recovery_image_file: []const u8 = "",
+    get_out_dir: []const u8 = "",
+    disk_label: []const u8 = "",
     // All command options need to be in the format do_xxxx to be
     // included in the dispatch table.
     do_directory: bool = false,
@@ -358,6 +358,7 @@ pub fn validateOptions() !bool {
     defer p.flush();
 
     if (option_count > 1) {
+        std.debug.print("{}, {}\n", .{ option_count, options });
         cli.printError(&p, &app,
             \\You may only specify one of:
             \\       --dir,
