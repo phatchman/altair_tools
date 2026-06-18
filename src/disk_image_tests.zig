@@ -6,27 +6,31 @@ const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    // std.testing.log_level = .info;
+    std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
-        const compare_image = switch (fmt.type_id) {
-            .FDD_8IN => @embedFile("test_disks/8in_fmt.dsk"),
-            .FDD_8IN_8MB => @embedFile("test_disks/8mb_fmt.dsk"),
-            .HDD_5MB => @embedFile("test_disks/5mb_fmt.dsk"),
-            .HDD_5MB_1024 => @embedFile("test_disks/5mb_1024_fmt.dsk"),
-            .FDD_TAR => @embedFile("test_disks/tar_fmt.dsk"),
-            .@"FDD_1.5MB" => @embedFile("test_disks/1.5mb_fmt.dsk"),
-            .CDOS_SMSSSD => @embedFile("test_disks/smsssd_fmt.dsk"),
-            .CDOS_SMSSDD => @embedFile("test_disks/smssdd_fmt.dsk"),
-            .CDOS_SMDSSD => @embedFile("test_disks/smdssd_fmt.dsk"),
-            .CDOS_SMDSDD => @embedFile("test_disks/smdsdd_fmt.dsk"),
-            .CDOS_LGSSSD => @embedFile("test_disks/lgsssd_fmt.dsk"),
-            .CDOS_LGSSDD => @embedFile("test_disks/lgssdd_fmt.dsk"),
-            .CDOS_LGDSSD => @embedFile("test_disks/lgdssd_fmt.dsk"),
-            .CDOS_LGDSDD => @embedFile("test_disks/lgdsdd_fmt.dsk"),
-            // TODO:
-            .ADOS_8IN => @embedFile("test_disks/ados_basic_fmt.dsk"),
+        const compare_image: []u8 = switch (fmt.type_id) {
+            .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/8in_fmt.dsk")),
+            .FDD_8IN_8MB => try allocator.dupe(u8, @embedFile("test_disks/8mb_fmt.dsk")),
+            .HDD_5MB => try allocator.dupe(u8, @embedFile("test_disks/5mb_fmt.dsk")),
+            .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_fmt.dsk")),
+            .FDD_TAR => try allocator.dupe(u8, @embedFile("test_disks/tar_fmt.dsk")),
+            .@"FDD_1.5MB" => try allocator.dupe(u8, @embedFile("test_disks/1.5mb_fmt.dsk")),
+            .CDOS_SMSSSD => try allocator.dupe(u8, @embedFile("test_disks/smsssd_fmt.dsk")),
+            .CDOS_SMSSDD => try allocator.dupe(u8, @embedFile("test_disks/smssdd_fmt.dsk")),
+            .CDOS_SMDSSD => try allocator.dupe(u8, @embedFile("test_disks/smdssd_fmt.dsk")),
+            .CDOS_SMDSDD => try allocator.dupe(u8, @embedFile("test_disks/smdsdd_fmt.dsk")),
+            .CDOS_LGSSSD => try allocator.dupe(u8, @embedFile("test_disks/lgsssd_fmt.dsk")),
+            .CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_fmt.dsk")),
+            .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_fmt.dsk")),
+            .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_fmt.dsk")),
+            .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
+            //            .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
+            //else => "",
         };
+        defer allocator.free(compare_image);
+
+        //        std.debug.print("comapre img = {x}\n", .{compare_image[0]});
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
         defer allocator.free(test_buffer);
@@ -35,7 +39,6 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -60,8 +63,8 @@ test "8in alt size" {
         .{ .on_disk = &image_writer },
         FDD_8IN,
     );
-    try disk_image.loadDirectories(false);
-    disk_image.deinit();
+    defer disk_image.deinit();
+    try disk_image.loadDirectories(.full);
 }
 
 test "HDD 5MB formatted" {
@@ -678,7 +681,7 @@ const InMemoryImage = struct {
 fn newMemoryDiskImage(raw_image: *InMemoryConstImage, image_type: *const DiskImageType) !DiskImage {
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
-    try disk_image.loadDirectories(false);
+    try disk_image.loadDirectories(.full);
     return disk_image;
 }
 
@@ -686,7 +689,7 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
     try disk_image.formatImage();
-    try disk_image.loadDirectories(false);
+    try disk_image.loadDirectories(.full);
     switch (image_type.OS) {
         .cpm, .ados => {},
         .cdos => {
@@ -707,7 +710,7 @@ pub fn reinitDiskImage(image: *DiskImage) !void {
     try reader.seekTo(0);
     try writer.seekTo(0);
     try image.reinit(std.testing.allocator, reader, writer);
-    try image.loadDirectories(false);
+    try image.loadDirectories(.full);
 }
 
 /// Caller should pass in pointers to an uninitialized reader and writer.
@@ -717,7 +720,7 @@ fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer
     writer.* = image_file.writer(std.testing.io, &.{});
     var disk_image = try DiskImage.init(std.testing.allocator, .{ .on_disk = reader }, .{ .on_disk = writer }, image_type);
     try disk_image.formatImage();
-    try disk_image.loadDirectories(false);
+    try disk_image.loadDirectories(.full);
     return disk_image;
 }
 
@@ -786,23 +789,24 @@ const CDOS_LGSSSD = all_disk_types.getPtrConst(.CDOS_LGSSSD);
 const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
+const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
+const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{ FDD_8IN, HDD_5MB };
 //const all_formats = .{FDD_8IN};
-// const all_formats = .{CDOS_SMSSSD};
-const all_formats = _: {
-    const fields = std.meta.fields(DiskImageTypes);
-    var result: [fields.len]*const DiskImageType = undefined;
-    var idx: usize = 0;
-    for (fields) |field| {
-        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-        idx += 1;
-    }
-    const result_c = result;
-    break :_ &result_c;
-};
+// const all_formats = .{ADOS_8IN};
+// const all_formats = _: {
+//     const fields = std.meta.fields(DiskImageTypes);
+//     var result: [fields.len]*const DiskImageType = undefined;
+//     var idx: usize = 0;
+//     for (fields) |field| {
+//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+//         idx += 1;
+//     }
+//     const result_c = result;
+//     break :_ &result_c;
+// };
 
 test {
     std.testing.refAllDecls(@This());

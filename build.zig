@@ -45,15 +45,12 @@ pub fn build(b: *std.Build) void {
         });
         _ = lib_mod;
 
-        const exe = b.addExecutable(.{
-            .name = "altairdsk",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-                .strip = strip_debug_symbols,
-            }),
-        });
+        const exe = b.addExecutable(.{ .name = "altairdsk", .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .strip = strip_debug_symbols,
+        }), .use_llvm = true });
         const zigcli = b.dependency("cli", .{});
         exe.root_module.addImport("zig-cli", zigcli.module("cli"));
         if (targets.len > 1) {

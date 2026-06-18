@@ -22,6 +22,7 @@
 //         Date . . . . . . . . . . . . . . . . . . <12/12/12> -
 //         Number of directory entries (64-512) . . . .  <128> -
 //         ```
+// TODO: Prob instroduce a sector type, instead of always switching on type_id
 
 pub const OperatingSystem = enum { cpm, cdos, ados };
 
@@ -47,6 +48,25 @@ pub const DiskLabel = union(OperatingSystem) {
                 lbl.date_mmddyy[2] % 10 + '0',
             }),
         }
+    }
+};
+
+const AltairDosDirEntry = extern struct {
+    filename: [8]u8,
+    track: u8,
+    sector: u8,
+    mode: u8,
+    unused: [5]u8,
+
+    pub fn format(self: *const AltairDosDirEntry, writer: *std.Io.Writer) error{WriteFailed}!void {
+        var printable: [self.filename.len]u8 = self.filename;
+        for (&printable) |*ch| {
+            if (!std.ascii.isPrint(ch.*)) ch.* = '?';
+        }
+        try writer.print(
+            "FN: [{s}], TK: [{x:02}], SC: [{x:02}], MD: [{x:02}], UN: [{x}]",
+            .{ printable, self.track, self.sector, self.mode, self.unused },
+        );
     }
 };
 
@@ -130,7 +150,7 @@ pub const DiskSector = union(enum) {
 
     pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
         return switch (image_type.type_id) {
-            .FDD_8IN, .FDD_8IN_8MB => if (track_nr < 6)
+            .FDD_8IN, .FDD_8IN_8MB, .ADOS_8IN => if (track_nr < 6)
                 .{ .mits_track_0_5 = undefined }
             else
                 .{ .mits_track_6_76 = undefined },
@@ -160,14 +180,30 @@ pub const DiskSector = union(enum) {
             },
             .mits_track_6_76 => |*sector| {
                 // TODO: ADOS needs to fill with zero and we work out what other things it sets.
-                if (image_type.OS == .cpm) {
-                    result.rawBytes()[1] = 0x00;
-                    result.rawBytes()[2] = 0x01;
-                    sector.track_nr = @truncate(location.track | 0x80);
-                    sector.stop = 0xff;
-                    sector.zero = 0x00;
-                    sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
-                    sector.checksum = result.mitsChecksum(location);
+                switch (image_type.OS) {
+                    .cpm => {
+                        result.rawBytes()[1] = 0x00;
+                        result.rawBytes()[2] = 0x01;
+                        sector.track_nr = @truncate(location.track | 0x80);
+                        sector.stop = 0xff;
+                        sector.zero = 0x00;
+                        sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                        sector.checksum = result.mitsChecksum(location);
+                    },
+                    .ados => {
+                        @memset(result.rawBytes(), 0x00);
+                        sector.track_nr = @truncate(location.track | 0x80);
+                        sector.stop = 0xff;
+                        sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                        // For each sector of directory track, set the first byte of the directory
+                        // entry to 0xff, indicating "end of directory"
+                        if (location.track == 70 and location.sector == 1) {
+                            sector.nbytes = 0x80;
+                            sector.data[0] = 0xff;
+                        }
+                        sector.checksum = result.mitsChecksum(location);
+                    },
+                    else => unreachable,
                 }
             },
             else => {
@@ -919,12 +955,12 @@ pub const DiskImageType_ADOS_8IN = struct {
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
-            .type_id = .FDD_8IN,
+            .type_id = .ADOS_8IN,
             .type_name = "ADOS_8IN",
             .description = "Altair DOS & BASIC 8\" Floppy Disk ",
             .OS = .ados,
             .tracks = 77,
-            .reserved_tracks = 2,
+            .reserved_tracks = 6,
             .sectors_per_track = 32,
             .sector_size_raw = sector_size,
             .sector_size_data = sector_data_size,
@@ -935,9 +971,67 @@ pub const DiskImageType_ADOS_8IN = struct {
             .varying_sector_format = true,
             .skew_fn = DiskImageType_MITS_8IN.skew,
             .skew_table = &skew_table,
+            .detect_fn = isCorrectFormat,
         };
         result.init();
         return result;
+    }
+
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        std.debug.print("parent\n", .{});
+        if (!DiskImageType.defaultDetectFn(self, io, image_file)) return false;
+        std.debug.print("parent pass\n", .{});
+        var reader = image_file.reader(io, &.{});
+        // Go to the directory table location on track 70
+        std.debug.print("track size = {}\n", .{self.track_size});
+        reader.seekTo(70 * @as(u32, self.track_size)) catch return false;
+        var sector: DiskSector = .initUnformatted(self, 70);
+
+        reader.interface.readSliceAll(sector.rawBytes()) catch return false;
+        var entries: []AltairDosDirEntry = std.mem.bytesAsSlice(AltairDosDirEntry, sector.dataBytes());
+
+        // It might be a new directory with no entries.
+        // std.debug.print("checking empty\n", .{});
+        if (entries[0].filename[0] == 0xff) {
+            // All the other entry filenames need ot start with 0 as they either never existed, or were deleted.
+            for (entries[1..]) |e| {
+                if (e.filename[0] != 0x00) return false;
+            }
+            return true;
+        }
+        // std.debug.print("checking dir\n", .{});
+
+        // So there must be at least 1 entry
+        // TODO: we actually need to walk the whole directory in case all the early files got deleted.
+        var start: usize = 1;
+        for (0..self.sectors_per_track) |_| {
+            std.debug.print("sector read\n", .{});
+            for (entries, start..) |e, entry_nr| {
+                if (e.filename[0] == 255) return false;
+                if (e.filename[0] == 0x00) continue; // deleted
+                if (e.track > 76 or e.sector > 31) return false;
+                std.debug.print("not EOD or deleted\n", .{});
+
+                for (e.filename) |ch| {
+                    // invalid filename chars
+                    if (!std.ascii.isPrint(ch)) return false;
+                }
+                std.debug.print("valid filename {s}\n", .{e.filename});
+
+                // must be valid filename. so check that this entry had correct fileno.
+                reader.seekTo(@as(u32, e.track) * self.track_size + 137 * @as(u32, e.sector)) catch return false;
+                std.debug.print("Seeked to : {x}, \n", .{reader.logicalPos()});
+                reader.interface.readSliceAll(sector.rawBytes()) catch return false;
+                std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
+
+                return sector.mits_track_6_76.file_nr == entry_nr;
+            }
+            start = 0;
+            reader.interface.readSliceAll(sector.rawBytes()) catch return false;
+            entries = std.mem.bytesAsSlice(AltairDosDirEntry, sector.rawBytes());
+        }
+
+        return false;
     }
 
     /// For historical reasons, the skew changes based on the track number.

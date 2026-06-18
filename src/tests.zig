@@ -5,7 +5,7 @@ const Disk8IN = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN);
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
-const RawDirEntry = @import("directory_table.zig").RawDirEntry;
+const RawCpmDirEntry = @import("directory_table.zig").RawCpmDirEntry;
 
 comptime {
     _ = @import("disk_image_tests.zig");
@@ -14,7 +14,7 @@ comptime {
 test "simple filename" {
     const filename = "FILENAME.COM";
 
-    var raw = std.mem.zeroes(RawDirEntry);
+    var raw = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
     try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
     try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
@@ -30,7 +30,7 @@ test "simple filename" {
 test "filename no extension" {
     const filename = "FILENAME";
 
-    var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
+    var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
     try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
     try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
@@ -46,7 +46,7 @@ test "filename no extension" {
 test "extension no filename" {
     const filename = ".COM";
 
-    var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
+    var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
     try std.testing.expectEqualStrings("        ", &raw.entry.filename);
     try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
@@ -62,7 +62,7 @@ test "extension no filename" {
 test "short filename no extension" {
     const filename = "X.";
 
-    var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
+    var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
     try std.testing.expectEqualStrings("X       ", &raw.entry.filename);
     try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
@@ -78,7 +78,7 @@ test "short filename no extension" {
 test "short extension no filename" {
     const filename = ".X";
 
-    var raw: RawDirEntry = std.mem.zeroes(RawDirEntry);
+    var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
     try std.testing.expectEqualStrings("        ", &raw.entry.filename);
     try std.testing.expectEqualStrings("X  ", &raw.entry.filetype);
