@@ -341,6 +341,12 @@ pub const DirectoryTable = struct {
                 inline .cpm => |s| return s.isLabel(),
             }
         }
+
+        pub fn items(self: *const RawDirEntry) void {
+            switch (self.*) {
+                inline else => |s| return s.items,
+            }
+        }
     };
 
     /// All dynamic allocations should use this allocator.
@@ -527,7 +533,50 @@ pub const DirectoryTable = struct {
             }
         }
 
-        // TODO Cooked dirs
+        var raw_dirs_sorted: std.ArrayList(*RawAdosDirEntry) = try .initCapacity(self.allocator(), self.raw_directories.ados.items.len);
+        defer raw_dirs_sorted.deinit(self.allocator());
+        for (self.raw_directories.ados.items) |*raw_dir| {
+            raw_dirs_sorted.appendAssumeCapacity(raw_dir);
+        }
+
+        std.mem.sort(*RawAdosDirEntry, raw_dirs_sorted.items, {}, struct {
+            fn lessThan(_: void, lhs: *RawAdosDirEntry, rhs: *RawAdosDirEntry) bool {
+                return std.mem.lessThan(u8, &lhs.raw.filename, &rhs.raw.filename);
+            }
+        }.lessThan);
+
+        try self.cooked_directories.ensureTotalCapacity(self.allocator(), raw_dirs_sorted.items.len);
+        for (raw_dirs_sorted.items) |dir| {
+            var cooked: CookedDirEntry = undefined;
+            @memset(&cooked.filename, ' ');
+            @memcpy(cooked.filename[0..dir.raw.filename.len], &dir.raw.filename);
+            cooked.user = 0;
+            cooked.attribs[0] = if (dir.raw.mode == 2) 'S' else 'R';
+            cooked.attribs[1] = ' ';
+            const size = try self.fileSizeADOS(image, dir);
+            cooked.num_records = size.length + 127 / 128; // TODO: we need to store the actual file size instead becasue we know it for ados
+            cooked.num_allocs = size.used / image.image_type.block_size;
+            cooked.allocations = .empty;
+            cooked.image_type = image.image_type;
+            self.cooked_directories.appendAssumeCapacity(cooked);
+        }
+    }
+
+    fn fileSizeADOS(_: *const DirectoryTable, image: *DiskImage, e: *const RawAdosDirEntry) !struct { length: u32, used: u32 } {
+        var track_nr = e.raw.track;
+        var sector_nr = e.raw.sector;
+        var nbytes: u32 = 0;
+        var nr_sectors: u32 = 0;
+
+        while (track_nr != 0) {
+            var sector: DiskSector = .initUnformatted(image.image_type, 70);
+            try image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr + 1 }, &sector);
+            nbytes += sector.mits_track_6_76.nbytes;
+            nr_sectors += 1;
+            track_nr = sector.mits_track_6_76.next_track;
+            sector_nr = sector.mits_track_6_76.next_sector;
+        }
+        return .{ .length = nbytes, .used = (nr_sectors + 7) / 8 };
     }
 
     /// Whenever a new extent is created, register it with the directory
@@ -703,10 +752,22 @@ pub const DirectoryTable = struct {
     /// Number of free CPM directory entries
     pub fn rawEntryFreeCount(self: *const DirectoryTable) usize {
         var count: usize = 0;
-        for (self.raw_directories.cpm.items) |dir| {
-            if (dir.isDeleted() and !dir.isLabel()) {
-                count += 1;
-            }
+        switch (self.raw_directories) {
+            .cpm => |cpm| {
+                for (cpm.items) |dir| {
+                    if (dir.isDeleted() and !dir.isLabel()) {
+                        count += 1;
+                    }
+                }
+            },
+            .ados => |ados| {
+                for (ados.items) |dir| {
+                    if (!dir.isDeleted()) {
+                        count += 1;
+                    }
+                    count = 255 - count; // There are always 255 directories on ADOS
+                }
+            },
         }
         return count;
     }

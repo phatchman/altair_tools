@@ -60,7 +60,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
         }
     }
     std.debug.assert(found_command);
-    std.debug.print("dispatch\n", .{});
 
     var file = openDiskImage(io, options.image_file, write_access, options.do_format) catch |err| {
         printErrorMessage(current_command, .open_image, .{options.image_file}, err);
@@ -68,7 +67,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
     };
     const existing_file = (file.length(io) catch 0) != 0;
 
-    std.debug.print("image_type\n", .{});
     // Get or detect this image type.
     const image_type: *const DiskImageType = image_type: {
         errdefer file.close(io);
@@ -83,8 +81,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
             trial_image_type = all_disk_types.getPtrConst(requested_type);
         } else {
             var unique = false;
-
-            std.debug.print("detect\n", .{});
             trial_image_type = DiskImage.detectImageType(io, file, &unique) orelse {
                 printErrorMessage(current_command, .image_type_detect, .{}, error.CantDetectImage);
                 return error.CommandFailed;
@@ -99,7 +95,7 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
                     },
                 );
             }
-            std.debug.print("end detect\n", .{});
+            // std.debug.print("end detect\n", .{});
         }
 
         if (!options.do_format and !trial_image_type.isCorrectFormat(io, file)) {
@@ -114,7 +110,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
     var image_reader = file.reader(io, &.{});
     var image_writer = file.writer(io, &.{});
 
-    std.debug.print("disk_image\n", .{});
     var disk_image = disk_image: {
         errdefer file.close(io);
         break :disk_image DiskImage.init(gpa, .{ .on_disk = &image_reader }, .{ .on_disk = &image_writer }, image_type) catch |err| {
@@ -131,7 +126,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
             return error.CommandFailed;
         };
     }
-    std.debug.print("done\n", .{});
 
     // Create a dispatch that calls the correct command based on
     // which do_xxx options is true in the options struct.

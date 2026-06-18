@@ -50,7 +50,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .strip = strip_debug_symbols,
-        }), .use_llvm = true });
+        }), .use_llvm = false });
         const zigcli = b.dependency("cli", .{});
         exe.root_module.addImport("zig-cli", zigcli.module("cli"));
         if (targets.len > 1) {

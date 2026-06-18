@@ -219,13 +219,10 @@ pub const DiskImage = struct {
             if (dt.isCorrectFormat(io, image_file)) {
                 switch (dt.type_id) {
                     .FDD_8IN => {
-                        std.debug.print("8in\n", .{});
                         const ados = all_disk_types.getPtrConst(.ADOS_8IN);
                         if (ados.isCorrectFormat(io, image_file)) {
-                            std.debug.print("ados fmt\n", .{});
                             return ados;
                         } else {
-                            std.debug.print("not ados fmt\n", .{});
                             return dt;
                         }
                     },
@@ -238,7 +235,7 @@ pub const DiskImage = struct {
                         // TAR and CDOS_LGSSSD are same size, but can be distinguished
                         // by the CDOS disk label.
                         if (lgsssd.isCorrectFormat(io, image_file)) {
-                            continue;
+                            return lgsssd;
                         } else {
                             return dt;
                         }

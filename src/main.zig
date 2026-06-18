@@ -319,7 +319,6 @@ fn generateDiskImageList() []const u8 {
 }
 
 pub fn validateOptions() !bool {
-    std.debug.print("validate options\n", .{});
     if (options.very_verbose)
         options.verbose = true;
 

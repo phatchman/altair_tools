@@ -978,12 +978,9 @@ pub const DiskImageType_ADOS_8IN = struct {
     }
 
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
-        std.debug.print("parent\n", .{});
         if (!DiskImageType.defaultDetectFn(self, io, image_file)) return false;
-        std.debug.print("parent pass\n", .{});
         var reader = image_file.reader(io, &.{});
         // Go to the directory table location on track 70
-        std.debug.print("track size = {}\n", .{self.track_size});
         reader.seekTo(70 * @as(u32, self.track_size)) catch return false;
         var sector: DiskSector = .initUnformatted(self, 70);
 
@@ -1005,24 +1002,23 @@ pub const DiskImageType_ADOS_8IN = struct {
         // TODO: we actually need to walk the whole directory in case all the early files got deleted.
         var start: usize = 1;
         for (0..self.sectors_per_track) |_| {
-            std.debug.print("sector read\n", .{});
             for (entries, start..) |e, entry_nr| {
                 if (e.filename[0] == 255) return false;
                 if (e.filename[0] == 0x00) continue; // deleted
                 if (e.track > 76 or e.sector > 31) return false;
-                std.debug.print("not EOD or deleted\n", .{});
+                //                std.debug.print("not EOD or deleted\n", .{});
 
                 for (e.filename) |ch| {
                     // invalid filename chars
                     if (!std.ascii.isPrint(ch)) return false;
                 }
-                std.debug.print("valid filename {s}\n", .{e.filename});
+                //              std.debug.print("valid filename {s}\n", .{e.filename});
 
                 // must be valid filename. so check that this entry had correct fileno.
                 reader.seekTo(@as(u32, e.track) * self.track_size + 137 * @as(u32, e.sector)) catch return false;
-                std.debug.print("Seeked to : {x}, \n", .{reader.logicalPos()});
+                //             std.debug.print("Seeked to : {x}, \n", .{reader.logicalPos()});
                 reader.interface.readSliceAll(sector.rawBytes()) catch return false;
-                std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
+                //           std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
 
                 return sector.mits_track_6_76.file_nr == entry_nr;
             }
