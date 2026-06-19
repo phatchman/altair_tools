@@ -225,7 +225,7 @@ pub const DiskImage = struct {
         while (track_nr != 0) {
             // TODO: This is sort of weird in that now this is zero based because of the skew.. REALL MESSY
             // Subtracting -1 in the skew. But we need to get all sectors zero based. it's too dumb.
-            try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr + 1 }, &sector);
+            try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
             if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
             if (file_no != sector.mits_track_6_76.file_nr) {
                 std.log.err("Corrupt file. Expected file number {} got {}\n", .{ file_no, sector.mits_track_6_76.file_nr });
@@ -454,13 +454,12 @@ pub const DiskImage = struct {
         var disk_sector: DiskSector = undefined;
         const varying_sector_format = self.image_type.varying_sector_format;
 
-        // Just in case formatting an existing image file from larger to smaller format.
-        try self.writer.truncate();
-
-        // Small optimization. If the format does not vary, just get the formatted sector only once.
         if (!varying_sector_format) {
             disk_sector = .initFormatted(self.image_type, .any);
         }
+
+        // Just in case formatting an existing image file from larger to smaller format.
+        try self.writer.truncate();
 
         for (0..self.image_type.tracks) |track_nr| {
             const sectors_per_track = if (track_nr == 0)
@@ -468,14 +467,13 @@ pub const DiskImage = struct {
             else
                 self.image_type.sectors_per_track;
 
-            for (1..sectors_per_track + 1) |sector_nr| {
+            for (0..sectors_per_track) |sector_nr| {
+                const location: PhysicalAddress = .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) };
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.
-                    disk_sector = .initFormatted(self.image_type, .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) });
+                    disk_sector = .initFormatted(self.image_type, location);
                 }
-                //std.debug.print("Formatting type: [{s}] track:[{}] sector:[{}] sector_type: [{t}] data_len: [{}]\n", .{ self.image_type.type_name, track_nr, sector_nr, disk_sector, self.image_type.sector_size_data });
-                //std.debug.dumpHex(disk_sector.rawBytes());
-                try self.writer.interface().writeAll(disk_sector.rawBytes());
+                try self.writeSector(location, &disk_sector);
             }
         }
     }
@@ -617,7 +615,7 @@ pub const DiskImage = struct {
     // but can;t use the record allocation "logical" version
     pub fn readSectorPhysical(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
         //std.debug.print("REad Physical Sector: {}: skew sector is {}\n", .{ location, self.image_type.skew(location.track, location.sector - 1) });
-        const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector - 1) };
+        const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
         const sector_offset = self.image_type.seekOffset(physical_location);
 
         log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
@@ -631,13 +629,14 @@ pub const DiskImage = struct {
     const WriteSectorError = Io.Writer.Error || File.SeekError;
     /// Write a single sector.
     pub fn writeSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
-        sector.prepareWrite(location);
-        const sector_offset = self.image_type.seekOffset(location);
-        log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ location.track, location.sector, sector_offset });
+        const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
+        sector.prepareWrite(self.image_type, location);
+        const sector_offset = self.image_type.seekOffset(physical_location);
+        log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
         try self.writer.seekTo(sector_offset);
         try self.writer.interface().writeAll(sector.rawBytes());
 
-        try sector.dump(location, sector_offset);
+        try sector.dump(physical_location, sector_offset);
     }
 
     /// write a CPM diretory entry (RawDirEntry)

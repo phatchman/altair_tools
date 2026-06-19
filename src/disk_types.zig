@@ -187,17 +187,18 @@ pub const DiskSector = union(enum) {
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
                         sector.zero = 0x00;
-                        sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                        //std.debug.print("logical sector = {}, physical sector = {}:{x:02}\n", .{ location.sector, ((location.sector) * 17) % 32, ((location.sector) * 17) % 32 });
+                        sector.sector_nr = @intCast(image_type.skew_table[location.sector]);
                         sector.checksum = result.mitsChecksum(location);
                     },
                     .ados => {
                         @memset(result.rawBytes(), 0x00);
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
-                        sector.sector_nr = @intCast(((location.sector - 1) * 17) % 32);
+                        sector.sector_nr = @intCast((image_type.skew_table[location.sector] * 17) % 32);
                         // For each sector of directory track, set the first byte of the directory
                         // entry to 0xff, indicating "end of directory"
-                        if (location.track == 70 and location.sector == 1) {
+                        if (location.track == 70 and location.sector == 0) {
                             sector.nbytes = 0x80;
                             sector.data[0] = 0xff;
                         }
@@ -210,7 +211,7 @@ pub const DiskSector = union(enum) {
                 @memset(result.rawBytes(), 0xe5);
                 switch (image_type.OS) {
                     // Apply the disk label to the first sector for CDOS
-                    .cdos => if (location.track == 0 and location.sector == 1)
+                    .cdos => if (location.track == 0 and location.sector == 0)
                         @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]), // Remove the CDOS_
                     else => {},
                 }
@@ -236,9 +237,20 @@ pub const DiskSector = union(enum) {
     }
 
     /// Called just before the sector is written to disk.
-    pub fn prepareWrite(self: *DiskSector, location: PhysicalAddress) void {
+    pub fn prepareWrite(self: *DiskSector, image_type: *const DiskImageType, location: PhysicalAddress) void {
         switch (self.*) {
-            inline .mits_track_0_5, .mits_track_6_76 => |*sector| {
+            .mits_track_0_5 => |*sector| {
+                switch (image_type.OS) {
+                    .cpm => {
+                        sector.checksum = self.mitsChecksum(location);
+                    },
+                    .ados => if (location.track > 5) {
+                        sector.checksum = self.mitsChecksum(location);
+                    },
+                    else => unreachable,
+                }
+            },
+            .mits_track_6_76 => |*sector| {
                 sector.checksum = self.mitsChecksum(location);
             },
             else => {},
@@ -383,6 +395,10 @@ pub const DiskImageType = struct {
     /// The aim is that the next logical sector will by physically undereed the read/write head when
     /// the next sector is ready to be read/written.
     pub fn skew(self: *const DiskImageType, track: u16, logical_sector: u16) u16 {
+        if (self.sectors_per_track0 != null) {
+            // We don't store a separate skew table for track 0.
+            return logical_sector;
+        }
         return self.skew_fn(self.skew_table, track, logical_sector);
     }
 
@@ -390,11 +406,11 @@ pub const DiskImageType = struct {
     pub fn seekOffset(self: *const DiskImageType, location: PhysicalAddress) usize {
         if (self.sector_size_data0) |sector_size0| {
             return if (location.track == 0)
-                sector_size0 * (location.sector - 1)
+                sector_size0 * (location.sector)
             else
-                self.sectors_per_track0.? * sector_size0 + @as(usize, location.track - 1) * self.track_size + (location.sector - 1) * self.sector_size_raw;
+                self.sectors_per_track0.? * sector_size0 + @as(usize, location.track - 1) * self.track_size + (location.sector) * self.sector_size_raw;
         } else {
-            return @as(usize, location.track) * self.track_size + (location.sector - 1) * self.sector_size_raw;
+            return @as(usize, location.track) * self.track_size + (location.sector) * self.sector_size_raw;
         }
     }
 
@@ -415,7 +431,7 @@ pub const DiskImageType = struct {
 
     // By default, use the provided skew table, with no other adjustment required.
     fn defaultSkewFn(skew_table: []const u16, _: u16, logical_sector: u16) u16 {
-        return skew_table[logical_sector] + 1;
+        return skew_table[logical_sector];
     }
 
     fn defaultDetectFn(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
@@ -434,10 +450,10 @@ pub const DiskImageType = struct {
 pub const DiskImageType_MITS_8IN = struct {
     // Note that mits skew algorithm requires first sector to be 1, not 0
     const skew_table = [32]u16{
+        0, 8,  16, 24, 2, 10, 18, 26,
+        4, 12, 20, 28, 6, 14, 22, 30,
         1, 9,  17, 25, 3, 11, 19, 27,
         5, 13, 21, 29, 7, 15, 23, 31,
-        2, 10, 18, 26, 4, 12, 20, 28,
-        6, 14, 22, 30, 8, 16, 24, 32,
     };
     const sector_size = 137; // Note non-standard sector size.
     const sector_data_size = 128;
@@ -470,7 +486,7 @@ pub const DiskImageType_MITS_8IN = struct {
         if (track < 6)
             return table[logical_sector];
 
-        return (((table[logical_sector] - 1) * 17) % 32) + 1;
+        return (((table[logical_sector]) * 17) % 32);
     }
 };
 
@@ -478,11 +494,12 @@ pub const DiskImageType_MITS_8IN = struct {
 /// Has the same skew and 137 byte physical sectors as the
 /// standard 8" drive.
 pub const DiskImageType_MITS_8IN_8MB = struct {
+    // TODO:
     const skew_table = [32]u16{
+        0, 8,  16, 24, 2, 10, 18, 26,
+        4, 12, 20, 28, 6, 14, 22, 30,
         1, 9,  17, 25, 3, 11, 19, 27,
         5, 13, 21, 29, 7, 15, 23, 31,
-        2, 10, 18, 26, 4, 12, 20, 28,
-        6, 14, 22, 30, 8, 16, 24, 32,
     };
 
     pub fn init() DiskImageType {
@@ -527,11 +544,11 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
     };
 
     pub fn init() DiskImageType {
-        return _init(true);
+        return initCommon(true);
     }
 
     // Split so that the 1024 directory entry version can share this init.
-    pub fn _init(init_before_return: bool) DiskImageType {
+    pub fn initCommon(init_before_return: bool) DiskImageType {
         var result = DiskImageType{
             .type_id = .HDD_5MB,
             .type_name = "HDD_5MB",
@@ -563,7 +580,7 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
 /// normal disk are indistinguishable!
 pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
     pub fn init() DiskImageType {
-        var result = DiskImageType_MITS_5MB_HDD._init(false);
+        var result = DiskImageType_MITS_5MB_HDD.initCommon(false);
         result.type_id = .HDD_5MB_1024;
         result.type_name = "HDD_5MB_1024";
         result.description = "MITS 5MB, with 1024 directories";

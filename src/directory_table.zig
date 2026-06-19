@@ -540,7 +540,7 @@ pub const DirectoryTable = struct {
         // Directory is held on track 70
         var sector: DiskSector = .initUnformatted(image.image_type, 70);
         scan: for (0..image.image_type.sectors_per_track) |sector_nr| {
-            try image.readSectorPhysical(.{ .track = 70, .sector = @intCast(sector_nr + 1) }, &sector);
+            try image.readSectorPhysical(.{ .track = 70, .sector = @intCast(sector_nr) }, &sector);
             const entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
             try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
             for (entries) |e| {
@@ -591,7 +591,7 @@ pub const DirectoryTable = struct {
 
         while (track_nr != 0) {
             var sector: DiskSector = .initUnformatted(image.image_type, 70);
-            try image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr + 1 }, &sector);
+            try image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
             nbytes += sector.mits_track_6_76.nbytes;
             nr_sectors += 1;
             track_nr = sector.mits_track_6_76.next_track;

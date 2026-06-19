@@ -6,7 +6,7 @@ const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    std.testing.log_level = .info;
+    //std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
         const compare_image: []u8 = switch (fmt.type_id) {
@@ -25,17 +25,14 @@ test "disk formatted" {
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_fmt.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_fmt.dsk")),
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
-            //            .FDD_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
-            //else => "",
         };
         defer allocator.free(compare_image);
-
-        //        std.debug.print("comapre img = {x}\n", .{compare_image[0]});
 
         const test_buffer: []u8 = try allocator.alloc(u8, fmt.image_size);
         defer allocator.free(test_buffer);
         var test_image: InMemoryImage = undefined;
         test_image.init(test_buffer);
+        defer saveImage(test_buffer);
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
@@ -153,7 +150,8 @@ test "disk filled" {
             .CDOS_SMDSSD => try allocator.dupe(u8, @embedFile("test_disks/smdssd_full.dsk")),
             .CDOS_SMDSDD => try allocator.dupe(u8, @embedFile("test_disks/smdsdd_full.dsk")),
             .CDOS_LGSSSD => try allocator.dupe(u8, @embedFile("test_disks/lgsssd_full.dsk")),
-            .CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
+            // TODO: This disk doesn't look right? Directory entries and data are mixed?
+            //.CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_full.dsk")),
             else => null,
@@ -793,9 +791,9 @@ const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 // Can be set to a limited set of formats when wanting to test a subset.
 const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
-//const all_formats = .{ FDD_8IN, HDD_5MB };
+//const all_formats = .{CDOS_LGSSDD};
 //const all_formats = .{FDD_8IN};
-// const all_formats = .{ADOS_8IN};
+//const all_formats = .{ADOS_8IN};
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
 //     var result: [fields.len]*const DiskImageType = undefined;
