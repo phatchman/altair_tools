@@ -450,18 +450,10 @@ pub const DirectoryTable = struct {
         // Support for other directories counts is a TODO
         if (self.raw_directories.cpm.items.len > 0 and self.raw_directories.cpm.items[0].isLabel()) {
             const raw_item = self.raw_directories.cpm.items[0];
-            const expected_num_records: u8 = switch (image.image_type.type_id) {
+            const expected_num_records: u8 = switch (image.image_type.type_id.toCDOS()) {
                 .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                 .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                 .CDOS_LGDSDD => 0x40,
-                .FDD_8IN,
-                .HDD_5MB,
-                .HDD_5MB_1024,
-                .FDD_TAR,
-                .@"FDD_1.5MB",
-                .FDD_8IN_8MB,
-                .ADOS_8IN,
-                => unreachable,
             };
             if (expected_num_records != raw_item.entry.num_records) {
                 if (!@import("builtin").is_test) log.err(

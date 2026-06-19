@@ -497,10 +497,9 @@ pub const DiskImage = struct {
                 raw_item.filetype[0] = lbl.date_mmddyy[0];
                 raw_item.filetype[1] = lbl.date_mmddyy[1];
                 raw_item.filetype[2] = lbl.date_mmddyy[2];
-                raw_item.extent_low = switch (self.image_type.type_id) {
+                raw_item.extent_low = switch (self.image_type.type_id.toCDOS()) {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
-                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB, .ADOS_8IN => unreachable,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {
                     // This is the allocations taken up by the directory table.
@@ -515,11 +514,10 @@ pub const DiskImage = struct {
                 // This is indirectly the number of directories available.
                 // It's actually the number of records used by the directory table (4 32 bytes entires per 128 byte record.)
                 // 0x10 * 4 = 64, 0x20 * 4 = 128, 0x40 * 4 = 256
-                raw_item.num_records = switch (self.image_type.type_id) {
+                raw_item.num_records = switch (self.image_type.type_id.toCDOS()) {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                     .CDOS_LGDSDD => 0x40,
-                    .FDD_8IN, .HDD_5MB, .HDD_5MB_1024, .FDD_TAR, .@"FDD_1.5MB", .FDD_8IN_8MB, .ADOS_8IN => unreachable,
                 };
                 try self.rawEntryWrite(0);
             },

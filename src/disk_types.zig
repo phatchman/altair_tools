@@ -1064,6 +1064,29 @@ pub const DiskImageTypes = enum {
     CDOS_LGDSSD,
     CDOS_LGDSDD,
     ADOS_8IN,
+
+    // Create an enum with just the sub-set of CDOS disk types.
+    pub fn CDOSTypes() type {
+        const fields = std.meta.fields(@This());
+        const tag_type = @typeInfo(@This()).@"enum".tag_type;
+        var names: [fields.len][]const u8 = undefined;
+        var values: [fields.len]tag_type = undefined;
+        var field_count: usize = 0;
+        for (fields) |field| {
+            if (std.mem.startsWith(u8, field.name, "CDOS_")) {
+                names[field_count] = field.name;
+                values[field_count] = field.value;
+                field_count += 1;
+            }
+        }
+        return @Enum(tag_type, .exhaustive, names[0..field_count], values[0..field_count]);
+    }
+
+    // Convert a DiskImageTypes enum to a CDOSTypes enum
+    // Will panic if called for a non-cdos image type.
+    pub fn toCDOS(self: DiskImageTypes) CDOSTypes() {
+        return @enumFromInt(@intFromEnum(self));
+    }
 };
 
 /// all available disk image formats.
