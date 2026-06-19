@@ -161,7 +161,7 @@ pub fn main(init: std.process.Init) !void {
 
     // init SDL backend (creates and owns OS window)
     var backend = try Backend.initWindow(.{
-        .allocator = allocator,
+        //   .allocator = allocator,
         .io = init.io,
         .size = .{ .w = 900.0, .h = 600.0 },
         .min_size = .{ .w = 250.0, .h = 350.0 },
@@ -242,11 +242,11 @@ pub fn main(init: std.process.Init) !void {
         const end_micros = try win.end(.{});
 
         // cursor management
-        try backend.setCursor(win.cursorRequested());
-        try backend.textInputRect(win.textInputRequested());
+        backend.setCursor(win.cursorRequested());
+        backend.textInputRect(win.textInputRequested());
 
         // render frame to OS
-        try backend.renderPresent();
+        backend.renderPresent();
 
         // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros);
@@ -991,7 +991,7 @@ fn makeCapacityUsageGraph() !void {
         if (commands.disk_image) |disk_image| {
             const total_space = disk_image.capacityTotalInKB();
             const free_space = disk_image.capacityFreeInKB();
-            const used_space = total_space - free_space;
+            const used_space = total_space -| free_space; // TODO: Revert to just -
             const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
             const width = percentage * 250;
             {
@@ -1353,21 +1353,21 @@ pub fn makeTransferDialog() !void {
                                 const mm = dvui.textEntryNumber(
                                     @src(),
                                     u8,
-                                    .{ .min = 1, .max = 12, .placeholder = "mm", .character_limit = 2 },
+                                    .{ .min = 1, .max = 12, .placeholder = "mm", .text_limit = 2 },
                                     .{ .min_size_content = size, .max_size_content = .cast(size) },
                                 );
                                 dvui.labelNoFmt(@src(), "/", .{ .align_y = 0.5 }, .{ .expand = .vertical });
                                 const dd = dvui.textEntryNumber(
                                     @src(),
                                     u8,
-                                    .{ .min = 1, .max = 31, .placeholder = "dd", .character_limit = 2 },
+                                    .{ .min = 1, .max = 31, .placeholder = "dd", .text_limit = 2 },
                                     .{ .min_size_content = size, .max_size_content = .cast(size) },
                                 );
                                 dvui.labelNoFmt(@src(), "/", .{ .align_y = 0.5 }, .{ .expand = .vertical });
                                 const yy = dvui.textEntryNumber(
                                     @src(),
                                     u8,
-                                    .{ .min = 0, .max = 99, .placeholder = "yy", .character_limit = 2 },
+                                    .{ .min = 0, .max = 99, .placeholder = "yy", .text_limit = 2 },
                                     .{ .min_size_content = size, .max_size_content = .cast(size) },
                                 );
                                 if (mm.value == .Valid and dd.value == .Valid and yy.value == .Valid) {
@@ -2350,7 +2350,7 @@ fn infoButtonHandler() !void {
                             .{ "Date", label.cdos.date_mmddyy[0], label.cdos.date_mmddyy[1], label.cdos.date_mmddyy[2] },
                         )));
                     },
-                    .cpm => {},
+                    .cpm, .ados => {},
                 }
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks })));
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size })));

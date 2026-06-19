@@ -945,11 +945,12 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
 pub const DiskImageType_ADOS_8IN = struct {
     // Note that mits skew algorithm requires first sector to be 1, not 0
     const skew_table = [32]u16{
-        1, 9,  17, 25, 3, 11, 19, 27,
-        5, 13, 21, 29, 7, 15, 23, 31,
-        2, 10, 18, 26, 4, 12, 20, 28,
-        6, 14, 22, 30, 8, 16, 24, 32,
+        0,  17, 2,  19, 4,  21, 6,  23,
+        8,  25, 10, 27, 12, 29, 14, 31,
+        16, 1,  18, 3,  20, 5,  22, 7,
+        24, 9,  26, 11, 28, 13, 30, 15,
     };
+
     const sector_size = 137; // Note non-standard sector size.
     const sector_data_size = 128;
 
@@ -969,7 +970,6 @@ pub const DiskImageType_ADOS_8IN = struct {
             .directory_allocs = 4,
             .image_size = 337568,
             .varying_sector_format = true,
-            .skew_fn = DiskImageType_MITS_8IN.skew,
             .skew_table = &skew_table,
             .detect_fn = isCorrectFormat,
         };
@@ -1028,14 +1028,6 @@ pub const DiskImageType_ADOS_8IN = struct {
         }
 
         return false;
-    }
-
-    /// For historical reasons, the skew changes based on the track number.
-    fn skew(table: []const u16, track: u16, logical_sector: u16) u16 {
-        if (track < 6)
-            return table[logical_sector];
-
-        return (((table[logical_sector] - 1) * 17) % 32) + 1;
     }
 };
 

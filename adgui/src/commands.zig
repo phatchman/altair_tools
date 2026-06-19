@@ -195,7 +195,7 @@ pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type
         self.closeImage(io);
         return err;
     };
-    self.disk_image.?.loadDirectories(false) catch |err| {
+    self.disk_image.?.loadDirectories(.full) catch |err| {
         self.closeImage(io);
         return err;
     };
@@ -226,7 +226,7 @@ pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type:
     errdefer self.closeImage(io);
 
     try self.disk_image.?.formatImage();
-    try self.disk_image.?.loadDirectories(false);
+    try self.disk_image.?.loadDirectories(.full);
     if (label) |lbl| {
         try self.disk_image.?.labelDisk(lbl);
     }

@@ -216,9 +216,19 @@ const RawAdosDirEntry = struct {
 pub const CookedDirEntry = struct {
     user: u8,
     attribs: [2]u8,
-    num_records: u32,
-    num_allocs: u32,
-    allocations: std.ArrayListUnmanaged(u16),
+    os: union(enum) {
+        cpm: struct {
+            num_records: u32,
+            num_allocs: u32,
+            allocations: std.ArrayListUnmanaged(u16),
+        },
+        ados: struct {
+            track: u8,
+            sector: u8,
+            size: u32,
+            used: u32,
+        },
+    },
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [12]u8,
@@ -250,26 +260,28 @@ pub const CookedDirEntry = struct {
                 if (raw_dir.attribReadOnly()) 'R' else 'W',
                 if (raw_dir.attribSystem()) 'S' else ' ',
             },
-            .num_records = raw_dir.entry.num_records,
-            .num_allocs = 0,
-            .allocations = .empty,
+            .os = .{ .cpm = .{
+                .num_records = raw_dir.entry.num_records,
+                .num_allocs = 0,
+                .allocations = .empty,
+            } },
             .filename = filename,
             .image_type = image_type,
         };
-        result.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
-        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.num_allocs > 4) {
+        result.os.cpm.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
+        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.os.cpm.num_allocs > 4) {
             // CPM records only go up to 128.
-            result.num_records += 128;
+            result.os.cpm.num_records += 128;
         }
         return result;
     }
 
     pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
-        self.num_records += raw_dir.entry.num_records;
+        self.os.cpm.num_records += raw_dir.entry.num_records;
         const num_allocs = try self.copyAllocations(arena, raw_dir, image_type);
-        self.num_allocs += num_allocs;
+        self.os.cpm.num_allocs += num_allocs;
         if (image_type.recs_per_extent > 128 and num_allocs > 4) {
-            self.num_records += 128;
+            self.os.cpm.num_records += 128;
         }
     }
 
@@ -288,25 +300,31 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn allocsUsedInKB(self: *const CookedDirEntry) u32 {
-        return (self.num_allocs * self.image_type.block_size) / 1024;
+        switch (self.os) {
+            .cpm => |cpm| return cpm.num_allocs * self.image_type.block_size / 1024,
+            .ados => |ados| return ados.used,
+        }
     }
 
     pub fn recordsUsedInB(self: *const CookedDirEntry) u32 {
-        return self.num_records * 128;
+        return switch (self.os) {
+            .cpm => |cpm| cpm.num_records * 128,
+            .ados => |ados| ados.size,
+        };
     }
 
     /// Add any new allocations to the list of used allocations.
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
 
-        try cooked.allocations.ensureUnusedCapacity(arena, raw.entry.allocations.len);
+        try cooked.os.cpm.allocations.ensureUnusedCapacity(arena, raw.entry.allocations.len);
         for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
             if (allocation == 0) {
                 break;
             }
-            cooked.allocations.appendAssumeCapacity(allocation);
+            cooked.os.cpm.allocations.appendAssumeCapacity(allocation);
             alloc_count += 1;
         }
         return alloc_count;
@@ -554,9 +572,12 @@ pub const DirectoryTable = struct {
             cooked.attribs[0] = if (dir.raw.mode == 2) 'S' else 'R';
             cooked.attribs[1] = ' ';
             const size = try self.fileSizeADOS(image, dir);
-            cooked.num_records = size.length + 127 / 128; // TODO: we need to store the actual file size instead becasue we know it for ados
-            cooked.num_allocs = size.used / image.image_type.block_size;
-            cooked.allocations = .empty;
+            cooked.os = .{ .ados = .{
+                .track = dir.raw.track,
+                .sector = dir.raw.sector,
+                .size = size.length,
+                .used = size.used,
+            } };
             cooked.image_type = image.image_type;
             self.cooked_directories.appendAssumeCapacity(cooked);
         }
@@ -609,11 +630,11 @@ pub const DirectoryTable = struct {
         };
         const cooked_dir = &self.cooked_directories.items[cooked_index];
         // Set the allocs used by this cooked entry as free.
-        for (to_erase.allocations.items) |alloc| {
+        for (to_erase.os.cpm.allocations.items) |alloc| {
             if (alloc == 0) break;
             self.free_allocations.set(alloc);
         }
-        to_erase.allocations.clearAndFree(self.allocator());
+        to_erase.os.cpm.allocations.clearAndFree(self.allocator());
         // Delete all the raw_entries and write to disk.
         for (self.raw_directories.cpm.items, 0..) |*raw_item, idx| {
             if (raw_item.entry.user == cooked_dir.user and

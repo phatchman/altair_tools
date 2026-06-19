@@ -150,9 +150,16 @@ pub const DiskImage = struct {
     pub const TextMode = enum { Auto, Text, Binary };
 
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
-        const num_records = entry.num_records;
+        try switch (entry.image_type.OS) {
+            .cpm, .cdos => copyFromImageCPM(self, entry, out_writer, text_mode),
+            .ados => copyFromImageADOS(self, entry, out_writer, text_mode),
+        };
+    }
+
+    pub fn copyFromImageCPM(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+        const num_records = entry.os.cpm.num_records;
         // Check for empty file.
-        if (entry.allocations.items.len == 0) {
+        if (entry.os.cpm.allocations.items.len == 0) {
             return;
         }
         const recs_per_sector = (self.image_type.sector_size_data / 128); // Recs always represent 128 bytes
@@ -161,20 +168,20 @@ pub const DiskImage = struct {
         for (0..num_sectors) |sec_nr| {
             // This protects against trying to copy files from CDOS.
             const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
-            if (alloc_idx >= entry.allocations.items.len) {
+            if (alloc_idx >= entry.os.cpm.allocations.items.len) {
                 std.debug.print("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
                     num_records,
                     num_sectors,
                     total_rec_nr,
                     alloc_idx,
                     self.image_type.recs_per_alloc,
-                    entry.allocations.items.len,
+                    entry.os.cpm.allocations.items.len,
                     self.image_type.total_allocs,
-                    entry.num_records,
+                    entry.os.cpm.num_records,
                 });
                 return error.InvalidRecordNumber;
             }
-            const alloc = entry.allocations.items[alloc_idx];
+            const alloc = entry.os.cpm.allocations.items[alloc_idx];
             if (alloc == 0)
                 break;
             var sector: DiskSector = undefined;
@@ -207,6 +214,29 @@ pub const DiskImage = struct {
             try out_writer.writeAll(sector.dataBytes()[0..data_len]);
             total_rec_nr += recs_per_sector;
         }
+    }
+
+    pub fn copyFromImageADOS(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+        _ = text_mode; // We might use this to convert basic files to text?
+        var track_nr: u8 = entry.os.ados.track;
+        var sector_nr: u8 = entry.os.ados.sector;
+        var file_no: u8 = 255;
+        var sector: DiskSector = .initUnformatted(entry.image_type, 6); //  // TODO
+        while (track_nr != 0) {
+            // TODO: This is sort of weird in that now this is zero based because of the skew.. REALL MESSY
+            // Subtracting -1 in the skew. But we need to get all sectors zero based. it's too dumb.
+            try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr + 1 }, &sector);
+            if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
+            if (file_no != sector.mits_track_6_76.file_nr) {
+                std.log.err("Corrupt file. Expected file number {} got {}\n", .{ file_no, sector.mits_track_6_76.file_nr });
+            }
+            if (file_no == sector.mits_track_6_76.file_nr)
+                try out_writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+            track_nr = sector.mits_track_6_76.next_track;
+            sector_nr = sector.mits_track_6_76.next_sector;
+        }
+        // TODO: Required?
+        try out_writer.flush();
     }
 
     /// Try and auto-detect what type of disk image this is
@@ -562,6 +592,8 @@ pub const DiskImage = struct {
     // This really should take record number but uses sector number instead. i.e for 512k
     // sectors it passes 0, 1, 2. Not 0, 4, 8 when there are 4 records per sector.
     // Everything works 100% fine with sectors, so I'm not inclined to change it.
+    // TODO: This is now the unskewed sector, so it's not even the "physical sector.. ummm"
+
     fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAddress {
         const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
@@ -570,26 +602,30 @@ pub const DiskImage = struct {
         const logical_sector = absolute_sector % self.image_type.sectors_per_track;
 
         log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
-        const physical_sector = self.image_type.skew(track, logical_sector);
-        return PhysicalAddress{ .track = track, .sector = physical_sector };
+        return PhysicalAddress{ .track = track, .sector = logical_sector };
     }
 
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
     /// Read a single 128bytes sector
     pub fn readSectorLogical(self: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
+
         try self.readSectorPhysical(physical_location, sector);
     }
 
+    // TODO: The skew should happen in the convert to physical.. Need to sort this out... CDOS calling physical, nut passing logical sector.
+    // but can;t use the record allocation "logical" version
     pub fn readSectorPhysical(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
-        const data_offset = self.image_type.seekOffset(location);
+        //std.debug.print("REad Physical Sector: {}: skew sector is {}\n", .{ location, self.image_type.skew(location.track, location.sector - 1) });
+        const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector - 1) };
+        const sector_offset = self.image_type.seekOffset(physical_location);
 
-        log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ location.track, location.sector, data_offset });
+        log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
 
-        try self.reader.seekTo(@intCast(data_offset));
-        sector.* = .initUnformatted(self.image_type, location.track);
+        try self.reader.seekTo(@intCast(sector_offset));
+        sector.* = .initUnformatted(self.image_type, physical_location.track);
         try self.reader.interface().readSliceAll(sector.rawBytes());
-        try sector.dump(location, data_offset);
+        try sector.dump(physical_location, sector_offset);
     }
 
     const WriteSectorError = Io.Writer.Error || File.SeekError;
