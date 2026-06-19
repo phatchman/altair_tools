@@ -150,7 +150,7 @@ pub const DiskImage = struct {
     pub const TextMode = enum { Auto, Text, Binary };
 
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
-        try switch (entry.image_type.OS) {
+        try switch (self.image_type.OS) {
             .cpm, .cdos => copyFromImageCPM(self, entry, out_writer, text_mode),
             .ados => copyFromImageADOS(self, entry, out_writer, text_mode),
         };
@@ -221,7 +221,7 @@ pub const DiskImage = struct {
         var track_nr: u8 = entry.os.ados.track;
         var sector_nr: u8 = entry.os.ados.sector;
         var file_no: u8 = 255;
-        var sector: DiskSector = .initUnformatted(entry.image_type, 6); //  // TODO
+        var sector: DiskSector = .initUnformatted(self.image_type, 6); //  // TODO
         while (track_nr != 0) {
             // TODO: This is sort of weird in that now this is zero based because of the skew.. REALL MESSY
             // Subtracting -1 in the skew. But we need to get all sectors zero based. it's too dumb.
@@ -324,7 +324,7 @@ pub const DiskImage = struct {
             raw_entry.filenameAndExtensionSet(cpm_filename);
             raw_entry.entry.user = cpm_user;
             try self.rawEntryWrite(extent_nr);
-            try self.directory.buildCookedEntry(extent_nr, self.image_type);
+            try self.directory.buildCookedEntry(extent_nr);
             return;
         }
 
@@ -338,7 +338,7 @@ pub const DiskImage = struct {
             // Is this a new extent?
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (record_nr > 0) {
-                    try self.directory.buildCookedEntry(extent_nr, self.image_type);
+                    try self.directory.buildCookedEntry(extent_nr);
                     extent_count += 1;
                 }
                 dir_entry = try self.directory.rawEntryGetFreeInitialized(&extent_nr);
@@ -385,7 +385,7 @@ pub const DiskImage = struct {
             sector_count += 1;
         }
 
-        try self.directory.buildCookedEntry(extent_nr, self.image_type);
+        try self.directory.buildCookedEntry(extent_nr);
 
         // How copying works:
         //

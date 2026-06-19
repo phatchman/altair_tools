@@ -234,7 +234,6 @@ pub const CookedDirEntry = struct {
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [12]u8,
-    image_type: *const DiskImageType,
 
     pub fn init(arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var filename: [12]u8 = @splat(' '); // space terminated strings!
@@ -268,7 +267,6 @@ pub const CookedDirEntry = struct {
                 .allocations = .empty,
             } },
             .filename = filename,
-            .image_type = image_type,
         };
         result.os.cpm.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.os.cpm.num_allocs > 4) {
@@ -301,9 +299,9 @@ pub const CookedDirEntry = struct {
         return rawSlice(self.filename[pos + 1 ..]);
     }
 
-    pub fn allocsUsedInKB(self: *const CookedDirEntry) u32 {
+    pub fn allocsUsedInKB(self: *const CookedDirEntry, image_type: *const DiskImageType) u32 {
         switch (self.os) {
-            .cpm => |cpm| return cpm.num_allocs * self.image_type.block_size / 1024,
+            .cpm => |cpm| return cpm.num_allocs * image_type.block_size / 1024,
             .ados => |ados| return ados.used,
         }
     }
@@ -389,6 +387,7 @@ pub const DirectoryTable = struct {
 
     /// A record of the disk allocations _not_ used by any file.
     free_allocations: std.DynamicBitSetUnmanaged,
+    image_type: *const DiskImageType,
 
     pub fn init(gpa: std.mem.Allocator, image_type: *const DiskImageType) std.mem.Allocator.Error!DirectoryTable {
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -400,6 +399,7 @@ pub const DirectoryTable = struct {
             .cooked_directories = try .initCapacity(arena.allocator(), image_type.directories),
             .free_allocations = try .initFull(arena.allocator(), image_type.total_allocs),
             .arena = arena,
+            .image_type = image_type,
         };
     }
 
@@ -424,7 +424,7 @@ pub const DirectoryTable = struct {
     }
 
     fn loadCPM(self: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryLoadError!void {
-        const image_type = image.image_type;
+        const image_type = self.image_type;
         var sector: DiskSector = undefined;
         const directory_sector_count = image_type.directories / image_type.dir_entries_per_sector;
         var sector_nr: u16 = 0;
@@ -452,7 +452,7 @@ pub const DirectoryTable = struct {
         // Support for other directories counts is a TODO
         if (self.raw_directories.cpm.items.len > 0 and self.raw_directories.cpm.items[0].isLabel()) {
             const raw_item = self.raw_directories.cpm.items[0];
-            const expected_num_records: u8 = switch (image.image_type.type_id.toCDOS()) {
+            const expected_num_records: u8 = switch (image_type.type_id.toCDOS()) {
                 .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                 .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                 .CDOS_LGDSDD => 0x40,
@@ -496,7 +496,7 @@ pub const DirectoryTable = struct {
             if (!dir.isDeleted()) {
                 const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.cpm.items[0])) / @sizeOf(RawCpmDirEntry);
                 if (option == .full) {
-                    try self.buildCookedEntry(@intCast(entry_nr), image_type);
+                    try self.buildCookedEntry(@intCast(entry_nr));
                 }
                 // Mark off the used allocations
                 for (0..dir.allocationsCount(image_type)) |alloc_nr| {
@@ -533,13 +533,13 @@ pub const DirectoryTable = struct {
     fn loadAltairDOS(self: *DirectoryTable, image: *DiskImage, _: LoadOption) DirectoryLoadError!void {
         // Directory is held on track 70
         // TODO:
-        for (0..image.image_type.directory_allocs) |i| {
+        for (0..self.image_type.directory_allocs) |i| {
             // 8 sectors per block (block_size / sector_size_data)
-            self.free_allocations.unset(toAllocationADOS(image.image_type, 70, @intCast(i * 8)));
+            self.free_allocations.unset(toAllocationADOS(self.image_type, 70, @intCast(i * 8)));
         }
         std.debug.print("allocations len = {}, count = {}\n", .{ self.free_allocations.capacity(), self.free_allocations.count() });
-        var sector: DiskSector = .initUnformatted(image.image_type, 70);
-        scan: for (0..image.image_type.sectors_per_track) |sector_nr| {
+        var sector: DiskSector = .initUnformatted(self.image_type, 70);
+        scan: for (0..self.image_type.sectors_per_track) |sector_nr| {
             try image.readSectorPhysical(.{ .track = 70, .sector = @intCast(sector_nr) }, &sector);
             const entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
             try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
@@ -578,7 +578,6 @@ pub const DirectoryTable = struct {
                 .size = size.length,
                 .used = size.used,
             } };
-            cooked.image_type = image.image_type;
             self.cooked_directories.appendAssumeCapacity(cooked);
         }
     }
@@ -600,8 +599,8 @@ pub const DirectoryTable = struct {
         while (track_nr != 0) {
             const allocation: u16 = @as(u16, e.raw.track - 6) * (32 / 8) + @as(u16, e.raw.sector / 8);
             std.debug.print("unset tk {}, sk {}, al {} \n", .{ e.raw.track, e.raw.sector, allocation });
-            self.free_allocations.unset(toAllocationADOS(image.image_type, e.raw.track, e.raw.sector));
-            var sector: DiskSector = .initUnformatted(image.image_type, 70);
+            self.free_allocations.unset(toAllocationADOS(self.image_type, e.raw.track, e.raw.sector));
+            var sector: DiskSector = .initUnformatted(self.image_type, 70);
             try image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
             nbytes += sector.mits_track_6_76.nbytes;
             nr_sectors += 1;
@@ -613,19 +612,19 @@ pub const DirectoryTable = struct {
 
     /// Whenever a new extent is created, register it with the directory
     /// Builds up the associated CookedDirEntry as new RawDirEntries are registered.
-    pub fn buildCookedEntry(self: *DirectoryTable, raw_entry_nr: u16, image_type: *const DiskImageType) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
+    pub fn buildCookedEntry(self: *DirectoryTable, raw_entry_nr: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
         const entry = &self.raw_directories.cpm.items[raw_entry_nr];
-        try entry.validate(image_type, raw_entry_nr);
-        if (entry.isFirstEntryForFile(image_type)) {
+        try entry.validate(self.image_type, raw_entry_nr);
+        if (entry.isFirstEntryForFile(self.image_type)) {
             // std.debug.print("TRUE\n", .{});
-            try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, image_type));
+            try self.cooked_directories.append(self.allocator(), try CookedDirEntry.init(self.allocator(), entry, self.image_type));
         } else {
             if (self.cooked_directories.items.len == 0) {
                 log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.entry.filename, entry.entry.filetype });
                 return error.InvalidImageFile;
             }
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
-            try prev.extend(self.allocator(), entry, image_type);
+            try prev.extend(self.allocator(), entry, self.image_type);
         }
     }
 
