@@ -12,6 +12,8 @@
 // especially if it is aReallyLongIdentifierGet() vs getAreallyLongIdentifier().
 // I've tried to use the nounVerb convention in this source code, but it's really hard to break old habits.
 
+// TODO: Put CPM and ADOS functions in their own namespaces or somthing.
+
 const log = @import("disk_image.zig").log;
 
 /// Validation errors
@@ -530,6 +532,12 @@ pub const DirectoryTable = struct {
 
     fn loadAltairDOS(self: *DirectoryTable, image: *DiskImage, _: LoadOption) DirectoryLoadError!void {
         // Directory is held on track 70
+        // TODO:
+        for (0..image.image_type.directory_allocs) |i| {
+            // 8 sectors per block (block_size / sector_size_data)
+            self.free_allocations.unset(toAllocationADOS(image.image_type, 70, @intCast(i * 8)));
+        }
+        std.debug.print("allocations len = {}, count = {}\n", .{ self.free_allocations.capacity(), self.free_allocations.count() });
         var sector: DiskSector = .initUnformatted(image.image_type, 70);
         scan: for (0..image.image_type.sectors_per_track) |sector_nr| {
             try image.readSectorPhysical(.{ .track = 70, .sector = @intCast(sector_nr) }, &sector);
@@ -575,13 +583,24 @@ pub const DirectoryTable = struct {
         }
     }
 
-    fn fileSizeADOS(_: *const DirectoryTable, image: *DiskImage, e: *const RawAdosDirEntry) !struct { length: u32, used: u32 } {
+    // convert track and sector to allocation
+    fn toAllocationADOS(image_type: *const DiskImageType, track: u16, sector: u16) u16 {
+        const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+        return @as(u16, track - image_type.reserved_tracks) * (image_type.sectors_per_track / sectors_per_alloc) + @as(u16, sector / sectors_per_alloc);
+    }
+
+    // Walk the chain of sectors and calculate the file size.
+    // Also free any allocations used by this file.
+    fn fileSizeADOS(self: *DirectoryTable, image: *DiskImage, e: *const RawAdosDirEntry) !struct { length: u32, used: u32 } {
         var track_nr = e.raw.track;
         var sector_nr = e.raw.sector;
         var nbytes: u32 = 0;
         var nr_sectors: u32 = 0;
 
         while (track_nr != 0) {
+            const allocation: u16 = @as(u16, e.raw.track - 6) * (32 / 8) + @as(u16, e.raw.sector / 8);
+            std.debug.print("unset tk {}, sk {}, al {} \n", .{ e.raw.track, e.raw.sector, allocation });
+            self.free_allocations.unset(toAllocationADOS(image.image_type, e.raw.track, e.raw.sector));
             var sector: DiskSector = .initUnformatted(image.image_type, 70);
             try image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
             nbytes += sector.mits_track_6_76.nbytes;
@@ -741,7 +760,7 @@ pub const DirectoryTable = struct {
 
     /// Return a free allocation
     pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
-        const free = self.free_allocations.findFirstSet();
+        const free: ?usize = self.free_allocations.findFirstSet();
         if (free) |free_alloc| {
             self.free_allocations.unset(free_alloc);
             return @intCast(free_alloc);
