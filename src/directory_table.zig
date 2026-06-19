@@ -234,6 +234,7 @@ pub const CookedDirEntry = struct {
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [12]u8,
+    block_size: u16,
 
     pub fn init(arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var filename: [12]u8 = @splat(' '); // space terminated strings!
@@ -267,6 +268,7 @@ pub const CookedDirEntry = struct {
                 .allocations = .empty,
             } },
             .filename = filename,
+            .block_size = image_type.block_size,
         };
         result.os.cpm.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.os.cpm.num_allocs > 4) {
@@ -299,9 +301,9 @@ pub const CookedDirEntry = struct {
         return rawSlice(self.filename[pos + 1 ..]);
     }
 
-    pub fn allocsUsedInKB(self: *const CookedDirEntry, image_type: *const DiskImageType) u32 {
+    pub fn allocsUsedInKB(self: *const CookedDirEntry) u32 {
         switch (self.os) {
-            .cpm => |cpm| return cpm.num_allocs * image_type.block_size / 1024,
+            .cpm => |cpm| return cpm.num_allocs * self.block_size / 1024,
             .ados => |ados| return ados.used,
         }
     }
@@ -578,6 +580,7 @@ pub const DirectoryTable = struct {
                 .size = size.length,
                 .used = size.used,
             } };
+            cooked.block_size = self.image_type.block_size;
             self.cooked_directories.appendAssumeCapacity(cooked);
         }
     }

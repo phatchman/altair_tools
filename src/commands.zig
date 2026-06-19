@@ -162,7 +162,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         if (options.cpm_user) |user| {
             if (user != entry.user) continue;
         }
-        const this_kb = entry.allocsUsedInKB(disk_image.image_type);
+        const this_kb = entry.allocsUsedInKB();
         kb_used += this_kb;
         try Console.stdout().print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
             entry.filenameOnly(),
