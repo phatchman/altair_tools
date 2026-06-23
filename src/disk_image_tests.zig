@@ -124,12 +124,20 @@ test "FDC 8MB formatted" {
 /// These "random" bytes are also included in the checksum!!
 /// Which means that we can't even compare the checksums between two images.
 fn clearVariableBytes(in: []u8, os: OperatingSystem) []u8 {
-    for (6..77) |track_nr| {
+    if (os == .ados) {
+        // Clear nbytes and checksum on directory track 70 as nbytes has no meaning there and
+        // seems "random"
         for (0..32) |sect_nr| {
-            const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
+            const start_idx: usize = (70 * 32 * 137) + sect_nr * 137;
             in[start_idx + 3] = 0xaa; // data bytes count (unused)
-            if (os == .cpm) {
+            in[start_idx + 4] = 0xaa; // checksum
+        }
+    } else {
+        for (6..77) |track_nr| {
+            for (0..32) |sect_nr| {
+                const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
                 in[start_idx + 2] = 0xaa; // directory index (unused)
+                in[start_idx + 3] = 0xaa; // data bytes count (unused)
                 in[start_idx + 4] = 0xaa; // checksum
                 in[start_idx + 5] = 0xaa; // data pointer (unused)
                 in[start_idx + 6] = 0xaa; // data pointer (unused)
@@ -155,6 +163,7 @@ test "disk filled" {
             //.CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_full.dsk")),
+            .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_full.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -181,8 +190,7 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
-        defer saveFile(big_file);
+        saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -202,6 +210,7 @@ test "disk filled" {
         try std.testing.expect(cooked_dir != null);
         try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
         try std.testing.expectEqualSlices(u8, big_file, in_file);
+        saveImage(test_buffer);
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {

@@ -419,10 +419,7 @@ pub const DiskImage = struct {
     }
 
     pub fn copyToImageADOS(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool) !void {
-        //var dir_sector: DiskSector = .initUnformatted(self.image_type, 70); // TODO: Magic
-        //var file_sector: DiskSector = undefined;
-
-        _ = force;
+        _ = force; // TODO:
         var extent_nr: u16 = undefined;
         const new_entry = try self.directory.rawEntryGetFreeInitializedADOS(self, &extent_nr);
         // init filename etc here.
@@ -441,7 +438,7 @@ pub const DiskImage = struct {
         const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
         const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
         var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
-        var sector_nr: u16 = alloc % allocs_per_track; // This is the first sector for this allocation of 8 sectors.
+        var sector_nr: u16 = (alloc % allocs_per_track) * sectors_per_alloc; // This is the first sector for this allocation of 8 sectors.
 
         new_entry.raw.track = @intCast(track_nr);
         new_entry.raw.sector = @intCast(sector_nr);
@@ -453,7 +450,7 @@ pub const DiskImage = struct {
         while (nbytes != 0) {
             for (0..sectors_per_alloc) |offset| {
                 track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
-                sector_nr = (alloc - (alloc / allocs_per_track * allocs_per_track)) * sectors_per_alloc + @as(u16, @intCast(offset));
+                sector_nr = (alloc % allocs_per_track) * sectors_per_alloc + @as(u16, @intCast(offset));
 
                 // Fill all sectors in the group of 8 for the allocation. (8 * 128) = 1024byte block size.
                 const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };

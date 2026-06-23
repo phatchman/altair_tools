@@ -196,6 +196,7 @@ pub const DiskSector = union(enum) {
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
                         sector.sector_nr = @intCast((image_type.skew_table[location.sector] * 17) % 32);
+                        sector.nbytes = 0;
                         // For each sector of directory track, set the first byte of the directory
                         // entry to 0xff, indicating "end of directory"
                         if (location.track == 70 and location.sector == 0) {
