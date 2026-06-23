@@ -396,7 +396,7 @@ pub const DiskImageType = struct {
     /// The aim is that the next logical sector will by physically undereed the read/write head when
     /// the next sector is ready to be read/written.
     pub fn skew(self: *const DiskImageType, track: u16, logical_sector: u16) u16 {
-        if (self.sectors_per_track0 != null) {
+        if (track == 0 and self.sectors_per_track0 != null) {
             // We don't store a separate skew table for track 0.
             return logical_sector;
         }
@@ -984,7 +984,7 @@ pub const DiskImageType_ADOS_8IN = struct {
             .sector_size_raw = sector_size,
             .sector_size_data = sector_data_size,
             .block_size = 1024,
-            .directories = 256,
+            .directories = 255, // last entry is always "end of directory"
             .directory_allocs = 4,
             .image_size = 337568,
             .varying_sector_format = true,

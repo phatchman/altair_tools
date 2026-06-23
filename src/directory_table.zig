@@ -558,7 +558,7 @@ pub const DirectoryTable = struct {
 
     fn loadAltairDOS(self: *DirectoryTable, image: *DiskImage, _: LoadOption) DirectoryLoadError!void {
         // Directory is held on track 70
-        // TODO:
+        // TODO: handle FULL vs RAW only loads? Currently rely on the cooked load to build the free allocation table.
         for (0..self.image_type.directory_allocs) |i| {
             // 8 sectors per block (block_size / sector_size_data)
             self.free_allocations.unset(toAllocationADOS(self.image_type, 70, @intCast(i * 8)));
@@ -570,24 +570,9 @@ pub const DirectoryTable = struct {
             const entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
             try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
             for (entries) |e| {
-                //if (e.raw.filename[0] == 255) break :scan; // End of directory
-                //if (e.raw.filename[0] != 0) { // not deleted
                 self.raw_directories.ados.appendAssumeCapacity(e);
-                // }
             }
         }
-
-        // var raw_dirs_sorted: std.ArrayList(*RawAdosDirEntry) = try .initCapacity(self.allocator(), self.raw_directories.ados.items.len);
-        // defer raw_dirs_sorted.deinit(self.allocator());
-        // for (self.raw_directories.ados.items) |*raw_dir| {
-        //     raw_dirs_sorted.appendAssumeCapacity(raw_dir);
-        // }
-
-        // std.mem.sort(*RawAdosDirEntry, raw_dirs_sorted.items, {}, struct {
-        //     fn lessThan(_: void, lhs: *RawAdosDirEntry, rhs: *RawAdosDirEntry) bool {
-        //         return std.mem.lessThan(u8, &lhs.raw.filename, &rhs.raw.filename);
-        //     }
-        // }.lessThan);
 
         try self.cooked_directories.ensureTotalCapacity(self.allocator(), self.raw_directories.ados.items.len);
         loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
@@ -620,9 +605,7 @@ pub const DirectoryTable = struct {
         var nr_sectors: u32 = 0;
 
         while (track_nr != 0) {
-            //const allocation: u16 = @as(u16, e.raw.track - 6) * (32 / 8) + @as(u16, e.raw.sector / 8);
-            // std.debug.print("unset tk {}, sk {}, al {} \n", .{ e.raw.track, e.raw.sector, allocation });
-            self.free_allocations.unset(toAllocationADOS(self.image_type, e.raw.track, e.raw.sector));
+            self.free_allocations.unset(toAllocationADOS(self.image_type, track_nr, sector_nr));
             var sector: DiskSector = .initUnformatted(self.image_type, 70);
 
             image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {

@@ -147,7 +147,7 @@ fn clearVariableBytes(in: []u8, os: OperatingSystem) []u8 {
     return in;
 }
 test "disk filled" {
-    std.testing.log_level = .info;
+    //std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         const compare_image: ?[]u8 = switch (fmt.type_id) {
@@ -159,8 +159,7 @@ test "disk filled" {
             .CDOS_SMDSSD => try allocator.dupe(u8, @embedFile("test_disks/smdssd_full.dsk")),
             .CDOS_SMDSDD => try allocator.dupe(u8, @embedFile("test_disks/smdsdd_full.dsk")),
             .CDOS_LGSSSD => try allocator.dupe(u8, @embedFile("test_disks/lgsssd_full.dsk")),
-            // TODO: This disk doesn't look right? Directory entries and data are mixed?
-            //.CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
+            .CDOS_LGSSDD => try allocator.dupe(u8, @embedFile("test_disks/lgssdd_full.dsk")),
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_full.dsk")),
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_full.dsk")),
@@ -190,7 +189,7 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        saveFile(big_file);
+        //defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -198,6 +197,7 @@ test "disk filled" {
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
         try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
+        try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqualStrings(filename, disk_image.directory.cooked_directories.items[0].filenameAndExtension());
         // Get it back and compare it to the original
         const in_file = try allocator.alloc(u8, big_file.len);
@@ -206,11 +206,16 @@ test "disk filled" {
 
         // Important to re-init to rebuild the in-memory directory entries from the image.
         try reinitDiskImage(&disk_image);
+
+        try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
+        try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
+        try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
+        try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
+
         const cooked_dir = disk_image.directory.findByFilename(filename, null);
         try std.testing.expect(cooked_dir != null);
         try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
         try std.testing.expectEqualSlices(u8, big_file, in_file);
-        saveImage(test_buffer);
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {
@@ -222,7 +227,7 @@ test "disk filled" {
 }
 
 test "disk overfilled" {
-    // std.testing.log_level = .info;
+    //std.testing.log_level = .info;
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
@@ -261,6 +266,9 @@ test "overfill directory" {
             .HDD_5MB_1024 => try allocator.dupe(u8, @embedFile("test_disks/5mb_1024_dirs.dsk")),
             .CDOS_SMSSSD => try allocator.dupe(u8, @embedFile("test_disks/smsssd_dirs.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_dirs.dsk")),
+            // TODO: Basic allocates sectors and tracks for files differently to how it does it within files.
+            // Need to sus out what exactly is being done differently.
+            //.ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_dirs.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -289,7 +297,7 @@ test "overfill directory" {
         );
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(image_file)),
+                .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt.OS), clearVariableBytes(image_file, fmt.OS)),
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
@@ -628,8 +636,7 @@ test "autodetect image" {
             .CDOS_LGSSDD => "src/test_disks/lgssdd_fmt.dsk",
             .CDOS_LGDSSD => "src/test_disks/lgdssd_fmt.dsk",
             .CDOS_LGDSDD => "src/test_disks/lgdsdd_fmt.dsk",
-            // TODO:
-            .ADOS_8IN => "src/test_disks/8in_fmt.dsk",
+            .ADOS_8IN => "src/test_disks/ados_basic_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -807,18 +814,18 @@ const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{CDOS_LGSSDD};
 //const all_formats = .{FDD_8IN};
-const all_formats = .{ADOS_8IN};
-// const all_formats = _: {
-//     const fields = std.meta.fields(DiskImageTypes);
-//     var result: [fields.len]*const DiskImageType = undefined;
-//     var idx: usize = 0;
-//     for (fields) |field| {
-//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-//         idx += 1;
-//     }
-//     const result_c = result;
-//     break :_ &result_c;
-// };
+//const all_formats = .{ADOS_8IN};
+const all_formats = _: {
+    const fields = std.meta.fields(DiskImageTypes);
+    var result: [fields.len]*const DiskImageType = undefined;
+    var idx: usize = 0;
+    for (fields) |field| {
+        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+        idx += 1;
+    }
+    const result_c = result;
+    break :_ &result_c;
+};
 
 test {
     std.testing.refAllDecls(@This());
@@ -833,3 +840,12 @@ test {
 // 60 PRINT #1,CHR$(10)+P$+STRING$(127-LEN(P$),C);
 // 70 NEXT N
 // 80 CLOSE 1
+
+// Basic program for filling directory.
+// 10 CLEAR 500
+// 20 T$="Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall"
+// 30 FOR N=0 TO 254
+// 40 OPEN "O",1,"T"+MID$(STR$(N),2)+".TST"
+// 50 PRINT #1,T$;
+// 60 CLOSE 1
+// 70 NEXT N
