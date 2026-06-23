@@ -4,6 +4,7 @@ zig-cli/
 zig-out/
 zig-pkg/
 adgui/zig-pkg/
+out/
 *.exe
 *.pdb
 *.DSK

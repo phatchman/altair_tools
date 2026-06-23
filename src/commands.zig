@@ -100,7 +100,10 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
 
         if (!options.do_format and !trial_image_type.isCorrectFormat(io, file)) {
             printErrorMessage(current_command, .image_type_set, .{}, error.None);
-            return error.CommandFailed;
+            // For raw dir listings, try anyway.
+            if (!options.do_raw_dir) {
+                return error.CommandFailed;
+            }
         }
         break :image_type trial_image_type;
     };
@@ -235,8 +238,8 @@ pub fn directoryListRawCPM(_: Context, disk_image: *DiskImage, options: CommandL
     const free_allocations = disk_image.directory.free_allocations;
     try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
     var nr_output: usize = 0;
-    for (0..disk_image.directory.free_allocations.capacity()) |alloc_nr| {
-        if (disk_image.directory.free_allocations.isSet(alloc_nr)) {
+    for (0..free_allocations.capacity()) |alloc_nr| {
+        if (free_allocations.isSet(alloc_nr)) {
             try Console.stdout().print("{:0>3} ", .{alloc_nr});
             nr_output += 1;
             if (nr_output % 16 == 0) {
@@ -251,6 +254,7 @@ pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOp
     try Console.stdout().print("FNR:FILENAME:MD:TK:SK\n", .{});
 
     for (disk_image.directory.raw_directories.ados.items, 1..) |entry, file_nr| {
+        if (entry.isLastEntry()) break;
         if (!entry.isDeleted()) {
             try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}\n", .{
                 file_nr,
@@ -261,6 +265,20 @@ pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOp
             });
         }
     }
+    try Console.stdout().print("FREE DIRECTORIES: ({})\n", .{disk_image.directory.rawEntryFreeCount()});
+    const free_allocations = disk_image.directory.free_allocations;
+    try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
+    var nr_output: usize = 0;
+    for (0..free_allocations.capacity()) |alloc_nr| {
+        if (free_allocations.isSet(alloc_nr)) {
+            try Console.stdout().print("{:0>3} ", .{alloc_nr});
+            nr_output += 1;
+            if (nr_output % 16 == 0) {
+                try Console.stdout().print("\n", .{});
+            }
+        }
+    }
+    try Console.stdout().print("\n", .{});
 }
 
 /// Get a file from the image.

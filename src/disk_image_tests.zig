@@ -32,7 +32,6 @@ test "disk formatted" {
         defer allocator.free(test_buffer);
         var test_image: InMemoryImage = undefined;
         test_image.init(test_buffer);
-        defer saveImage(test_buffer);
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
@@ -124,21 +123,23 @@ test "FDC 8MB formatted" {
 /// These bytes are leftovers from Altair DOS, so are essentially ignored.
 /// These "random" bytes are also included in the checksum!!
 /// Which means that we can't even compare the checksums between two images.
-fn clearVariableBytes(in: []u8) []u8 {
+fn clearVariableBytes(in: []u8, os: OperatingSystem) []u8 {
     for (6..77) |track_nr| {
         for (0..32) |sect_nr| {
             const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
-            in[start_idx + 2] = 0xaa; // directory index (unused)
             in[start_idx + 3] = 0xaa; // data bytes count (unused)
-            in[start_idx + 4] = 0xaa; // checksum
-            in[start_idx + 5] = 0xaa; // data pointer (unused)
-            in[start_idx + 6] = 0xaa; // data pointer (unused)
+            if (os == .cpm) {
+                in[start_idx + 2] = 0xaa; // directory index (unused)
+                in[start_idx + 4] = 0xaa; // checksum
+                in[start_idx + 5] = 0xaa; // data pointer (unused)
+                in[start_idx + 6] = 0xaa; // data pointer (unused)
+            }
         }
     }
     return in;
 }
 test "disk filled" {
-    //std.testing.log_level = .info;
+    std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         const compare_image: ?[]u8 = switch (fmt.type_id) {
@@ -180,6 +181,8 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
+        defer saveFile(big_file);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -202,7 +205,7 @@ test "disk filled" {
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci), clearVariableBytes(test_buffer)),
+                .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt.OS), clearVariableBytes(test_buffer, fmt.OS)),
                 else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
@@ -772,6 +775,8 @@ const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
 const DiskLabel = @import("disk_types.zig").DiskLabel;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
+const OperatingSystem = @import("disk_types.zig").OperatingSystem;
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);
 const HDD_5MB = all_disk_types.getPtrConst(.HDD_5MB);
@@ -789,11 +794,11 @@ const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 // Can be set to a limited set of formats when wanting to test a subset.
-const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
 //const all_formats = .{CDOS_LGSSDD};
 //const all_formats = .{FDD_8IN};
-//const all_formats = .{ADOS_8IN};
+const all_formats = .{ADOS_8IN};
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
 //     var result: [fields.len]*const DiskImageType = undefined;
@@ -809,3 +814,13 @@ const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_S
 test {
     std.testing.refAllDecls(@This());
 }
+
+// Basic program for creating "BIG.TXT" in Altair Disk Basic
+// 10 CLEAR 500
+// 20 OPEN "O",1,"BIG.TXT"
+// 30 FOR N=0 TO 2239
+// 40 C=32+(N MOD 95)
+// 50 P$="--["+MID$(STR$(N),2)+"]--"
+// 60 PRINT #1,CHR$(10)+P$+STRING$(127-LEN(P$),C);
+// 70 NEXT N
+// 80 CLOSE 1

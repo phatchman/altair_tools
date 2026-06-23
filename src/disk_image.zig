@@ -2,6 +2,9 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
+// TODO: I think I broke the nice loggign logic we had for showing the logical and physical read/write
+// addresses in a single log message. Need to clean it up somehow?
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;
@@ -284,6 +287,13 @@ pub const DiskImage = struct {
 
     /// Copy a file from file_reader to the disk image.
     pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
+        try switch (self.image_type.OS) {
+            .cpm, .cdos => copyToImageCPM(self, file_reader, to_filename, user, force),
+            .ados => copyToImageADOS(self, file_reader, to_filename, force),
+        };
+    }
+
+    pub fn copyToImageCPM(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
         const cpm_user = user orelse 0;
         const basename = std.fs.path.basename(to_filename);
         var conversion_buf: [filename_len]u8 = undefined;
@@ -320,11 +330,11 @@ pub const DiskImage = struct {
 
         // short circuit handling on zero-length files.
         if (nbytes == 0) {
-            var raw_entry = try self.directory.rawEntryGetFreeInitialized(&extent_nr);
+            var raw_entry = try self.directory.rawEntryGetFreeInitializedCPM(&extent_nr);
             raw_entry.filenameAndExtensionSet(cpm_filename);
             raw_entry.entry.user = cpm_user;
-            try self.rawEntryWrite(extent_nr);
-            try self.directory.buildCookedEntry(extent_nr);
+            try self.rawEntryWriteCPM(extent_nr);
+            try self.directory.buildCookedEntryCPM(extent_nr);
             return;
         }
 
@@ -338,24 +348,25 @@ pub const DiskImage = struct {
             // Is this a new extent?
             if (record_nr % self.image_type.recs_per_extent == 0) {
                 if (record_nr > 0) {
-                    try self.directory.buildCookedEntry(extent_nr);
+                    try self.directory.buildCookedEntryCPM(extent_nr);
                     extent_count += 1;
                 }
-                dir_entry = try self.directory.rawEntryGetFreeInitialized(&extent_nr);
+                dir_entry = try self.directory.rawEntryGetFreeInitializedCPM(&extent_nr);
                 dir_entry.filenameAndExtensionSet(cpm_filename);
                 dir_entry.entry.user = cpm_user;
                 alloc_count = 0;
             }
             // Is this a new allocation?
             if (record_nr % self.image_type.recs_per_alloc == 0) {
-                alloc_nr = try self.directory.allocationGetFree();
+                alloc_nr = try self.directory.allocationGetFreeCPM();
                 const raw_entry = &self.directory.raw_directories.cpm.items[extent_nr];
                 try raw_entry.allocationSet(alloc_count, alloc_nr, self.image_type);
                 alloc_count += 1;
             }
 
-            // For formats that support 256 records per extent, the 129th record
-            // is represented as extent number += 1 and record_count reset to 1.
+            // For formats that support 256 records per extent (actually 255. 0 means no records)
+            // The 128th record is represented as extent number + 1 with record_count reset to 0
+            // This means odd extent numbers have > 127 records and even ones have <= 127 records.
             if (self.image_type.recs_per_extent == 256 and
                 record_nr % 128 == 0 and
                 record_nr % 256 != 0)
@@ -373,7 +384,7 @@ pub const DiskImage = struct {
 
             dir_entry.entry.num_records = @intCast((num_records - 1) % 128 + 1);
             dir_entry.extentCountSet(extent_count, self.image_type);
-            try self.rawEntryWrite(extent_nr);
+            try self.rawEntryWriteCPM(extent_nr);
             @memset(file_data, 0xe5);
             nbytes = try file_reader.readSliceShort(file_data);
             @memset(file_data[nbytes .. (nbytes + 127) / 128 * 128], 0x1a);
@@ -385,7 +396,7 @@ pub const DiskImage = struct {
             sector_count += 1;
         }
 
-        try self.directory.buildCookedEntry(extent_nr);
+        try self.directory.buildCookedEntryCPM(extent_nr);
 
         // How copying works:
         //
@@ -405,6 +416,98 @@ pub const DiskImage = struct {
         // in the directory entry.
         // Odd-numbered extents indicate that there is a missing even-numbered extent.
         // The code treats this as a single extent of 256 records for simplicity.
+    }
+
+    pub fn copyToImageADOS(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool) !void {
+        //var dir_sector: DiskSector = .initUnformatted(self.image_type, 70); // TODO: Magic
+        //var file_sector: DiskSector = undefined;
+
+        _ = force;
+        var extent_nr: u16 = undefined;
+        const new_entry = try self.directory.rawEntryGetFreeInitializedADOS(self, &extent_nr);
+        // init filename etc here.
+        _ = try translateToADOSFilename(to_filename, &new_entry.raw.filename);
+        new_entry.raw.mode = 0x2; // Only sequential files are currently supported
+
+        var file_data: [128]u8 = undefined; // TODO: Hard coded
+        var nbytes = try file_reader.readSliceShort(&file_data);
+        // Zero length files only get a directory entry and nothing else.
+        if (nbytes == 0) {
+            try self.rawEntryWriteADOS(extent_nr);
+            return;
+        }
+
+        var alloc = try self.directory.allocationGetFreeADOS();
+        const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
+        const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
+        var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
+        var sector_nr: u16 = alloc % allocs_per_track; // This is the first sector for this allocation of 8 sectors.
+
+        new_entry.raw.track = @intCast(track_nr);
+        new_entry.raw.sector = @intCast(sector_nr);
+        try self.rawEntryWriteADOS(extent_nr);
+        errdefer self.directory.buildCookedEntryADOS(self, extent_nr) catch {}; // Try and build the cooked dir if we can with what we have.
+
+        var prev_location: ?PhysicalAddress = null;
+        var prev_sector: DiskSector = undefined;
+        while (nbytes != 0) {
+            for (0..sectors_per_alloc) |offset| {
+                track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
+                sector_nr = (alloc - (alloc / allocs_per_track * allocs_per_track)) * sectors_per_alloc + @as(u16, @intCast(offset));
+
+                // Fill all sectors in the group of 8 for the allocation. (8 * 128) = 1024byte block size.
+                const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
+                var sector: DiskSector = .initFormatted(self.image_type, location);
+                @memcpy(sector.dataBytes()[0..nbytes], file_data[0..nbytes]);
+                sector.mits_track_6_76.nbytes = @intCast(nbytes);
+                sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
+                try self.writeSector(location, &sector);
+                if (prev_location) |prev| {
+                    prev_sector.mits_track_6_76.next_track = @intCast(track_nr);
+                    prev_sector.mits_track_6_76.next_sector = @intCast(sector_nr);
+                    try self.writeSector(prev, &prev_sector);
+                }
+                prev_location = location;
+                prev_sector = sector;
+
+                nbytes = try file_reader.readSliceShort(&file_data);
+                if (nbytes == 0) break;
+            }
+            if (nbytes != 0) {
+                alloc = try self.directory.allocationGetFreeADOS();
+            }
+        }
+        try self.directory.buildCookedEntryADOS(self, extent_nr);
+
+        // The ADOS file allocation is fairly simple for sequential files.
+        // 1) The directory entry holds a pointer to the first track and sector for the file.
+        // 2) All sectors containing file data, have the directory entry number (starting at 1) set as the file number
+        // 3) The sector also contains a ponter to the next track and sector for the file
+        // 4) If the next track and sector are 0, then this indicates the end of file.
+        // 5) For the last sector, nbytes is set to the amount of data in the last sector.
+        //
+        // The next track and sector come from the list of free allocations. An allocation represents a block of 8 sectors
+        // The file data is written to the first sector in the block and then sequentially through the remaining (logical) sectors
+        // Once all 8 sectors have been written, a new allocation is taken.
+        // This means we need to keep going back to the previous sector to write the track and sector pointers after we have
+        // written data to the next sector.
+    }
+
+    /// Convert to valid Altair DOS / Basic filename
+    /// There are almost no restrictions on valid filename chars in Altair DOS
+    /// This program enforces printable and upper case.
+    /// TODO: This should go in directory table??
+    pub fn translateToADOSFilename(from_filename: []const u8, to_filename: *[8]u8) error{InvalidFilename}![]u8 {
+        @memset(to_filename, ' ');
+        var index: usize = 0;
+        for (from_filename) |c| {
+            if (std.ascii.isPrint(c)) {
+                to_filename[index] = std.ascii.toUpper(c);
+                index += 1;
+            }
+        }
+        if (index == 0) return error.InvalidFilename;
+        return to_filename[0..index];
     }
 
     /// Erase a file.
@@ -519,7 +622,7 @@ pub const DiskImage = struct {
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                     .CDOS_LGDSDD => 0x40,
                 };
-                try self.rawEntryWrite(0);
+                try self.rawEntryWriteCPM(0);
             },
             else => return error.LabelingNotSupported,
         }
@@ -580,7 +683,7 @@ pub const DiskImage = struct {
                 delete_related = true;
                 raw_dir.setDeleted();
             }
-            try self.rawEntryWrite(@intCast(i));
+            try self.rawEntryWriteCPM(@intCast(i));
         }
     }
 
@@ -638,7 +741,7 @@ pub const DiskImage = struct {
     }
 
     /// write a CPM diretory entry (RawDirEntry)
-    pub fn rawEntryWrite(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
+    pub fn rawEntryWriteCPM(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
         // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.cpm.items[extent_nr].extentGet() });
         // Make sure entry is valid before written.
         const this_entry = &self.directory.raw_directories.cpm.items[extent_nr];
@@ -656,6 +759,31 @@ pub const DiskImage = struct {
         @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.cpm.items[start_index .. start_index + self.image_type.dir_entries_per_sector]));
         try self.writeSector(location, &sector);
     }
+
+    /// write a CPM diretory entry (RawDirEntry)
+    pub fn rawEntryWriteADOS(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
+        // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.cpm.items[extent_nr].extentGet() });
+        // Make sure entry is valid before written.
+        //const this_entry = &self.directory.raw_directories.ados.items[extent_nr];
+        // TODO:
+        // if (!this_entry.isDeleted()) {
+        //     try this_entry.validate(self.image_type, extent_nr);
+        // }
+
+        // TODO: Cant use self.image_type.dir_entries_per_sector as it assumes dir entries are 32 bytes not 16 as required here.
+
+        const entries_per_sector = self.image_type.sector_size_data / @sizeOf(RawAdosDirEntry.Raw);
+        // 16 bytes per directory entry. Directory start at Track 70
+        const location: PhysicalAddress = .{ .track = 70, .sector = extent_nr / entries_per_sector };
+        var sector: DiskSector = .initFormatted(self.image_type, location);
+
+        // start_index is the index of the directory entry that is at
+        // the beginning of this sector
+        const start_index = extent_nr / entries_per_sector * entries_per_sector;
+        // Copy 1 full sector worth of extents/raw entries
+        @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.ados.items[start_index .. start_index + entries_per_sector]));
+        try self.writeSector(location, &sector);
+    }
 };
 
 const std = @import("std");
@@ -669,6 +797,7 @@ const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
 const DirectoryLoadError = DirectoryTable.DirectoryLoadError;
 const RawCpmDirEntry = @import("directory_table.zig").RawCpmDirEntry;
+const RawAdosDirEntry = @import("directory_table.zig").RawAdosDirEntry;
 const RawDirError = @import("directory_table.zig").RawDirError;
 const File = std.Io.File;
 const Io = std.Io;
