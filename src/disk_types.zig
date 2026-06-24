@@ -150,7 +150,9 @@ pub const DiskSector = union(enum) {
 
     pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
         return switch (image_type.type_id) {
-            .FDD_8IN, .FDD_8IN_8MB, .ADOS_8IN => if (track_nr < 6)
+            // TODO: Need to make this so when add a new 137 byte format we
+            // either get a compile error here, or don;t have to update this switch. Either one.
+            .FDD_8IN, .FDD_8IN_8MB, .ADOS_8IN, .ADOS_MINI => if (track_nr < 6)
                 .{ .mits_track_0_5 = undefined }
             else
                 .{ .mits_track_6_76 = undefined },
@@ -179,7 +181,6 @@ pub const DiskSector = union(enum) {
                 }
             },
             .mits_track_6_76 => |*sector| {
-                // TODO: ADOS needs to fill with zero and we work out what other things it sets.
                 switch (image_type.OS) {
                     .cpm => {
                         result.rawBytes()[1] = 0x00;
@@ -199,7 +200,7 @@ pub const DiskSector = union(enum) {
                         sector.nbytes = 0;
                         // For each sector of directory track, set the first byte of the directory
                         // entry to 0xff, indicating "end of directory"
-                        if (location.track == 70 and location.sector == 0) {
+                        if (location.track == image_type.OS.ados.directory_track and location.sector == 0) {
                             sector.nbytes = 0x80;
                             sector.data[0] = 0xff;
                         }
@@ -340,7 +341,13 @@ pub const DiskImageType = struct {
     // Are all sectors formatted the same or do they vary per track?
     varying_sector_format: bool,
     // Which operating system is this?
-    OS: OperatingSystem,
+    OS: union(OperatingSystem) {
+        cpm,
+        cdos: void,
+        ados: struct {
+            directory_track: u8,
+        },
+    },
     // Skew from logical to physical sector
     skew_fn: *const fn (skew_table: []const u16, track: u16, sector: u16) u16 = defaultSkewFn,
     // Defines logical to physical skews.
@@ -959,7 +966,6 @@ pub const DiskImageType_CDOS_LGDSDD = struct {
 };
 
 // Atair DOS
-
 pub const DiskImageType_ADOS_8IN = struct {
     // Note that mits skew algorithm requires first sector to be 1, not 0
     const skew_table = [32]u16{
@@ -977,7 +983,9 @@ pub const DiskImageType_ADOS_8IN = struct {
             .type_id = .ADOS_8IN,
             .type_name = "ADOS_8IN",
             .description = "Altair DOS & BASIC 8\" Floppy Disk ",
-            .OS = .ados,
+            .OS = .{
+                .ados = .{ .directory_track = 70 },
+            },
             .tracks = 77,
             .reserved_tracks = 6,
             .sectors_per_track = 32,
@@ -999,8 +1007,8 @@ pub const DiskImageType_ADOS_8IN = struct {
         if (!DiskImageType.defaultDetectFn(self, io, image_file)) return false;
         var reader = image_file.reader(io, &.{});
         // Go to the directory table location on track 70
-        reader.seekTo(70 * @as(u32, self.track_size)) catch return false;
-        var sector: DiskSector = .initUnformatted(self, 70);
+        reader.seekTo(self.OS.ados.directory_track * @as(u32, self.track_size)) catch return false;
+        var sector: DiskSector = .initUnformatted(self, self.OS.ados.directory_track);
 
         reader.interface.readSliceAll(sector.rawBytes()) catch return false;
         var entries: []AltairDosDirEntry = std.mem.bytesAsSlice(AltairDosDirEntry, sector.dataBytes());
@@ -1023,7 +1031,7 @@ pub const DiskImageType_ADOS_8IN = struct {
             for (entries, start..) |e, entry_nr| {
                 if (e.filename[0] == 255) return false;
                 if (e.filename[0] == 0x00) continue; // deleted
-                if (e.track > 76 or e.sector > 31) return false;
+                if (e.track >= self.tracks or e.sector >= self.sectors_per_track) return false;
                 //                std.debug.print("not EOD or deleted\n", .{});
 
                 for (e.filename) |ch| {
@@ -1049,6 +1057,42 @@ pub const DiskImageType_ADOS_8IN = struct {
     }
 };
 
+pub const DiskImageType_ADOS_MINI = struct {
+    // Note that mits skew algorithm requires first sector to be 1, not 0
+    const skew_table = [16]u16{
+        0, 2, 4, 6, 8, 10, 12, 14,
+        1, 3, 5, 7, 9, 11, 13, 15,
+    };
+
+    const sector_size = 137; // Note non-standard sector size.
+    const sector_data_size = 128;
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .ADOS_MINI,
+            .type_name = "ADOS_MINI",
+            .description = "Altair DOS & BASIC 5.25\" Bootable Floppy Disk ",
+            .OS = .{
+                .ados = .{ .directory_track = 34 },
+            },
+            .tracks = 35,
+            .reserved_tracks = 11,
+            .sectors_per_track = 16,
+            .sector_size_raw = sector_size,
+            .sector_size_data = sector_data_size,
+            .block_size = 1024,
+            .directories = 127,
+            .directory_allocs = 2,
+            .image_size = 76800,
+            .varying_sector_format = true,
+            .skew_table = &skew_table,
+            .detect_fn = DiskImageType_ADOS_8IN.isCorrectFormat, // TODO: Split this into OS-specific function?
+        };
+        result.init();
+        return result;
+    }
+};
+
 pub const DiskImageTypes = enum {
     FDD_8IN,
     HDD_5MB,
@@ -1065,6 +1109,7 @@ pub const DiskImageTypes = enum {
     CDOS_LGDSSD,
     CDOS_LGDSDD,
     ADOS_8IN,
+    ADOS_MINI,
 
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
@@ -1107,6 +1152,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .CDOS_LGDSSD = DiskImageType_CDOS_LGDSSD.init(),
     .CDOS_LGDSDD = DiskImageType_CDOS_LGDSDD.init(),
     .ADOS_8IN = DiskImageType_ADOS_8IN.init(),
+    .ADOS_MINI = DiskImageType_ADOS_MINI.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

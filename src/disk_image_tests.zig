@@ -25,6 +25,7 @@ test "disk formatted" {
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_fmt.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_fmt.dsk")),
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
+            .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_fmt.dsk")),
         };
         defer allocator.free(compare_image);
 
@@ -35,6 +36,7 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -128,6 +130,7 @@ fn clearVariableBytes(in: []u8, os: OperatingSystem) []u8 {
         // Clear nbytes and checksum on directory track 70 as nbytes has no meaning there and
         // seems "random"
         for (0..32) |sect_nr| {
+            // TODO: Need to change this for 5.25IN.
             const start_idx: usize = (70 * 32 * 137) + sect_nr * 137;
             in[start_idx + 3] = 0xaa; // data bytes count (unused)
             in[start_idx + 4] = 0xaa; // checksum
@@ -189,7 +192,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        //defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -637,6 +639,7 @@ test "autodetect image" {
             .CDOS_LGDSSD => "src/test_disks/lgdssd_fmt.dsk",
             .CDOS_LGDSDD => "src/test_disks/lgdsdd_fmt.dsk",
             .ADOS_8IN => "src/test_disks/ados_basic_fmt.dsk",
+            .ADOS_MINI => "src/test_disks/ados_mini_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -809,23 +812,21 @@ const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
+const ADOS_MINI = all_disk_types.getPtrConst(.ADOS_MINI);
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD, CDOS_LGSSDD };
-//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC, FDC_8MB, CDOS_SMSSSD, CDOS_LGSSSD };
-//const all_formats = .{CDOS_LGSSDD};
-//const all_formats = .{FDD_8IN};
-//const all_formats = .{ADOS_8IN};
-const all_formats = _: {
-    const fields = std.meta.fields(DiskImageTypes);
-    var result: [fields.len]*const DiskImageType = undefined;
-    var idx: usize = 0;
-    for (fields) |field| {
-        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-        idx += 1;
-    }
-    const result_c = result;
-    break :_ &result_c;
-};
+//const all_formats = .{ADOS_MINI};
+const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
+// const all_formats = _: {
+//     const fields = std.meta.fields(DiskImageTypes);
+//     var result: [fields.len]*const DiskImageType = undefined;
+//     var idx: usize = 0;
+//     for (fields) |field| {
+//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+//         idx += 1;
+//     }
+//     const result_c = result;
+//     break :_ &result_c;
+// };
 
 test {
     std.testing.refAllDecls(@This());
@@ -841,7 +842,7 @@ test {
 // 70 NEXT N
 // 80 CLOSE 1
 
-// Basic program for filling directory.
+// Basic program for filling directory. Note that this doesn't use all the available directories for some reason.
 // 10 CLEAR 500
 // 20 T$="Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall"
 // 30 FOR N=0 TO 254

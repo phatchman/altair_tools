@@ -29,6 +29,8 @@
 //
 
 // TODO: Errors not being shown for invalid options e.g. -q
+// TODO: Error for invalid basic file format not being shown correctly.
+// err: Not an encoded Altair Basic fileError performing get file: Error copying file #TCSCOPY: InvalidFormat
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;

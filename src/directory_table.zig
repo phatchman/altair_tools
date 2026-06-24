@@ -225,17 +225,6 @@ pub const RawAdosDirEntry = struct {
     pub fn isLastEntry(self: *const RawAdosDirEntry) bool {
         return self.raw.filename[0] == 0xff;
     }
-
-    pub fn format(self: *const RawAdosDirEntry, writer: *std.Io.Writer) error{WriteFailed}!void {
-        var printable: [self.filename.len]u8 = self.filename;
-        for (&printable) |*ch| {
-            if (!std.ascii.isPrint(ch.*)) ch.* = '?';
-        }
-        try writer.print(
-            "FN: [{s}], TK: [{x:02}], SC: [{x:02}], MD: [{x:02}], UN: [{x}]",
-            .{ printable, self.track, self.sector, self.mode, self.unused },
-        );
-    }
 };
 
 /// An easier to use version of the raw entry.
@@ -557,22 +546,22 @@ pub const DirectoryTable = struct {
     }
 
     fn loadAltairDOS(self: *DirectoryTable, image: *DiskImage, _: LoadOption) DirectoryLoadError!void {
-        // Directory is held on track 70
+        // Directory is held on track 70 for 8IN and 34 for 5.25IN
         // TODO: handle FULL vs RAW only loads? Currently rely on the cooked load to build the free allocation table.
+        const directory_track = self.image_type.OS.ados.directory_track;
         for (0..self.image_type.directory_allocs) |i| {
             // 8 sectors per block (block_size / sector_size_data)
-            self.free_allocations.unset(toAllocationADOS(self.image_type, 70, @intCast(i * 8)));
+            self.free_allocations.unset(toAllocationADOS(self.image_type, directory_track, @intCast(i * 8)));
         }
-        var sector: DiskSector = .initUnformatted(self.image_type, 70);
+        var sector: DiskSector = .initUnformatted(self.image_type, directory_track);
         try self.raw_directories.ados.ensureTotalCapacity(self.allocator(), self.image_type.directories);
         for (0..self.image_type.sectors_per_track) |sector_nr| {
-            try image.readSectorPhysical(.{ .track = 70, .sector = @intCast(sector_nr) }, &sector);
+            try image.readSectorPhysical(.{ .track = directory_track, .sector = @intCast(sector_nr) }, &sector);
             const entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
             try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
-            for (entries) |e| {
-                self.raw_directories.ados.appendAssumeCapacity(e);
-            }
+            self.raw_directories.ados.appendSliceAssumeCapacity(entries);
         }
+        if (self.image_type.type_id == .ADOS_MINI) return; // TODO: TEMP
 
         try self.cooked_directories.ensureTotalCapacity(self.allocator(), self.raw_directories.ados.items.len);
         loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
@@ -605,8 +594,9 @@ pub const DirectoryTable = struct {
         var nr_sectors: u32 = 0;
 
         while (track_nr != 0) {
+            // TODO: Validate the entry before following the links and always validate track and sector numbers.
             self.free_allocations.unset(toAllocationADOS(self.image_type, track_nr, sector_nr));
-            var sector: DiskSector = .initUnformatted(self.image_type, 70);
+            var sector: DiskSector = .initUnformatted(self.image_type, self.image_type.OS.ados.directory_track);
 
             image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
                 log.err("Error reading from disk image: {t}\n", .{err});
@@ -681,7 +671,7 @@ pub const DirectoryTable = struct {
                 std.mem.eql(u8, CookedDirEntry.rawSlice(&raw_item.entry.filetype), cooked_dir.extensionOnly()))
             {
                 raw_item.setDeleted();
-                try disk_image.rawEntryWriteCPM(@intCast(idx));
+                try disk_image.cpm.rawEntryWrite(@intCast(idx));
             }
         }
         // Finally remove the deleted CookedDir.
@@ -856,7 +846,7 @@ pub const DirectoryTable = struct {
                 dir.* = .last;
                 // Set the next entry to be the last entry.
                 self.raw_directories.ados.items[i + 1] = .last;
-                image.rawEntryWriteADOS(@intCast(i + 1)) catch return error.OutOfExtents;
+                image.ados.rawEntryWrite(@intCast(i + 1)) catch return error.OutOfExtents;
                 return dir;
             } else if (dir.isDeleted()) {
                 extent_nr.* = @intCast(i);

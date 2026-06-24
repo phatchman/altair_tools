@@ -495,7 +495,7 @@ pub fn extractCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOpti
         return error.CommandFailed;
     };
     defer out_file.close(ctx.io);
-    disk_image.extractCPM(ctx.io, out_file) catch |err| {
+    disk_image.extractOperatingSystem(ctx.io, out_file) catch |err| {
         printErrorMessage(current_command, .extract_cpm, .{options.system_image_get}, err);
         return error.CommandFailed;
     };
@@ -510,7 +510,7 @@ pub fn installCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOpti
         return error.CommandFailed;
     };
     defer in_file.close(ctx.io);
-    disk_image.installCPM(ctx.io, in_file) catch |err| {
+    disk_image.installOperatingSystem(ctx.io, in_file) catch |err| {
         printErrorMessage(current_command, .install_cpm, .{options.system_image_put}, err);
         return error.CommandFailed;
     };
