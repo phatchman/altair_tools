@@ -1,4 +1,7 @@
 //! Decodes encoded Altair Disk Basic files to plain text files.
+//! The file has a header of 0xff
+//! Then next 2 bytes are the line number or 0x0000 for EOF
+//! The file is then read character by character and processed until 0x00 which indicated end of line.
 
 const log = std.log.scoped(.altair_disk);
 

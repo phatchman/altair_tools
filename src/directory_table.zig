@@ -186,6 +186,12 @@ pub const RawCpmDirEntry = struct {
         }
         return self.extentGet(image_type) == 0;
     }
+
+    pub fn eql(self: *const RawCpmDirEntry, cooked_dir: *const CookedDirEntry) bool {
+        return (self.entry.user == cooked_dir.user and
+            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.entry.filename), cooked_dir.filenameOnly()) and
+            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.entry.filetype), cooked_dir.extensionOnly()));
+    }
 };
 
 pub const RawAdosDirEntry = struct {
@@ -222,8 +228,16 @@ pub const RawAdosDirEntry = struct {
         return self.raw.filename[0] == 0x00;
     }
 
+    pub fn setDeleted(self: *RawAdosDirEntry) void {
+        self.raw.filename[0] = 0x00;
+    }
+
     pub fn isLastEntry(self: *const RawAdosDirEntry) bool {
         return self.raw.filename[0] == 0xff;
+    }
+
+    pub fn eql(self: *const RawAdosDirEntry, cooked: *const CookedDirEntry) bool {
+        return std.mem.eql(u8, std.mem.trimEnd(u8, &self.raw.filename, " "), cooked.filenameOnly());
     }
 };
 
@@ -231,11 +245,11 @@ pub const RawAdosDirEntry = struct {
 pub const CookedDirEntry = struct {
     user: u8,
     attribs: [2]u8,
+    allocations: std.ArrayListUnmanaged(u16),
     os: union(enum) {
         cpm: struct {
             num_records: u32,
             num_allocs: u32,
-            allocations: std.ArrayListUnmanaged(u16),
         },
         ados: struct {
             track: u8,
@@ -278,10 +292,10 @@ pub const CookedDirEntry = struct {
             .os = .{ .cpm = .{
                 .num_records = raw_dir.entry.num_records,
                 .num_allocs = 0,
-                .allocations = .empty,
             } },
             .filename = filename,
             .block_size = image_type.block_size,
+            .allocations = .empty,
         };
         result.os.cpm.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.os.cpm.num_allocs > 4) {
@@ -332,14 +346,14 @@ pub const CookedDirEntry = struct {
     fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
         var alloc_count: u8 = 0;
 
-        try cooked.os.cpm.allocations.ensureUnusedCapacity(arena, raw.entry.allocations.len);
+        try cooked.allocations.ensureUnusedCapacity(arena, raw.entry.allocations.len);
         for (0..raw.allocationsCount(image_type)) |alloc_nr| {
             const allocation = try raw.allocationGet(alloc_nr, image_type);
             // zero means no more allocations.
             if (allocation == 0) {
                 break;
             }
-            cooked.os.cpm.allocations.appendAssumeCapacity(allocation);
+            cooked.allocations.appendAssumeCapacity(allocation);
             alloc_count += 1;
         }
         return alloc_count;
@@ -585,31 +599,6 @@ pub const DirectoryTable = struct {
         return @as(u16, track - image_type.reserved_tracks) * (image_type.sectors_per_track / sectors_per_alloc) + @as(u16, sector / sectors_per_alloc);
     }
 
-    // Walk the chain of sectors and calculate the file size.
-    // Also free any allocations used by this file.
-    fn fileSizeADOS(self: *DirectoryTable, image: *DiskImage, e: *const RawAdosDirEntry) !struct { length: u32, used: u32 } {
-        var track_nr = e.raw.track;
-        var sector_nr = e.raw.sector;
-        var nbytes: u32 = 0;
-        var nr_sectors: u32 = 0;
-
-        while (track_nr != 0) {
-            // TODO: Validate the entry before following the links and always validate track and sector numbers.
-            self.free_allocations.unset(toAllocationADOS(self.image_type, track_nr, sector_nr));
-            var sector: DiskSector = .initUnformatted(self.image_type, self.image_type.OS.ados.directory_track);
-
-            image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
-                log.err("Error reading from disk image: {t}\n", .{err});
-                return error.InvalidImageFile;
-            };
-            nbytes += sector.mits_track_6_76.nbytes;
-            nr_sectors += 1;
-            track_nr = sector.mits_track_6_76.next_track;
-            sector_nr = sector.mits_track_6_76.next_sector;
-        }
-        return .{ .length = nbytes, .used = (nr_sectors + 7) / 8 };
-    }
-
     /// Whenever a new extent is created, register it with the directory
     /// Builds up the associated CookedDirEntry as new RawDirEntries are registered.
     pub fn buildCookedEntryCPM(self: *DirectoryTable, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
@@ -628,6 +617,7 @@ pub const DirectoryTable = struct {
         }
     }
 
+    // TODO: Need a proper init function for the Cooked entry. This will break every time we add a new initializer
     pub fn buildCookedEntryADOS(self: *DirectoryTable, image: *DiskImage, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
         const entry = &self.raw_directories.ados.items[raw_entry_idx];
         var cooked: CookedDirEntry = undefined;
@@ -636,14 +626,45 @@ pub const DirectoryTable = struct {
         cooked.user = 0;
         cooked.attribs[0] = if (entry.raw.mode == 2) 'S' else 'R';
         cooked.attribs[1] = ' ';
-        const size = try self.fileSizeADOS(image, entry);
-        cooked.os = .{ .ados = .{
-            .track = entry.raw.track,
-            .sector = entry.raw.sector,
-            .size = size.length,
-            .used = size.used,
-        } };
+        cooked.allocations = .empty;
+
+        //       const size = try self.fileSizeADOS(image, entry);
         cooked.block_size = self.image_type.block_size;
+        {
+            // Calculate File size and Allocations
+            // Walk the linked list of sectors and add up the bytes.
+            var track_nr = entry.raw.track;
+            var sector_nr = entry.raw.sector;
+            var nbytes: u32 = 0;
+            var nr_sectors: u32 = 0;
+            const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
+
+            while (track_nr != 0) {
+                // TODO: Validate the entry before following the links and always validate track and sector numbers.
+                const allocation = toAllocationADOS(self.image_type, track_nr, sector_nr);
+                self.free_allocations.unset(allocation);
+
+                if (sector_nr % sectors_per_alloc == 0) {
+                    try cooked.allocations.append(self.allocator(), allocation);
+                }
+
+                var sector: DiskSector = .initUnformatted(self.image_type, self.image_type.OS.ados.directory_track);
+                image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
+                    log.err("Error reading from disk image: {t}\n", .{err});
+                    return error.InvalidImageFile;
+                };
+                nbytes += sector.mits_track_6_76.nbytes;
+                nr_sectors += 1;
+                track_nr = sector.mits_track_6_76.next_track;
+                sector_nr = sector.mits_track_6_76.next_sector;
+            }
+            cooked.os = .{ .ados = .{
+                .track = entry.raw.track,
+                .sector = entry.raw.sector,
+                .size = nbytes,
+                .used = (nr_sectors + 7) / sectors_per_alloc,
+            } };
+        }
         self.cooked_directories.appendAssumeCapacity(cooked);
     }
 
@@ -659,23 +680,44 @@ pub const DirectoryTable = struct {
         };
         const cooked_dir = &self.cooked_directories.items[cooked_index];
         // Set the allocs used by this cooked entry as free.
-        for (to_erase.os.cpm.allocations.items) |alloc| {
+        for (to_erase.allocations.items) |alloc| {
             if (alloc == 0) break;
             self.free_allocations.set(alloc);
         }
-        to_erase.os.cpm.allocations.clearAndFree(self.allocator());
+        to_erase.allocations.clearAndFree(self.allocator());
         // Delete all the raw_entries and write to disk.
-        for (self.raw_directories.cpm.items, 0..) |*raw_item, idx| {
-            if (raw_item.entry.user == cooked_dir.user and
-                std.mem.eql(u8, CookedDirEntry.rawSlice(&raw_item.entry.filename), cooked_dir.filenameOnly()) and
-                std.mem.eql(u8, CookedDirEntry.rawSlice(&raw_item.entry.filetype), cooked_dir.extensionOnly()))
-            {
-                raw_item.setDeleted();
-                try disk_image.cpm.rawEntryWrite(@intCast(idx));
-            }
+        switch (self.raw_directories) {
+            inline else => |raw_dirs| {
+                for (raw_dirs.items, 0..) |*raw_item, idx| {
+                    if (raw_item.eql(cooked_dir)) {
+                        raw_item.setDeleted();
+                        try disk_image.rawEntryWrite(@intCast(idx));
+                        // For altair dos, also need to go through and set all of the file numbers in each
+                        // sector, the bytes_written, next_track and next_sector to 0
+                        if (@TypeOf(raw_dirs) == @TypeOf(self.raw_directories.ados)) {
+                            var track_nr: u16 = raw_item.raw.track;
+                            var sector_nr: u16 = raw_item.raw.sector;
+
+                            while (track_nr != 0) {
+                                // TODO: Validate tracks and sectors!!!
+                                var sector: DiskSector = .initUnformatted(self.image_type, track_nr);
+                                const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
+                                try disk_image.readSectorPhysical(location, &sector);
+                                track_nr = sector.mits_track_6_76.next_track;
+                                sector_nr = sector.mits_track_6_76.next_sector;
+                                sector.mits_track_6_76.file_nr = 0;
+                                sector.mits_track_6_76.nbytes = 0;
+                                sector.mits_track_6_76.next_sector = 0;
+                                sector.mits_track_6_76.next_track = 0;
+                                try disk_image.writeSector(location, &sector);
+                            }
+                        }
+                        // Finally remove the deleted CookedDir.
+                        _ = self.cooked_directories.orderedRemove(cooked_index);
+                    }
+                }
+            },
         }
-        // Finally remove the deleted CookedDir.
-        _ = self.cooked_directories.orderedRemove(cooked_index);
     }
 
     /// Performs a wildcard lookup of the directory. * and ? are supported wildcard characters.
@@ -975,3 +1017,4 @@ const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskSector = @import("disk_types.zig").DiskSector;
 const OperatingSystem = @import("disk_types.zig").OperatingSystem;
 const LogicalAddress = @import("disk_image.zig").LogicalAddress;
+const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;

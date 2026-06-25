@@ -251,12 +251,12 @@ pub fn directoryListRawCPM(_: Context, disk_image: *DiskImage, options: CommandL
 }
 
 pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOptions) CommandError!void {
-    try Console.stdout().print("FNR:FILENAME:MD:TK:SK\n", .{});
+    try Console.stdout().print("FNR:FILENAME:MD:TK:SK:ALLOCATIONS\n", .{});
 
     for (disk_image.directory.raw_directories.ados.items, 1..) |entry, file_nr| {
         if (entry.isLastEntry()) break;
         if (!entry.isDeleted()) {
-            try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}\n", .{
+            try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}", .{
                 file_nr,
                 entry.raw.filename,
                 entry.raw.mode,
@@ -394,14 +394,14 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
 
 /// Copy a file to the image
 pub fn putFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
-    try _putFile(ctx, disk_image, options.multiple_files[0], options.cpm_user, options.force);
+    try _putFile(ctx, disk_image, options.multiple_files[0], options.cpm_user, options.force, if (options.text_mode) .Text else .Auto);
 }
 
 /// Copy multiple files to the image
 pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
     var had_error = false;
     for (options.multiple_files) |filename| {
-        _putFile(ctx, disk_image, filename, options.cpm_user, options.force) catch |err| {
+        _putFile(ctx, disk_image, filename, options.cpm_user, options.force, if (options.text_mode) .Text else .Auto) catch |err| {
             if (err == error.CommandFailedCanContinue) {
                 had_error = true;
                 continue;
@@ -415,7 +415,7 @@ pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
     }
 }
 
-pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user: ?u8, force: bool) !void {
+pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user: ?u8, force: bool, text_mode: DiskImage.TextMode) !void {
     const cpm_user = user orelse 0;
 
     var cwd = std.Io.Dir.cwd();
@@ -427,7 +427,7 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user
     defer in_file.close(ctx.io);
 
     var file_reader = in_file.reader(ctx.io, &.{});
-    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, force) catch |err| {
+    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, force, text_mode) catch |err| {
         printErrorMessage(current_command, .file_copy, .{filename}, err);
         switch (err) {
             error.PathAlreadyExists, error.CookedDirEntryNotFound => return error.CommandFailedCanContinue,

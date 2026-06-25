@@ -1,6 +1,8 @@
 //! Test all disk operations on each image format
 
 // TODO: Invalid images and recovery of images.
+// Add some generic erase tests.
+// aDD SOME COPY SAME FILE TWICE TESTS.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;

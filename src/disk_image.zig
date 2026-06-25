@@ -104,9 +104,12 @@ pub const DiskImage = struct {
     writer: SeekableWriter,
     image_type: *const DiskImageType,
     directory: DirectoryTable,
-    allocator: std.mem.Allocator,
-    cpm: CPM,
-    ados: ADOS,
+    allocator: std.mem.Allocator, // TODO: This should be arena, not gpa? Also do we cross allocators with the directory table??
+    // We should jsut pass it around instead of keeping it global.
+    /// Zero-width field for namespacing
+    cpm: CPM = .{},
+    /// Zero-width field for namespacing
+    ados: ADOS = .{},
 
     /// Initilize a DiskImage from an opened image file.
     /// Image file must at least have read permissions if the loadDirectories() is called.
@@ -119,8 +122,6 @@ pub const DiskImage = struct {
             .image_type = image_type,
             .allocator = gpa,
             .directory = try .init(gpa, image_type),
-            .cpm = .{},
-            .ados = .{},
         };
     }
 
@@ -163,6 +164,13 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyFromImage(self, entry, out_writer, text_mode),
             .ados => ADOS.copyFromImage(self, entry, out_writer, text_mode),
+        };
+    }
+
+    pub fn rawEntryWrite(self: *DiskImage, raw_entry_nr: u16) !void {
+        try switch (self.image_type.OS) {
+            .cpm, .cdos => self.cpm.rawEntryWrite(raw_entry_nr),
+            .ados => self.ados.rawEntryWrite(raw_entry_nr),
         };
     }
 
@@ -210,10 +218,10 @@ pub const DiskImage = struct {
     }
 
     /// Copy a file from file_reader to the disk image.
-    pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
+    pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool, text_mode: TextMode) !void {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyToImage(self, file_reader, to_filename, user, force),
-            .ados => ADOS.copyToImage(self, file_reader, to_filename, force),
+            .ados => ADOS.copyToImage(self, file_reader, to_filename, force, text_mode),
         };
     }
 
@@ -451,7 +459,7 @@ pub const DiskImage = struct {
         pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
             const num_records = entry.os.cpm.num_records;
             // Check for empty file.
-            if (entry.os.cpm.allocations.items.len == 0) {
+            if (entry.allocations.items.len == 0) {
                 return;
             }
             const recs_per_sector = (self.image_type.sector_size_data / 128); // Recs always represent 128 bytes
@@ -460,20 +468,20 @@ pub const DiskImage = struct {
             for (0..num_sectors) |sec_nr| {
                 // This protects against trying to copy files from CDOS.
                 const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
-                if (alloc_idx >= entry.os.cpm.allocations.items.len) {
+                if (alloc_idx >= entry.allocations.items.len) {
                     std.debug.print("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
                         num_records,
                         num_sectors,
                         total_rec_nr,
                         alloc_idx,
                         self.image_type.recs_per_alloc,
-                        entry.os.cpm.allocations.items.len,
+                        entry.allocations.items.len,
                         self.image_type.total_allocs,
                         entry.os.cpm.num_records,
                     });
                     return error.InvalidRecordNumber;
                 }
-                const alloc = entry.os.cpm.allocations.items[alloc_idx];
+                const alloc = entry.allocations.items[alloc_idx];
                 if (alloc == 0)
                     break;
                 var sector: DiskSector = undefined;
@@ -700,8 +708,37 @@ pub const DiskImage = struct {
             try out_writer.flush();
         }
 
-        pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool) !void {
+        pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
+            //pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool) !void {
             _ = force; // TODO:
+            // TODO: Make sure file doesn't already exist.
+            var conversion_buffer_in: std.Io.Writer.Allocating = .init(self.allocator);
+            defer conversion_buffer_in.deinit();
+            var conversion_buffer_out: std.Io.Writer.Allocating = .init(self.allocator);
+            defer conversion_buffer_out.deinit();
+
+            if (text_mode == .Text) {
+                // Basic steals the first char from the file, if it is an unencoded ascii file!
+                // It also requires CR/NL line endings.
+                _ = try file_reader.streamRemaining(&conversion_buffer_in.writer);
+                var reader_in: std.Io.Reader = .fixed(conversion_buffer_in.written());
+
+                try conversion_buffer_out.writer.writeByte(' ');
+                // TODO: Should be able to do this with writeStreaming. but was hittin an assertion during rebase
+                while (reader_in.takeDelimiter('\n')) |slice| {
+                    if (slice == null or slice.?.len == 0) break;
+                    try conversion_buffer_out.writer.writeAll(slice.?);
+                    if (slice.?[slice.?.len - 1] == '\r') {
+                        try conversion_buffer_out.writer.writeByte('\n');
+                    } else {
+                        try conversion_buffer_out.writer.writeAll("\r\n");
+                    }
+                } else |err| {
+                    return err;
+                }
+            }
+            var conversion_reader: std.Io.Reader = .fixed(conversion_buffer_out.written());
+            const reader: *std.Io.Reader = if (text_mode == .Text) &conversion_reader else file_reader;
             var extent_nr: u16 = undefined;
             const new_entry = try self.directory.rawEntryGetFreeInitializedADOS(self, &extent_nr);
             // init filename etc here.
@@ -709,7 +746,7 @@ pub const DiskImage = struct {
             new_entry.raw.mode = 0x2; // Only sequential files are currently supported
 
             var file_data: [128]u8 = undefined; // TODO: Hard coded
-            var nbytes = try file_reader.readSliceShort(&file_data);
+            var nbytes = try reader.readSliceShort(&file_data);
             // Zero length files only get a directory entry and nothing else.
             if (nbytes == 0) {
                 try self.ados.rawEntryWrite(extent_nr);
@@ -749,7 +786,7 @@ pub const DiskImage = struct {
                     prev_location = location;
                     prev_sector = sector;
 
-                    nbytes = try file_reader.readSliceShort(&file_data);
+                    nbytes = try reader.readSliceShort(&file_data);
                     if (nbytes == 0) break;
                 }
                 if (nbytes != 0) {
