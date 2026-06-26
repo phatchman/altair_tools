@@ -651,14 +651,14 @@ pub const DiskImage = struct {
                 try this_entry.validate(self.image_type, extent_nr);
             }
 
-            const location = self.toPhysicalAddress(.{ .allocation = extent_nr / self.image_type.extents_per_alloc, .record = @intCast(extent_nr / self.image_type.dir_entries_per_sector) });
+            const location = self.toPhysicalAddress(.{ .allocation = extent_nr / self.image_type.dirs_per_alloc, .record = @intCast(extent_nr / self.image_type.dirs_per_sector) });
             var sector: DiskSector = .initFormatted(self.image_type, location);
 
             // start_index is the index of the directory entry that is at
             // the beginning of this sector
-            const start_index = extent_nr / self.image_type.dir_entries_per_sector * self.image_type.dir_entries_per_sector;
+            const start_index = extent_nr / self.image_type.dirs_per_sector * self.image_type.dirs_per_sector;
             // Copy 1 full sector worth of extents/raw entries
-            @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.cpm.items[start_index .. start_index + self.image_type.dir_entries_per_sector]));
+            @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.cpm.items[start_index .. start_index + self.image_type.dirs_per_sector]));
             try self.writeSector(location, &sector);
         }
     };

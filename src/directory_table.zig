@@ -14,6 +14,9 @@
 
 // TODO: Put CPM and ADOS functions in their own namespaces or somthing.
 
+// TODO: The CPM and ADOS directory structures have the raw entries internall as extern struct, but are named differently.
+// Look into why we can't just make them both extern structs and get rid of hte internal stuct?
+
 const log = @import("disk_image.zig").log;
 
 /// Validation errors
@@ -54,7 +57,7 @@ pub const RawCpmDirEntry = struct {
             return RawDirError.InvalidUser;
         }
 
-        const max_entents = image_type.extents_per_alloc * image_type.total_allocs;
+        const max_entents = image_type.dirs_per_alloc * image_type.total_allocs;
         if (self.extentGet(image_type) >= max_entents) {
             log.err(
                 "Invalid directory entry: {} [Invalid extent: {}. Must be 0-{}]",
@@ -455,7 +458,7 @@ pub const DirectoryTable = struct {
     fn loadCPM(self: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryLoadError!void {
         const image_type = self.image_type;
         var sector: DiskSector = undefined;
-        const directory_sector_count = image_type.directories / image_type.dir_entries_per_sector;
+        const directory_sector_count = image_type.directories / image_type.dirs_per_sector;
         var sector_nr: u16 = 0;
 
         // Reserve allocations used for directories
@@ -670,6 +673,7 @@ pub const DirectoryTable = struct {
 
     /// Remove a file from the image.
     pub fn eraseEntry(self: *DirectoryTable, to_erase: *CookedDirEntry, disk_image: *DiskImage) !void {
+        std.debug.print("Erase entry: {s}\n", .{to_erase.filenameAndExtension()});
         const cooked_index: usize = try index: {
             for (self.cooked_directories.items, 0..) |cooked, i| {
                 if (std.meta.eql(to_erase.*, cooked)) {
@@ -680,16 +684,16 @@ pub const DirectoryTable = struct {
         };
         const cooked_dir = &self.cooked_directories.items[cooked_index];
         // Set the allocs used by this cooked entry as free.
-        for (to_erase.allocations.items) |alloc| {
+        for (cooked_dir.allocations.items) |alloc| {
             if (alloc == 0) break;
             self.free_allocations.set(alloc);
         }
-        to_erase.allocations.clearAndFree(self.allocator());
+        cooked_dir.allocations.clearAndFree(self.allocator());
         // Delete all the raw_entries and write to disk.
         switch (self.raw_directories) {
             inline else => |raw_dirs| {
                 for (raw_dirs.items, 0..) |*raw_item, idx| {
-                    if (raw_item.eql(cooked_dir)) {
+                    if (!raw_item.isDeleted() and raw_item.eql(cooked_dir)) {
                         raw_item.setDeleted();
                         try disk_image.rawEntryWrite(@intCast(idx));
                         // For altair dos, also need to go through and set all of the file numbers in each
@@ -714,6 +718,7 @@ pub const DirectoryTable = struct {
                         }
                         // Finally remove the deleted CookedDir.
                         _ = self.cooked_directories.orderedRemove(cooked_index);
+                        return;
                     }
                 }
             },

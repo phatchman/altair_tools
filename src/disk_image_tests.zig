@@ -38,7 +38,6 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -197,7 +196,7 @@ test "disk filled" {
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
-        try disk_image.copyToImage(&big_stream, filename, 0, false);
+        try disk_image.copyToImage(&big_stream, filename, 0, false, .Auto);
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
         try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
@@ -250,7 +249,7 @@ test "disk overfilled" {
 
         try std.testing.expectError(
             error.OutOfAllocs,
-            disk_image.copyToImage(&big_stream, "BIG.TXT", 0, false),
+            disk_image.copyToImage(&big_stream, "BIG.TXT", 0, false, .Auto),
         );
         try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
 
@@ -292,12 +291,12 @@ test "overfill directory" {
         const max_dirs = if (fmt.OS == .cdos) fmt.directories - 1 else fmt.directories;
         for (0..max_dirs) |num| {
             test_stream.seek = 0;
-            try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false);
+            try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false, .Auto);
         }
         test_stream.seek = 0;
         try std.testing.expectError(
             error.OutOfExtents,
-            disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false),
+            disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false, .Auto),
         );
         if (compare_image) |ci| {
             switch (fmt.type_id) {
@@ -331,13 +330,13 @@ test "8in duplicate filenames" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
     try std.testing.expectError(
         std.Io.File.OpenError.PathAlreadyExists,
-        disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false),
+        disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto),
     );
     // 2nd time force the overwrite.
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true, .Auto);
 }
 
 test "8in duplicate CPM filenames" {
@@ -351,10 +350,10 @@ test "8in duplicate CPM filenames" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "PINBALL2.TXT2", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL2.TXT2", 0, false, .Auto);
     try std.testing.expectError(
         std.Io.File.OpenError.PathAlreadyExists,
-        disk_image.copyToImage(&test_stream, "PINBALL22.TXT", 0, false),
+        disk_image.copyToImage(&test_stream, "PINBALL22.TXT", 0, false, .Auto),
     );
 }
 
@@ -368,12 +367,12 @@ test "test force overwrite" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
 
     // 2nd time force the overwrite.
     test_file[0] = 'X';
     test_stream.seek = 0;
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true, .Auto);
     var in_file: [test_file.len]u8 = undefined;
     var in_stream: std.Io.Writer = .fixed(&in_file);
     const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
@@ -392,7 +391,7 @@ test "8 in zero-length file" {
 
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
 
     // Get it back and compare it to the original
     var in_file: [0]u8 = undefined;
@@ -414,7 +413,7 @@ test "8in Text file" {
 
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
 
     // Get it back and compare it to the original
     var in_file: [test_file.len]u8 = undefined;
@@ -438,7 +437,7 @@ test "8in Binary file" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false);
+    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
 
     // Get it back and compare it to the original
     var in_file: [((test_file.len + 127) / 128) * 128]u8 = undefined;
@@ -556,9 +555,9 @@ test "Find filenames without extensions" {
     var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
     defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "FILENAME", null, false);
-    try disk_image.copyToImage(&test_stream, "X.", null, false);
-    try disk_image.copyToImage(&test_stream, ".X", null, false);
+    try disk_image.copyToImage(&test_stream, "FILENAME", null, false, .Auto);
+    try disk_image.copyToImage(&test_stream, "X.", null, false, .Auto);
+    try disk_image.copyToImage(&test_stream, ".X", null, false, .Auto);
 
     try std.testing.expect(disk_image.directory.findByFilename("FILENAME", null) != null);
     try std.testing.expect(disk_image.directory.findByFilename("FILENAME.", null) != null);
@@ -581,12 +580,12 @@ test "erase" {
 
     var disk_image = try newMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
+
     const initial_free_count = disk_image.directory.rawEntryFreeCount();
 
     const to_erase = disk_image.directory.findByFilename("file.txt", null);
     try std.testing.expect(to_erase != null);
     try disk_image.erase(to_erase.?);
-
     const erased = disk_image.directory.findByFilename("file.txt", null);
     try std.testing.expect(erased == null);
 

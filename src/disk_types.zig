@@ -40,6 +40,7 @@ pub const DiskLabel = union(OperatingSystem) {
             .cpm, .ados => {},
             .cdos => |lbl| try writer.print("Label: {s}  Date: {c}{c}/{c}{c}/{c}{c}", .{
                 lbl.user_label,
+                // TODO: Cant't we just use a formatter for this?
                 lbl.date_mmddyy[0] / 10 + '0',
                 lbl.date_mmddyy[0] % 10 + '0',
                 lbl.date_mmddyy[1] / 10 + '0',
@@ -209,7 +210,7 @@ pub const DiskSector = union(enum) {
                     else => unreachable,
                 }
             },
-            else => {
+            .cpm_128, .cpm_512 => {
                 @memset(result.rawBytes(), 0xe5);
                 switch (image_type.OS) {
                     // Apply the disk label to the first sector for CDOS
@@ -361,8 +362,8 @@ pub const DiskImageType = struct {
     recs_per_alloc: u16 = undefined,
     allocs_per_extent: u8 = undefined,
     recs_per_extent: u16 = undefined,
-    extents_per_alloc: u16 = undefined,
-    dir_entries_per_sector: u16 = undefined,
+    dirs_per_alloc: u16 = undefined,
+    dirs_per_sector: u16 = undefined,
 
     pub fn init(self: *DiskImageType) void {
         comptime std.debug.assert(self.skew_table.len == self.sectors_per_track);
@@ -372,8 +373,8 @@ pub const DiskImageType = struct {
         self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
         self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
 
-        self.extents_per_alloc = self.block_size / dir_entry_size;
-        self.dir_entries_per_sector = self.sector_size_data / dir_entry_size;
+        self.dirs_per_alloc = self.block_size / dir_entry_size;
+        self.dirs_per_sector = self.sector_size_data / dir_entry_size;
     }
 
     pub fn dump(self: *const DiskImageType) void {
@@ -388,7 +389,7 @@ pub const DiskImageType = struct {
         std.debug.print("Track Len:    {}\n", .{self.track_size});
         std.debug.print("Recs / Ext:   {}\n", .{self.recs_per_extent});
         std.debug.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
-        std.debug.print("Dirs / Sect   {}\n", .{self.dir_entries_per_sector});
+        std.debug.print("Dirs / Sect   {}\n", .{self.dirs_per_sector});
         std.debug.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
         std.debug.print("Dir Allocs:   {}\n", .{self.directory_allocs});
         std.debug.print("Num Dirs:     {}\n", .{self.directories});
