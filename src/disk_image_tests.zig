@@ -666,6 +666,24 @@ test "non-standard CDOS" {
     try std.testing.expectError(error.InvalidImageFile, disk_image);
 }
 
+test "random image data" {
+    if (true) return error.SkipZigTest;
+    //if (!@import("build_options").include_randomized) return error.SkipZigTest;
+    const fmt = FDD_8IN;
+    var rnd: std.Random.DefaultPrng = .init(123);
+
+    const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
+    defer std.testing.allocator.free(image_buffer);
+    rnd.fill(image_buffer);
+    var mem_image: InMemoryImage = undefined;
+    mem_image.init(image_buffer);
+
+    var disk_image: DiskImage = try .init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt);
+    defer disk_image.deinit();
+
+    try disk_image.loadDirectories(.full);
+}
+
 /// Create readers and writers against a []const u8
 /// deinit() must be called to free allocated buffer
 const InMemoryConstImage = struct {

@@ -5,6 +5,7 @@
 // TODO: I think I broke the nice loggign logic we had for showing the logical and physical read/write
 // addresses in a single log message. Need to clean it up somehow?
 // TODO: What to do about logical vs physical address now. Physical is now unskewed.. hmm.
+// TODO: Copying random access files is not supported.
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
@@ -709,9 +710,17 @@ pub const DiskImage = struct {
         }
 
         pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
-            //pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool) !void {
-            _ = force; // TODO:
-            // TODO: Make sure file doesn't already exist.
+            var filename_buf: [8]u8 = undefined;
+            const ados_filename = try translateToADOSFilename(to_filename, &filename_buf);
+            if (self.directory.findByFilename(ados_filename, null)) |existing_entry| {
+                if (force) {
+                    try self.erase(existing_entry);
+                } else {
+                    return std.Io.File.OpenError.PathAlreadyExists;
+                }
+            }
+
+            // These are used as temporary buffers for converting BASIC files.
             var conversion_buffer_in: std.Io.Writer.Allocating = .init(self.allocator);
             defer conversion_buffer_in.deinit();
             var conversion_buffer_out: std.Io.Writer.Allocating = .init(self.allocator);
@@ -741,8 +750,7 @@ pub const DiskImage = struct {
             const reader: *std.Io.Reader = if (text_mode == .Text) &conversion_reader else file_reader;
             var extent_nr: u16 = undefined;
             const new_entry = try self.directory.rawEntryGetFreeInitializedADOS(self, &extent_nr);
-            // init filename etc here.
-            _ = try translateToADOSFilename(to_filename, &new_entry.raw.filename);
+            @memcpy(&new_entry.raw.filename, &filename_buf);
             new_entry.raw.mode = 0x2; // Only sequential files are currently supported
 
             var file_data: [128]u8 = undefined; // TODO: Hard coded
@@ -821,8 +829,10 @@ pub const DiskImage = struct {
                     to_filename[index] = std.ascii.toUpper(c);
                     index += 1;
                 }
+                if (index == to_filename.len) break;
             }
             if (index == 0) return error.InvalidFilename;
+            log.info("Translated filename {s} to {s}", .{ from_filename, to_filename[0..index] });
             return to_filename[0..index];
         }
 

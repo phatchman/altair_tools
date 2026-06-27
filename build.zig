@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
     const strip_debug_symbols = b.option(bool, "strip-exe", "Strip debugging information") orelse false;
 
     const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &[0][]const u8{};
+    const build_options = b.addOptions();
+    build_options.addOption(
+        ?bool,
+        "include_randomized",
+        b.option(bool, "include-randomized", "Run tests against randomized images"),
+    );
 
     // Add other supported targets here as required.
     const all_targets = [_]std.Build.ResolvedTarget{
@@ -45,12 +51,15 @@ pub fn build(b: *std.Build) void {
         });
         _ = lib_mod;
 
-        const exe = b.addExecutable(.{ .name = "altairdsk", .root_module = b.createModule(.{
+        const exe_mod = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
             .strip = strip_debug_symbols,
-        }), .use_llvm = false });
+        });
+        exe_mod.addOptions("build_options", build_options);
+
+        const exe = b.addExecutable(.{ .name = "altairdsk", .root_module = exe_mod, .use_llvm = true });
         const zigcli = b.dependency("cli", .{});
         exe.root_module.addImport("zig-cli", zigcli.module("cli"));
         if (targets.len > 1) {

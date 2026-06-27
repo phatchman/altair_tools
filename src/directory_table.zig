@@ -673,7 +673,6 @@ pub const DirectoryTable = struct {
 
     /// Remove a file from the image.
     pub fn eraseEntry(self: *DirectoryTable, to_erase: *CookedDirEntry, disk_image: *DiskImage) !void {
-        std.debug.print("Erase entry: {s}\n", .{to_erase.filenameAndExtension()});
         const cooked_index: usize = try index: {
             for (self.cooked_directories.items, 0..) |cooked, i| {
                 if (std.meta.eql(to_erase.*, cooked)) {
