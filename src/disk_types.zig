@@ -10,10 +10,9 @@
 // 4) Add a freshly formatted version of the image to src/test_images
 // 5) Add a format test and any other relevant tests to disk_image_tests.zig
 
-// TODO: Sector numbers are currently 1-based. There's no good reason they should not be zero based instead.
 // TODO: Later version of CDOS encode the total number of directories in the 1st directory entry.
 //       - Support setting the number of directories at runtime
-//       - Support reading the 1st dir entry and deconding the number of directories
+//       - Support reading the 1st dir entry and decoding the number of directories
 //       - Support setting the number of directories at format time
 //       - STAT/L on CDOS allows rewriting the entire label, including disk format!
 //         ```
@@ -22,9 +21,9 @@
 //         Date . . . . . . . . . . . . . . . . . . <12/12/12> -
 //         Number of directory entries (64-512) . . . .  <128> -
 //         ```
-// TODO: Prob instroduce a sector type, instead of always switching on type_id
 
 pub const OperatingSystem = enum { cpm, cdos, ados };
+const log = std.log.scoped(.altair_disk_lib);
 
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
@@ -75,8 +74,27 @@ const AltairDosDirEntry = extern struct {
 pub const PhysicalAddress = struct {
     track: u16,
     sector: u16,
+
     /// Use when track and sector aren't important
-    pub const any: PhysicalAddress = .{ .track = 0, .sector = 1 };
+    pub const any: PhysicalAddress = .{ .track = 1, .sector = 1 };
+
+    pub const ValidateError = error{ InvalidTrack, InvalidSector };
+    pub fn validate(self: PhysicalAddress, image_type: *const DiskImageType) ValidateError!void {
+        if (self.track >= image_type.tracks) {
+            log.err(
+                "Attempt to read from an invalid track. [Read track {}. Expected 0-{}]",
+                .{ self.track, image_type.tracks - 1 },
+            );
+            return error.InvalidTrack;
+        }
+        if (self.sector >= image_type.sectorsForTrack(self.track)) {
+            log.err(
+                "Attempt to read from an invalid sector. [Read sector {}. Expected 0-{}]",
+                .{ self.sector, image_type.sectorsForTrack(self.track) - 1 },
+            );
+            return error.InvalidSector;
+        }
+    }
 };
 
 const Sector = union(enum) {
@@ -293,7 +311,6 @@ pub const DiskSector = union(enum) {
         if (!DUMP)
             return;
         std.debug.print("Disk Sector: TRACK: {} - SECTOR {} - OFFSET: {}\n", .{ location.track, location.sector, offset });
-        // TODO: add format function so we can dump the raw bytes.
         std.debug.dumpHex(std.mem.asBytes(self));
     }
 };
@@ -304,7 +321,6 @@ pub const DiskSector = union(enum) {
 // Should never be instantiated directly, but instead is initalized
 // by one of the Concrete formats, e.g. DiskImageType_MITS_8IN
 pub const DiskImageType = struct {
-    pub const dir_entry_size: u16 = 32;
     pub const max_user = 15;
 
     // Internal name
@@ -364,6 +380,7 @@ pub const DiskImageType = struct {
     recs_per_extent: u16 = undefined,
     dirs_per_alloc: u16 = undefined,
     dirs_per_sector: u16 = undefined,
+    dir_entry_size: u8 = undefined,
 
     pub fn init(self: *DiskImageType) void {
         comptime std.debug.assert(self.skew_table.len == self.sectors_per_track);
@@ -372,9 +389,12 @@ pub const DiskImageType = struct {
         self.recs_per_extent = 128;
         self.allocs_per_extent = 128 * 128 / self.block_size; // This is the number of entries in the allocations table. (max 16)
         self.recs_per_alloc = self.recs_per_extent / self.allocs_per_extent;
-
-        self.dirs_per_alloc = self.block_size / dir_entry_size;
-        self.dirs_per_sector = self.sector_size_data / dir_entry_size;
+        self.dir_entry_size = switch (self.OS) {
+            .cpm, .cdos => 32,
+            .ados => 16,
+        };
+        self.dirs_per_alloc = self.block_size / self.dir_entry_size;
+        self.dirs_per_sector = self.sector_size_data / self.dir_entry_size;
     }
 
     pub fn dump(self: *const DiskImageType) void {
@@ -431,6 +451,10 @@ pub const DiskImageType = struct {
     /// How large is the on-disk sector for this track?
     pub fn sectorSizeRawForTrack(self: *const DiskImageType, track_nr: u16) u16 {
         return if (track_nr > 0) self.sector_size_raw else self.sector_size_raw0 orelse self.sector_size_raw;
+    }
+
+    pub fn sectorsForTrack(self: *const DiskImageType, track_nr: u16) u16 {
+        return if (track_nr > 0) self.sectors_per_track else self.sectors_per_track0 orelse self.sectors_per_track;
     }
 
     /// Return total number of sectors used to store data.
@@ -503,7 +527,6 @@ pub const DiskImageType_MITS_8IN = struct {
 /// Has the same skew and 137 byte physical sectors as the
 /// standard 8" drive.
 pub const DiskImageType_MITS_8IN_8MB = struct {
-    // TODO:
     const skew_table = [32]u16{
         0, 8,  16, 24, 2, 10, 18, 26,
         4, 12, 20, 28, 6, 14, 22, 30,
@@ -1026,7 +1049,6 @@ pub const DiskImageType_ADOS_8IN = struct {
         // std.debug.print("checking dir\n", .{});
 
         // So there must be at least 1 entry
-        // TODO: we actually need to walk the whole directory in case all the early files got deleted.
         var start: usize = 1;
         for (0..self.sectors_per_track) |_| {
             for (entries, start..) |e, entry_nr| {

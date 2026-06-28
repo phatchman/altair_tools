@@ -28,9 +28,7 @@
 // SOFTWARE.
 //
 
-// TODO: Errors not being shown for invalid options e.g. -q
-// TODO: Error for invalid basic file format not being shown correctly.
-// err: Not an encoded Altair Basic fileError performing get file: Error copying file #TCSCOPY: InvalidFormat
+// TODO: Errors not being shown for invalid options e.g. -q. This needs an upstream fix
 
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
@@ -338,6 +336,21 @@ pub fn validateOptions() !bool {
         options.do_information, options.do_label_get, options.do_label_set,
     };
 
+    // For windows do some simple globbing for put multiple
+    if (@import("builtin").os.tag == .windows) {
+        if (options.multiple_files.len > 0 and options.do_put_multi) {
+            const current = options.multiple_files;
+            var new: std.ArrayList([]const u8) = .empty;
+            errdefer new.deinit(init.gpa);
+            for (current) |pattern| {
+                try windows_globbing.glob(init.io, init.gpa, pattern, &new);
+                init.gpa.free(pattern);
+            }
+            init.gpa.free(options.multiple_files);
+            options.multiple_files = try new.toOwnedSlice(init.gpa);
+        }
+    }
+
     var option_count: usize = 0;
     for (single_options) |value| {
         if (value)
@@ -359,7 +372,6 @@ pub fn validateOptions() !bool {
     defer p.flush();
 
     if (option_count > 1) {
-        std.debug.print("{}, {}\n", .{ option_count, options });
         cli.printError(&p, &app,
             \\You may only specify one of:
             \\       --dir,
@@ -449,7 +461,7 @@ pub fn log(
 ) void {
     switch (scope) {
         .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
-        else => return std.debug.print(@tagName(message_level) ++ ": " ++ format, args),
+        else => return std.debug.print(@tagName(message_level) ++ ": " ++ @tagName(scope) ++ ": " ++ format, args),
     }
     switch (message_level) {
         .info, .warn => {
@@ -481,3 +493,4 @@ const Commands = @import("commands.zig");
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const ImageType = @import("disk_types.zig").DiskImageTypes;
+const windows_globbing = @import("windows_globbing.zig");

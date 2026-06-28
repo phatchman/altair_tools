@@ -204,7 +204,7 @@ pub fn main(init: std.process.Init) !void {
                     const dropped_file = event.drop.file;
                     const filename = std.mem.span(dropped_file);
 
-                    commands.putFile(init.io, std.fs.path.basename(filename), std.fs.path.dirname(filename) orelse ".", current_user, false) catch |err| {
+                    commands.putFile(init.io, std.fs.path.basename(filename), std.fs.path.dirname(filename) orelse ".", current_user, copy_mode, false) catch |err| {
                         const message = try std.fmt.allocPrint(dvui.currentWindow().arena(), "Unable to Put file {s}\n", .{filename});
                         errorDialog("Copying file", message, err);
                     };
@@ -2208,7 +2208,7 @@ fn putButtonHandler() !void {
         struct {
             pub fn putFile(file: *DirectoryEntry) !void {
                 const local_path = local_path_selection.?;
-                try commands.putFile(io, file.filenameAndExtension(), local_path, current_user, CommandState.state == .confirm);
+                try commands.putFile(io, file.filenameAndExtension(), local_path, current_user, copy_mode, CommandState.state == .confirm);
                 // TODO: Think of a way to make the grid get filled as files are copied.
             }
         }.putFile,

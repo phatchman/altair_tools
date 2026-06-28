@@ -292,17 +292,15 @@ pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator, io: std.Io) ![
     return self.local_directory_list.items;
 }
 
-pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
-    const Local = struct {
-        fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
-            return switch (mode) {
-                .AUTO => .Auto,
-                .ASCII => .Text,
-                .BINARY => .Binary,
-            };
-        }
+fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
+    return switch (mode) {
+        .AUTO => .Auto,
+        .ASCII => .Text,
+        .BINARY => .Binary,
     };
+}
 
+pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
     if (self.disk_image) |*image| {
         var dir = try std.Io.Dir.cwd().openDir(io, dest_dir, .{});
         defer dir.close(io);
@@ -311,7 +309,7 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
                 var out_file = try dir.createFile(io, cooked_entry.filenameAndExtension(), .{ .exclusive = if (force) false else true });
                 defer out_file.close(io);
                 var writer = out_file.writer(io, &.{});
-                try image.copyFromImage(&cooked_entry, &writer.interface, Local.xlateCopyMode(copy_mode));
+                try image.copyFromImage(&cooked_entry, &writer.interface, xlateCopyMode(copy_mode));
             },
             else => {
                 std.debug.panic("{s} needs a {s}", .{ @src().fn_name, @typeName(@TypeOf(.image)) });
@@ -320,7 +318,7 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
     }
 }
 
-pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, force: bool) !void {
+pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, copy_mode: CopyMode, force: bool) !void {
     const cpm_user = if (user < 16) @as(u8, @intCast(user)) else null;
     if (self.disk_image) |*image| {
         var cwd = try std.Io.Dir.cwd().openDir(io, dirname, .{});
@@ -330,7 +328,7 @@ pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u
 
         var buf: [4096]u8 = undefined;
         var reader = in_file.reader(io, &buf);
-        try image.copyToImage(&reader.interface, filename, cpm_user, force);
+        try image.copyToImage(&reader.interface, filename, cpm_user, force, xlateCopyMode(copy_mode));
     }
 }
 
@@ -350,7 +348,7 @@ pub fn getSystem(self: *Self, io: std.Io, out_filename: []const u8) !void {
     if (self.disk_image) |*image| {
         var out_file = try std.Io.Dir.cwd().createFile(io, out_filename, .{});
         defer out_file.close(io);
-        try image.extractCPM(io, out_file);
+        try image.extractOperatingSystem(io, out_file);
     }
 }
 
@@ -358,7 +356,7 @@ pub fn putSystem(self: *Self, io: std.Io, in_filename: []const u8) !void {
     if (self.disk_image) |*image| {
         var in_file = try std.Io.Dir.cwd().openFile(io, in_filename, .{ .mode = .read_only });
         defer in_file.close(io);
-        try image.installCPM(io, in_file);
+        try image.installOperatingSystem(io, in_file);
     }
 }
 

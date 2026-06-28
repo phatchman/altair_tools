@@ -16,12 +16,12 @@ test "simple filename" {
 
     var raw = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
-    try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.raw.filename);
+    try std.testing.expectEqualStrings("COM", &raw.raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
+    var cooked = try CookedDirEntry.initCPM(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("FILENAME.COM", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameOnly());
     try std.testing.expectEqualStrings("COM", cooked.extensionOnly());
@@ -32,12 +32,12 @@ test "filename no extension" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.entry.filename);
-    try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.raw.filename);
+    try std.testing.expectEqualStrings("   ", &raw.raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
+    var cooked = try CookedDirEntry.initCPM(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("FILENAME", cooked.filenameOnly());
     try std.testing.expectEqualStrings("", cooked.extensionOnly());
@@ -48,12 +48,12 @@ test "extension no filename" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.entry.filename);
-    try std.testing.expectEqualStrings("COM", &raw.entry.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.raw.filename);
+    try std.testing.expectEqualStrings("COM", &raw.raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
+    var cooked = try CookedDirEntry.initCPM(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings(".COM", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("", cooked.filenameOnly());
     try std.testing.expectEqualStrings("COM", cooked.extensionOnly());
@@ -64,12 +64,12 @@ test "short filename no extension" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("X       ", &raw.entry.filename);
-    try std.testing.expectEqualStrings("   ", &raw.entry.filetype);
+    try std.testing.expectEqualStrings("X       ", &raw.raw.filename);
+    try std.testing.expectEqualStrings("   ", &raw.raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
+    var cooked = try CookedDirEntry.initCPM(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings("X", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("X", cooked.filenameOnly());
     try std.testing.expectEqualStrings("", cooked.extensionOnly());
@@ -80,12 +80,12 @@ test "short extension no filename" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.entry.filename);
-    try std.testing.expectEqualStrings("X  ", &raw.entry.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.raw.filename);
+    try std.testing.expectEqualStrings("X  ", &raw.raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var cooked = try CookedDirEntry.init(arena.allocator(), &raw, Disk8IN);
+    var cooked = try CookedDirEntry.initCPM(arena.allocator(), &raw, Disk8IN);
     try std.testing.expectEqualStrings(".X", cooked.filenameAndExtension());
     try std.testing.expectEqualStrings("", cooked.filenameOnly());
     try std.testing.expectEqualStrings("X", cooked.extensionOnly());

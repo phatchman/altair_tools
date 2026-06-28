@@ -2,11 +2,6 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
-// TODO: I think I broke the nice loggign logic we had for showing the logical and physical read/write
-// addresses in a single log message. Need to clean it up somehow?
-// TODO: What to do about logical vs physical address now. Physical is now unskewed.. hmm.
-// TODO: Copying random access files is not supported.
-
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;
@@ -105,9 +100,8 @@ pub const DiskImage = struct {
     writer: SeekableWriter,
     image_type: *const DiskImageType,
     directory: DirectoryTable,
-    allocator: std.mem.Allocator, // TODO: This should be arena, not gpa? Also do we cross allocators with the directory table??
-    // We should jsut pass it around instead of keeping it global.
-    /// Zero-width field for namespacing
+    allocator: std.mem.Allocator,
+    /// Zero-width field for namespacing.
     cpm: CPM = .{},
     /// Zero-width field for namespacing
     ados: ADOS = .{},
@@ -176,9 +170,6 @@ pub const DiskImage = struct {
     }
 
     /// Try and auto-detect what type of disk image this is
-    /// TODO: We need to fix it so all the detection logic is here. Because
-    /// someone could do -TFDD8_IN, but give it an ADOS disk and it would detect ok
-    /// because it only calls isCorrectFormat. now we always need to call detectImageType.
     pub fn detectImageType(io: std.Io, image_file: File, is_unique: *bool) ?*const DiskImageType {
         is_unique.* = true;
         for (&all_disk_types.values) |*dt| {
@@ -307,7 +298,7 @@ pub const DiskImage = struct {
                 std.debug.assert(self.image_type.OS == .cdos);
 
                 const raw_entry = &self.directory.raw_directories.cpm.items[0];
-                const raw_item = &raw_entry.entry;
+                const raw_item = &raw_entry.raw;
                 // Either user shuld be 0xe5 from a fresh format / deleted entry or should be 0x81 to indicate a label.
                 if (!raw_entry.isLabel() and raw_item.user != 0xe5) return error.LabelNotFound;
                 @memset(std.mem.asBytes(raw_item), 0x00);
@@ -350,7 +341,7 @@ pub const DiskImage = struct {
             .cdos => {
                 label.* = .{ .cdos = undefined };
                 const raw_entry = &self.directory.raw_directories.cpm.items[0];
-                const raw_item = &raw_entry.entry;
+                const raw_item = &raw_entry.raw;
                 if (!raw_entry.isLabel()) return error.LabelNotFound;
                 @memcpy(&label.cdos.user_label, &raw_item.filename);
                 label.cdos.date_mmddyy[0] = raw_item.filetype[0];
@@ -372,8 +363,8 @@ pub const DiskImage = struct {
                 raw_dir.validate(self.image_type, @intCast(i)) catch |err| {
                     switch (err) {
                         RawDirError.InvalidUser => {
-                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.entry.user });
-                            raw_dir.entry.user = 0;
+                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.raw.user });
+                            raw_dir.raw.user = 0;
                             continue;
                         },
                         else => {
@@ -407,8 +398,7 @@ pub const DiskImage = struct {
     // This really should take record number but uses sector number instead. i.e for 512k
     // sectors it passes 0, 1, 2. Not 0, 4, 8 when there are 4 records per sector.
     // Everything works 100% fine with sectors, so I'm not inclined to change it.
-    // TODO: This is now the unskewed sector, so it's not even the "physical sector.. ummm"
-
+    // TODO: This now represents either the unskewed track / sector or the physical track / sector.
     fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAddress {
         const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
@@ -420,18 +410,17 @@ pub const DiskImage = struct {
         return PhysicalAddress{ .track = track, .sector = logical_sector };
     }
 
-    pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError;
-    /// Read a single 128bytes sector
+    pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError || PhysicalAddress.ValidateError;
+    /// Read a single sector using record, allocation format
     pub fn readSectorLogical(self: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
         const physical_location = self.toPhysicalAddress(location);
 
         try self.readSectorPhysical(physical_location, sector);
     }
 
-    // TODO: The skew should happen in the convert to physical.. Need to sort this out... CDOS calling physical, nut passing logical sector.
-    // but can;t use the record allocation "logical" version
+    // Read a single sector using unskewed track and sector
     pub fn readSectorPhysical(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
-        //std.debug.print("REad Physical Sector: {}: skew sector is {}\n", .{ location, self.image_type.skew(location.track, location.sector - 1) });
+        try location.validate(self.image_type);
         const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
         const sector_offset = self.image_type.seekOffset(physical_location);
 
@@ -443,10 +432,12 @@ pub const DiskImage = struct {
         try sector.dump(physical_location, sector_offset);
     }
 
-    const WriteSectorError = Io.Writer.Error || File.SeekError;
+    const WriteSectorError = Io.Writer.Error || File.SeekError || PhysicalAddress.ValidateError;
     /// Write a single sector.
     pub fn writeSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
+        try location.validate(self.image_type);
         const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
+        try physical_location.validate(self.image_type);
         sector.prepareWrite(self.image_type, location);
         const sector_offset = self.image_type.seekOffset(physical_location);
         log.debug("Writing to TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
@@ -556,7 +547,7 @@ pub const DiskImage = struct {
             if (nbytes == 0) {
                 var raw_entry = try self.directory.rawEntryGetFreeInitializedCPM(&extent_nr);
                 raw_entry.filenameAndExtensionSet(cpm_filename);
-                raw_entry.entry.user = cpm_user;
+                raw_entry.raw.user = cpm_user;
                 try self.cpm.rawEntryWrite(extent_nr);
                 try self.directory.buildCookedEntryCPM(extent_nr);
                 return;
@@ -577,7 +568,7 @@ pub const DiskImage = struct {
                     }
                     dir_entry = try self.directory.rawEntryGetFreeInitializedCPM(&extent_nr);
                     dir_entry.filenameAndExtensionSet(cpm_filename);
-                    dir_entry.entry.user = cpm_user;
+                    dir_entry.raw.user = cpm_user;
                     alloc_count = 0;
                 }
                 // Is this a new allocation?
@@ -606,7 +597,7 @@ pub const DiskImage = struct {
                 @memcpy(sector.dataBytes(), file_data);
                 try self.writeSector(location, &sector);
 
-                dir_entry.entry.num_records = @intCast((num_records - 1) % 128 + 1);
+                dir_entry.raw.num_records = @intCast((num_records - 1) % 128 + 1);
                 dir_entry.extentCountSet(extent_count, self.image_type);
                 try self.cpm.rawEntryWrite(extent_nr);
                 @memset(file_data, 0xe5);
@@ -666,7 +657,12 @@ pub const DiskImage = struct {
 
     pub const ADOS = struct {
         // TODO: Change these so they log error and return copy failed?
-        pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+        pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken } || ReadSectorError)!void {
+            if (entry.attribs[0] == 'R') {
+                log.err("Copying of Random Access files is not currently supported.", .{});
+                return error.InvalidFormat;
+            }
+
             var track_nr: u8 = entry.os.ados.track;
             var sector_nr: u8 = entry.os.ados.sector;
             var file_no: u8 = 255;
@@ -675,6 +671,8 @@ pub const DiskImage = struct {
             var first_sector: bool = true;
             var temp_file: std.Io.Writer.Allocating = .init(self.allocator);
             defer temp_file.deinit();
+            errdefer out_writer.flush() catch {};
+
             while (track_nr != 0) {
                 try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
                 if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
@@ -684,7 +682,7 @@ pub const DiskImage = struct {
                         if (sector.mits_track_6_76.data[0] == 0xff) { // Indicates a BASIC file.
                             decode_basic_file = true;
                         } else {
-                            std.log.err("Not an encoded Altair BASIC file", .{});
+                            log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.mits_track_6_76.data[0]});
                             return error.InvalidFormat;
                         }
                     }
@@ -695,7 +693,7 @@ pub const DiskImage = struct {
                     }
                     first_sector = false;
                 } else {
-                    std.log.err("Corrupt file. Expected file number {} found {}", .{ file_no, sector.mits_track_6_76.file_nr });
+                    log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.mits_track_6_76.file_nr });
                     return error.InvalidRecordNumber;
                 }
                 track_nr = sector.mits_track_6_76.next_track;
@@ -705,13 +703,12 @@ pub const DiskImage = struct {
                 var reader: std.Io.Reader = .fixed(temp_file.written());
                 try basic_file_decoder.decode(&reader, out_writer);
             }
-            // TODO: Required? And what to do in case of error?
             try out_writer.flush();
         }
 
         pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
             var filename_buf: [8]u8 = undefined;
-            const ados_filename = try translateToADOSFilename(to_filename, &filename_buf);
+            const ados_filename = try DirectoryTable.translateToADOSFilename(to_filename, &filename_buf);
             if (self.directory.findByFilename(ados_filename, null)) |existing_entry| {
                 if (force) {
                     try self.erase(existing_entry);
@@ -733,7 +730,6 @@ pub const DiskImage = struct {
                 var reader_in: std.Io.Reader = .fixed(conversion_buffer_in.written());
 
                 try conversion_buffer_out.writer.writeByte(' ');
-                // TODO: Should be able to do this with writeStreaming. but was hittin an assertion during rebase
                 while (reader_in.takeDelimiter('\n')) |slice| {
                     if (slice == null or slice.?.len == 0) break;
                     try conversion_buffer_out.writer.writeAll(slice.?);
@@ -817,36 +813,15 @@ pub const DiskImage = struct {
             // written data to the next sector.
         }
 
-        /// Convert to valid Altair DOS / Basic filename
-        /// There are almost no restrictions on valid filename chars in Altair DOS
-        /// This program enforces printable and upper case.
-        /// TODO: This should go in directory table??
-        pub fn translateToADOSFilename(from_filename: []const u8, to_filename: *[8]u8) error{InvalidFilename}![]u8 {
-            @memset(to_filename, ' ');
-            var index: usize = 0;
-            for (from_filename) |c| {
-                if (std.ascii.isPrint(c)) {
-                    to_filename[index] = std.ascii.toUpper(c);
-                    index += 1;
-                }
-                if (index == to_filename.len) break;
-            }
-            if (index == 0) return error.InvalidFilename;
-            log.info("Translated filename {s} to {s}", .{ from_filename, to_filename[0..index] });
-            return to_filename[0..index];
-        }
-
         /// write an Altair DOS diretory entry (RawDirEntry)
         pub fn rawEntryWrite(ados: *ADOS, extent_nr: u16) (WriteSectorError || RawDirError)!void {
             const self: *DiskImage = @alignCast(@fieldParentPtr("ados", ados));
-            // TODO:
-            // if (!this_entry.isDeleted()) {
-            //     try this_entry.validate(self.image_type, extent_nr);
-            // }
+            const entries_per_sector = self.image_type.dirs_per_sector;
+            const this_entry = &self.directory.raw_directories.ados.items[extent_nr];
+            if (!this_entry.isDeleted()) {
+                try this_entry.validate(self.image_type, extent_nr);
+            }
 
-            // TODO: Cant use self.image_type.dir_entries_per_sector as it assumes dir entries are 32 bytes not 16 as required here.
-
-            const entries_per_sector = self.image_type.sector_size_data / @sizeOf(RawAdosDirEntry.Raw);
             // 16 bytes per directory entry. Directory start at Track 70
             const location: PhysicalAddress = .{ .track = 70, .sector = extent_nr / entries_per_sector };
             var sector: DiskSector = .initFormatted(self.image_type, location);

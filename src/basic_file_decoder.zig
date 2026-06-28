@@ -3,7 +3,7 @@
 //! Then next 2 bytes are the line number or 0x0000 for EOF
 //! The file is then read character by character and processed until 0x00 which indicated end of line.
 
-const log = std.log.scoped(.altair_disk);
+const log = std.log.scoped(.altair_disk_lib);
 
 pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
     const header = try reader.takeByte();

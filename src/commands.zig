@@ -1,7 +1,7 @@
 //! Implements the user interface between the command line and the user output.
 //! Dispatches command line options to the appropriate command and prints the results
 //! Any errors are reported back via the error context.
-//
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
@@ -212,9 +212,9 @@ pub fn directoryListRawCPM(_: Context, disk_image: *DiskImage, options: CommandL
             };
 
             try Console.stdout().print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
-                extent_nr,               entry.entry.user, entry.entry.filename,
-                entry.entry.filetype,    attribs,          entry.extentGet(disk_image.image_type),
-                entry.entry.num_records,
+                extent_nr,             entry.raw.user, entry.raw.filename,
+                entry.raw.filetype,    attribs,        entry.extentGet(disk_image.image_type),
+                entry.raw.num_records,
             });
 
             // The allocations are really little endian u16's
@@ -251,12 +251,12 @@ pub fn directoryListRawCPM(_: Context, disk_image: *DiskImage, options: CommandL
 }
 
 pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOptions) CommandError!void {
-    try Console.stdout().print("FNR:FILENAME:MD:TK:SK:ALLOCATIONS\n", .{});
+    try Console.stdout().print("FNR:FILENAME:MD:TK:SC\n", .{});
 
     for (disk_image.directory.raw_directories.ados.items, 1..) |entry, file_nr| {
         if (entry.isLastEntry()) break;
         if (!entry.isDeleted()) {
-            try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}", .{
+            try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}\n", .{
                 file_nr,
                 entry.raw.filename,
                 entry.raw.mode,
@@ -387,6 +387,11 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     var file_writer = out_file.writer(ctx.io, &.{});
     disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| {
         printErrorMessage(current_command, .file_copy, .{out_filename}, err);
+        if (file_writer.pos == 0) {
+            cwd.deleteFile(ctx.io, out_filename) catch {
+                log.err("Error deleting empty output file: {s}.", .{out_filename});
+            };
+        }
         return error.CommandFailed;
     };
     log.info("Copied file {s} to {s}", .{ dir_entry.filenameAndExtension(), out_filename });
@@ -428,9 +433,15 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user
 
     var file_reader = in_file.reader(ctx.io, &.{});
     disk_image.copyToImage(&file_reader.interface, filename, cpm_user, force, text_mode) catch |err| {
-        printErrorMessage(current_command, .file_copy, .{filename}, err);
         switch (err) {
-            error.PathAlreadyExists, error.CookedDirEntryNotFound => return error.CommandFailedCanContinue,
+            error.PathAlreadyExists => {
+                printErrorMessage(current_command, .file_exists, .{filename}, err);
+                return error.CommandFailedCanContinue;
+            },
+            error.CookedDirEntryNotFound => {
+                printErrorMessage(current_command, .file_copy, .{filename}, err);
+                return error.CommandFailedCanContinue;
+            },
             else => return error.CommandFailed,
         }
     };
