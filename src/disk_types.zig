@@ -24,7 +24,7 @@
 
 pub const OperatingSystem = enum { cpm, cdos, ados };
 const log = std.log.scoped(.altair_disk_lib);
-const logerr = log.info; // TODO this should change for fuzz testing vs non
+const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,

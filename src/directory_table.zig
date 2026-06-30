@@ -8,7 +8,8 @@
 //!
 
 const log = @import("disk_image.zig").log;
-const logerr = log.info; // TODO: Change this based on whether testign or  not.
+// Don't log errors during fuzz testing.
+const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
 /// Validation errors
 pub const RawDirError = error{
