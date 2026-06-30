@@ -8,6 +8,7 @@
 //!
 
 const log = @import("disk_image.zig").log;
+const logerr = log.info; // TODO: Change this based on whether testign or  not.
 
 /// Validation errors
 pub const RawDirError = error{
@@ -41,7 +42,7 @@ pub const RawCpmDirEntry = struct {
 
     pub fn validate(self: *const RawCpmDirEntry, image_type: *const DiskImageType, extent_nr: u16) RawDirError!void {
         if (self.raw.user > DiskImageType.max_user and self.raw.user != 0xe5 and self.raw.user != 0x81) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid user: {}. Must be 0-{} or {}]",
                 .{ extent_nr, self.raw.user, DiskImageType.max_user, 0xe5 },
             );
@@ -50,7 +51,7 @@ pub const RawCpmDirEntry = struct {
 
         const max_entents = image_type.dirs_per_alloc * image_type.total_allocs;
         if (self.extentGet(image_type) >= max_entents) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid extent: {}. Must be 0-{}]",
                 .{ extent_nr, self.extentGet(image_type), max_entents },
             );
@@ -58,7 +59,7 @@ pub const RawCpmDirEntry = struct {
         }
 
         if (self.raw.num_records > 128) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
                 .{ extent_nr, self.raw.num_records, 128 },
             );
@@ -67,7 +68,7 @@ pub const RawCpmDirEntry = struct {
         for (0..self.allocationsCount(image_type)) |i| {
             const alloc = try self.allocationGet(@intCast(i), image_type);
             if (alloc > image_type.total_allocs) {
-                log.err(
+                logerr(
                     "Invalid directory entry: {} [Invalid allocation: {}. Must be 0-{}]",
                     .{ extent_nr, alloc, image_type.total_allocs },
                 );
@@ -142,7 +143,6 @@ pub const RawCpmDirEntry = struct {
     /// Get the number of an allocation controlled by this extent
     pub fn allocationGet(self: *const RawCpmDirEntry, entry_nr: usize, image_type: *const DiskImageType) RawDirError!u16 {
         if (entry_nr >= self.allocationsCount(image_type)) {
-            std.debug.panic("{}, {}\n", .{ entry_nr, self.allocationsCount(image_type) });
             return RawDirError.InvalidEntryNumber;
         }
 
@@ -237,20 +237,20 @@ pub const RawAdosDirEntry = struct {
     pub fn validate(self: *const RawAdosDirEntry, image_type: *const DiskImageType, entry_nr: u16) error{InvalidDirectoryEntry}!void {
         const raw = self.raw;
         if (raw.track >= image_type.tracks) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid track: {}. Must be 0 - {}.]",
                 .{ entry_nr, raw.track, image_type.tracks - 1 },
             );
             return error.InvalidDirectoryEntry;
         }
         if (raw.sector >= image_type.sectors_per_track) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid sector: {}. Must be 0 - {}.]",
                 .{ entry_nr, raw.sector, image_type.sectors_per_track - 1 },
             );
         }
         if (raw.track >= image_type.tracks) {
-            log.err(
+            logerr(
                 "Invalid directory entry: {} [Invalid mode: {}. Must be 0x2 or 0x4]",
                 .{ entry_nr, raw.mode },
             );
@@ -511,7 +511,7 @@ pub const DirectoryTable = struct {
 
         // For CDOS, Check that the number of directories etc is the "default" value for that disk
         // Support for other directories counts is a TODO
-        if (self.raw_directories.cpm.items.len > 0 and self.raw_directories.cpm.items[0].isLabel()) {
+        if (self.image_type.OS == .cdos and self.raw_directories.cpm.items.len > 0 and self.raw_directories.cpm.items[0].isLabel()) {
             const raw_item = self.raw_directories.cpm.items[0];
             const expected_num_records: u8 = switch (image_type.type_id.toCDOS()) {
                 .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
@@ -519,7 +519,7 @@ pub const DirectoryTable = struct {
                 .CDOS_LGDSDD => 0x40,
             };
             if (expected_num_records != raw_item.raw.num_records) {
-                if (!@import("builtin").is_test) log.err(
+                if (!@import("builtin").is_test) logerr(
                     "CDOS disks with a non-default number of directories are not currently supported. Expected {}, actual {}",
                     .{ @as(u16, expected_num_records) * 4, @as(u16, raw_item.raw.num_records) * 4 },
                 );
@@ -566,7 +566,7 @@ pub const DirectoryTable = struct {
                     if (alloc == 0)
                         break;
                     if (alloc >= image_type.total_allocs) {
-                        log.err(
+                        logerr(
                             "Invalid directory entry: {} [Invalid allocation: {}. Must be 0-{}]",
                             .{ i, alloc, image_type.total_allocs },
                         );
@@ -629,7 +629,8 @@ pub const DirectoryTable = struct {
     // convert track and sector to allocation
     fn toAllocationADOS(image_type: *const DiskImageType, location: PhysicalAddress) PhysicalAddress.ValidateError!u16 {
         try location.validate(image_type);
-        const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+        if (location.track < image_type.reserved_tracks) return error.InvalidTrack;
+        const sectors_per_alloc: u16 = image_type.block_size / image_type.sector_size_data;
         return @as(u16, location.track - image_type.reserved_tracks) * (image_type.sectors_per_track / sectors_per_alloc) + @as(u16, location.sector / sectors_per_alloc);
     }
 
@@ -642,7 +643,7 @@ pub const DirectoryTable = struct {
             try self.cooked_directories.append(self.allocator(), try CookedDirEntry.initCPM(self.allocator(), entry, self.image_type));
         } else {
             if (self.cooked_directories.items.len == 0) {
-                log.err("Cannot detect first entry for file {s}.{s}: ", .{ entry.raw.filename, entry.raw.filetype });
+                logerr("Cannot detect first entry for file {s}.{s}: ", .{ entry.raw.filename, entry.raw.filetype });
                 return error.InvalidImageFile;
             }
             var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
@@ -679,7 +680,7 @@ pub const DirectoryTable = struct {
                     },
 
                     else => {
-                        log.err("Error reading from disk image: {t}\n", .{err});
+                        logerr("Error reading from disk image: {t}\n", .{err});
                         return error.InvalidImageFile;
                     },
                 };

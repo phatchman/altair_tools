@@ -24,6 +24,7 @@
 
 pub const OperatingSystem = enum { cpm, cdos, ados };
 const log = std.log.scoped(.altair_disk_lib);
+const logerr = log.info; // TODO this should change for fuzz testing vs non
 
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
@@ -81,14 +82,14 @@ pub const PhysicalAddress = struct {
     pub const ValidateError = error{ InvalidTrack, InvalidSector };
     pub fn validate(self: PhysicalAddress, image_type: *const DiskImageType) ValidateError!void {
         if (self.track >= image_type.tracks) {
-            log.err(
+            logerr(
                 "Attempt to read from an invalid track. [Read track {}. Expected 0-{}]",
                 .{ self.track, image_type.tracks - 1 },
             );
             return error.InvalidTrack;
         }
         if (self.sector >= image_type.sectorsForTrack(self.track)) {
-            log.err(
+            logerr(
                 "Attempt to read from an invalid sector. [Read sector {}. Expected 0-{}]",
                 .{ self.sector, image_type.sectorsForTrack(self.track) - 1 },
             );
@@ -1151,8 +1152,8 @@ pub const DiskImageTypes = enum {
         return @Enum(tag_type, .exhaustive, names[0..field_count], values[0..field_count]);
     }
 
-    // Convert a DiskImageTypes enum to a CDOSTypes enum
-    // Will panic if called for a non-cdos image type.
+    /// Convert a DiskImageTypes enum to a CDOSTypes enum
+    /// Will panic if called for a non-cdos image type.
     pub fn toCDOS(self: DiskImageTypes) CDOSTypes() {
         return @enumFromInt(@intFromEnum(self));
     }
