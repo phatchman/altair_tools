@@ -666,22 +666,24 @@ test "non-standard CDOS" {
     try std.testing.expectError(error.InvalidImageFile, disk_image);
 }
 
-test "random image data" {
-    if (true) return error.SkipZigTest;
+test "fuzz image data" {
+    try std.testing.fuzz({}, randomData, .{});
+}
+fn randomData(_: void, smith: *std.testing.Smith) !void {
+
     //if (!@import("build_options").include_randomized) return error.SkipZigTest;
     const fmt = FDD_8IN;
-    var rnd: std.Random.DefaultPrng = .init(123);
 
     const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
     defer std.testing.allocator.free(image_buffer);
-    rnd.fill(image_buffer);
+    _ = smith.slice(image_buffer);
     var mem_image: InMemoryImage = undefined;
     mem_image.init(image_buffer);
 
-    var disk_image: DiskImage = try .init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt);
+    var disk_image: DiskImage = DiskImage.init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt) catch return;
     defer disk_image.deinit();
 
-    try disk_image.loadDirectories(.full);
+    disk_image.loadDirectories(.full) catch return;
 }
 
 /// Create readers and writers against a []const u8

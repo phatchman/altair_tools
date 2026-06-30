@@ -1,4 +1,4 @@
-//! Perform wildcard expansion on windows.
+//! Perform wildcard filename expansion on windows.
 
 // This is a fairly naive implementation of globbing that gives us 90% of the functionality.
 // Examples that will fail are `*ab` vs `aab` and `*.d` for files with multiple '.'s
@@ -84,7 +84,8 @@ test "globbing" {
     try std.testing.expectEqual(false, globMatch("a??d?f", "abcxef"));
     try std.testing.expectEqual(false, globMatch("*.??", "abcdef.txt"));
 
-    // TODO: For future globbing improvments
+    // TODO: For future globbing improvements
     //try std.testing.expectEqual(true, globMatch("*ab", "abb"));
     //try std.testing.expectEqual(true, globMatch("*.*.d", "a.b.c.d"));
+    //try std.testing.expectEqual(true, globMatch("*ab", "aabb"));
 }
