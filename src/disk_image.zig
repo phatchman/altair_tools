@@ -7,6 +7,8 @@ const all_disk_types = @import("disk_types.zig").all_disk_types;
 const DUMP = false;
 
 pub const log = std.log.scoped(.altair_disk_lib);
+// Don't log errors during fuzz testing.
+const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
 /// Directory entries keep track of a logical address consisting of:
 /// 1) An allocation representing 1 block. Allocations start at 0.
@@ -153,7 +155,19 @@ pub const DiskImage = struct {
         return @as(usize, (image_type.total_allocs - image_type.directory_allocs)) * image_type.block_size / 1024;
     }
 
-    pub const TextMode = enum { Auto, Text, Binary };
+    pub const TextMode = enum {
+        Auto,
+        Text,
+        Binary,
+        Rand,
+
+        pub fn forOs(_: TextMode, os: OperatingSystem) type {
+            return switch (os) {
+                .ados => .{ .Auto, .Text, .Binary, .Rand },
+                else => .{ .Auto, .Text, .Binary },
+            };
+        }
+    };
 
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
         try switch (self.image_type.OS) {
@@ -658,52 +672,82 @@ pub const DiskImage = struct {
     pub const ADOS = struct {
         // TODO: Change these so they log error and return copy failed?
         pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken } || ReadSectorError)!void {
-            if (entry.attribs[0] == 'R') {
-                log.err("Copying of Random Access files is not currently supported.", .{});
-                return error.InvalidFormat;
-            }
-
             var track_nr: u8 = entry.os.ados.track;
             var sector_nr: u8 = entry.os.ados.sector;
-            var file_no: u8 = 255;
             var sector: DiskSector = .initUnformatted(self.image_type, 6); //  // TODO
-            var decode_basic_file: bool = false;
-            var first_sector: bool = true;
-            var temp_file: std.Io.Writer.Allocating = .init(self.allocator);
-            defer temp_file.deinit();
             errdefer out_writer.flush() catch {};
 
-            while (track_nr != 0) {
-                try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
-                if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
+            switch (entry.attribs[0]) {
+                'S' => { // sequential
+                    std.debug.print("t'her\n", .{});
 
-                if (file_no == sector.mits_track_6_76.file_nr) {
-                    if (first_sector and text_mode == .Text) {
-                        if (sector.mits_track_6_76.data[0] == 0xff) { // Indicates a BASIC file.
-                            decode_basic_file = true;
+                    var file_no: u8 = 255;
+                    var decode_basic_file: bool = false;
+                    var first_sector: bool = true;
+                    var temp_file: std.Io.Writer.Allocating = .init(self.allocator);
+                    defer temp_file.deinit();
+
+                    while (track_nr != 0) {
+                        try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+                        if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
+
+                        if (file_no == sector.mits_track_6_76.file_nr) {
+                            if (first_sector and text_mode == .Text) {
+                                if (sector.mits_track_6_76.data[0] == 0xff) { // Indicates a BASIC file.
+                                    decode_basic_file = true;
+                                } else {
+                                    log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.mits_track_6_76.data[0]});
+                                    return error.InvalidFormat;
+                                }
+                            }
+                            if (decode_basic_file) {
+                                try temp_file.writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+                            } else {
+                                try out_writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+                            }
+                            first_sector = false;
                         } else {
-                            log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.mits_track_6_76.data[0]});
-                            return error.InvalidFormat;
+                            log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.mits_track_6_76.file_nr });
+                            return error.InvalidRecordNumber;
                         }
+                        track_nr = sector.mits_track_6_76.next_track;
+                        sector_nr = sector.mits_track_6_76.next_sector;
                     }
                     if (decode_basic_file) {
-                        try temp_file.writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
-                    } else {
-                        try out_writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+                        var reader: std.Io.Reader = .fixed(temp_file.written());
+                        try basic_file_decoder.decode(&reader, out_writer);
                     }
-                    first_sector = false;
-                } else {
-                    log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.mits_track_6_76.file_nr });
-                    return error.InvalidRecordNumber;
-                }
-                track_nr = sector.mits_track_6_76.next_track;
-                sector_nr = sector.mits_track_6_76.next_sector;
+                    try out_writer.flush();
+                },
+                'R' => { // Random access file
+                    // The first 256 bytes are the group and track number encoded as
+                    // 2 bits group and 6 bits track nr - 6. i.e. 0 = track 6.
+                    // The first sector's `nbytes` holds the number of groups.
+                    var group_map: [256]u8 = undefined;
+                    try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+                    const group_count = sector.mits_track_6_76.nbytes;
+                    @memcpy(group_map[0..128], sector.dataBytes());
+                    track_nr = sector.mits_track_6_76.next_track;
+                    sector_nr = sector.mits_track_6_76.next_sector;
+                    try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+                    @memcpy(group_map[128..], sector.dataBytes());
+
+                    const sectors_per_group = self.image_type.block_size / self.image_type.sector_size_data;
+                    var idx: usize = 0;
+                    while (idx != group_count) : (idx += 1) { // TODO:
+                        const group_encoded = group_map[idx];
+                        track_nr = (group_encoded & 0x3f) + 6;
+                        const group_nr = group_encoded >> 6;
+                        sector_nr = @intCast(group_nr * sectors_per_group);
+                        // The first 2 sectors of the first group are the group_index and group_map. So skip during
+                        for (if (idx == 0) 2 else 0..sectors_per_group) |offset| {
+                            try self.readSectorPhysical(.{ .track = track_nr, .sector = @intCast(sector_nr + offset) }, &sector);
+                            try out_writer.writeAll(sector.dataBytes());
+                        }
+                    }
+                },
+                else => unreachable,
             }
-            if (decode_basic_file) {
-                var reader: std.Io.Reader = .fixed(temp_file.written());
-                try basic_file_decoder.decode(&reader, out_writer);
-            }
-            try out_writer.flush();
         }
 
         pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
@@ -716,7 +760,7 @@ pub const DiskImage = struct {
                     return std.Io.File.OpenError.PathAlreadyExists;
                 }
             }
-
+            std.debug.print("text mode = {t}\n", .{text_mode});
             // These are used as temporary buffers for converting BASIC files.
             var conversion_buffer_in: std.Io.Writer.Allocating = .init(self.allocator);
             defer conversion_buffer_in.deinit();
@@ -747,7 +791,7 @@ pub const DiskImage = struct {
             var extent_nr: u16 = undefined;
             const new_entry = try self.directory.rawEntryGetFreeInitializedADOS(self, &extent_nr);
             @memcpy(&new_entry.raw.filename, &filename_buf);
-            new_entry.raw.mode = 0x2; // Only sequential files are currently supported
+            new_entry.raw.mode = if (text_mode == .Rand) 0x04 else 0x2; // tODO: enumify?
 
             var file_data: [128]u8 = undefined; // TODO: Hard coded
             var nbytes = try reader.readSliceShort(&file_data);
@@ -757,11 +801,12 @@ pub const DiskImage = struct {
                 return;
             }
 
-            var alloc = try self.directory.allocationGetFreeADOS();
+            var alloc = try self.directory.allocationGetFreeADOS(text_mode == .Rand);
             const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
             const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
             var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
             var sector_nr: u16 = (alloc % allocs_per_track) * sectors_per_alloc; // This is the first sector for this allocation of 8 sectors.
+            var group_map: [256]u8 = @splat(0); // Store track / sector allocations for random access files.
 
             new_entry.raw.track = @intCast(track_nr);
             new_entry.raw.sector = @intCast(sector_nr);
@@ -770,11 +815,23 @@ pub const DiskImage = struct {
 
             var prev_location: ?PhysicalAddress = null;
             var prev_sector: DiskSector = undefined;
+            var start_sector: usize = if (text_mode == .Rand) 2 else 0; // For random access files, first 2 sectors are index bytes
+            var group_idx: usize = 0;
+            var group_map_location: PhysicalAddress = .{
+                .track = self.image_type.reserved_tracks + alloc / allocs_per_track,
+                .sector = (alloc % allocs_per_track) * sectors_per_alloc,
+            };
             while (nbytes != 0) {
-                for (0..sectors_per_alloc) |offset| {
-                    track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
-                    sector_nr = (alloc % allocs_per_track) * sectors_per_alloc + @as(u16, @intCast(offset));
+                if (text_mode == .Rand and nbytes != 128) {
+                    logerr("Random access files must be a multiple of 128 bytes in length.", .{});
+                    return error.InvalidFormat;
+                }
+                track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
+                group_map[group_idx] = @as(u8, @intCast(alloc % allocs_per_track)) << 6 | (@as(u8, @intCast(track_nr)) - 6);
+                group_idx += 1;
 
+                for (start_sector..sectors_per_alloc) |offset| {
+                    sector_nr = (alloc % allocs_per_track) * sectors_per_alloc + @as(u16, @intCast(offset));
                     // Fill all sectors in the group of 8 for the allocation. (8 * 128) = 1024byte block size.
                     const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
                     var sector: DiskSector = .initFormatted(self.image_type, location);
@@ -794,8 +851,27 @@ pub const DiskImage = struct {
                     if (nbytes == 0) break;
                 }
                 if (nbytes != 0) {
-                    alloc = try self.directory.allocationGetFreeADOS();
+                    alloc = try self.directory.allocationGetFreeADOS(text_mode == .Rand);
                 }
+                start_sector = 0;
+            }
+            if (text_mode == .Rand) {
+                // Write the group index block.
+                var sector: DiskSector = .initFormatted(self.image_type, group_map_location);
+                sector.mits_track_6_76.nbytes = @intCast(group_idx);
+                sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
+                sector.mits_track_6_76.next_track = @intCast(group_map_location.track);
+                sector.mits_track_6_76.next_sector = @intCast(group_map_location.sector + 1);
+                @memcpy(sector.dataBytes(), group_map[0..128]);
+                try self.writeSector(group_map_location, &sector);
+                group_map_location.sector += 1;
+                sector = .initFormatted(self.image_type, group_map_location);
+                sector.mits_track_6_76.nbytes = @intCast(group_idx);
+                sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
+                sector.mits_track_6_76.next_track = @intCast(group_map_location.track);
+                sector.mits_track_6_76.next_sector = @intCast(group_map_location.sector + 1);
+                @memcpy(sector.dataBytes(), group_map[128..]);
+                try self.writeSector(group_map_location, &sector);
             }
             try self.directory.buildCookedEntryADOS(self, extent_nr);
 
@@ -850,5 +926,6 @@ const DirectoryLoadError = DirectoryTable.DirectoryLoadError;
 const RawCpmDirEntry = @import("directory_table.zig").RawCpmDirEntry;
 const RawAdosDirEntry = @import("directory_table.zig").RawAdosDirEntry;
 const RawDirError = @import("directory_table.zig").RawDirError;
+const OperatingSystem = disk_types.OperatingSystem;
 const File = std.Io.File;
 const Io = std.Io;

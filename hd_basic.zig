@@ -23,7 +23,7 @@ pub const VolumeDecriptor = extern struct {
 
     pub fn format(self: *const VolumeDecriptor, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Label             : {s}\n", .{self.label});
-        try writer.print("Date              : {x}\n", .{self.date});
+        try writer.print("Date              : {f}\n", .{fmtDate(self.date[0..3].*)});
         try writer.print("Backup Set        : {}\n", .{self.backup_set});
         try writer.print("Allocation Pages  : {any}\n", .{self.allocation_pages});
         try writer.print("Directory Pages   : {any}\n", .{self.directory_pages});
@@ -58,8 +58,8 @@ pub const DirEntry = extern struct {
 
     pub fn format(self: *const DirEntry, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Filename         : {s}\n", .{self.filename});
-        try writer.print("Creation         : {x}\n", .{self.creation_date});
-        try writer.print("Modification     : {x}\n", .{self.modification_date});
+        try writer.print("Creation         : {f}\n", .{fmtDate(self.creation_date)});
+        try writer.print("Modification     : {f}\n", .{fmtDate(self.modification_date)});
         try writer.print("Read Only        : {}\n", .{self.read_only});
         try writer.print("Status           : {x}\n", .{self.status});
         try writer.print("Last Page        : {}\n", .{self.eof_page});
@@ -69,6 +69,13 @@ pub const DirEntry = extern struct {
         try writer.print("Allocations      : {any}\n", .{self.allocations});
     }
 };
+
+pub fn fmtDate(date: [3]u8) std.fmt.Alt([3]u8, formatDate) {
+    return .{ .data = date };
+}
+fn formatDate(date: [3]u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    try w.print("{d:02}/{d:02}/{d:02}", .{ date[1], date[2], date[0] });
+}
 
 comptime {
     // @compileLog(@sizeOf(DirEntry));
@@ -81,6 +88,7 @@ comptime {
 }
 
 const page_size: u16 = 256;
+var dir_entries: std.ArrayList(DirEntry) = .empty;
 
 pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [256]u8 = undefined;
@@ -105,13 +113,51 @@ pub fn main(init: std.process.Init) !void {
     for (0..vol_label.directory_entry_count) |_| {
         const entry = try reader.interface.takeStruct(DirEntry, .little);
         if (entry.status == 0xff) break // End of directory
-        else if (entry.status == 0x01) // "small file"
+        else if (entry.status == 0x01) { // "small file"
+            try dir_entries.append(init.arena.allocator(), entry);
             std.debug.print("{f}\n", .{&entry});
+        }
     }
+    const filename = "HELP.TXT";
+    const out_file = try std.Io.Dir.cwd().createFile(init.io, filename, .{ .truncate = true });
+    defer out_file.close(init.io);
+    var file_writer = out_file.writer(init.io, &.{});
+    try extract(&reader, &file_writer.interface, filename);
 }
 
 fn seekToPage(reader: *std.Io.File.Reader, page_nr: u16) !void {
-    try reader.seekTo(page_nr * page_size);
+    try reader.seekTo(@as(u64, page_nr) * page_size);
+}
+
+fn extract(reader: *std.Io.File.Reader, writer: *std.Io.Writer, filename: []const u8) !void {
+    defer writer.flush() catch {};
+    for (dir_entries.items) |dir_entry| {
+        if (std.mem.eql(u8, filename, std.mem.trimEnd(u8, &dir_entry.filename, " "))) {
+            var buffer: [256]u8 = undefined;
+            var page_count: usize = 0;
+            for (dir_entry.allocations) |alloc| {
+                if (alloc == 0xffff) {
+                    @panic("Shouldn't get here");
+                    //                    return;
+                }
+                const start_page = alloc * 8;
+                try seekToPage(reader, start_page);
+                for (0..8) |offset| {
+                    try reader.interface.readSliceAll(&buffer);
+                    std.debug.print("page = {}, eof_page = {}\n", .{ start_page + offset, dir_entry.eof_page });
+                    if (page_count == dir_entry.eof_page) {
+                        std.debug.print("eof_byte = {}\n", .{dir_entry.eof_byte});
+                        try writer.writeAll(buffer[0..dir_entry.eof_byte]);
+                        return;
+                    } else {
+                        try writer.writeAll(&buffer);
+                    }
+                    page_count += 1;
+                }
+                if (alloc == dir_entry.last_group) return;
+            }
+        }
+    }
 }
 
 const std = @import("std");

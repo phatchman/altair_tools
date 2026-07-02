@@ -250,12 +250,14 @@ pub const RawAdosDirEntry = struct {
                 .{ entry_nr, raw.sector, image_type.sectors_per_track - 1 },
             );
         }
-        if (raw.track >= image_type.tracks) {
-            logerr(
-                "Invalid directory entry: {} [Invalid mode: {}. Must be 0x2 or 0x4]",
-                .{ entry_nr, raw.mode },
-            );
-            return error.InvalidDirectoryEntry;
+        switch (raw.mode) {
+            0x02, 0x04 => {}, // TODO: enum it
+            else => {
+                logerr(
+                    "Invalid directory entry: {} [Invalid mode: {}. Must be 0x2 (sequential) or 0x4 (random access)]",
+                    .{ entry_nr, raw.mode },
+                );
+            },
         }
     }
 };
@@ -663,42 +665,57 @@ pub const DirectoryTable = struct {
             var track_nr = entry.raw.track;
             var sector_nr = entry.raw.sector;
             var nbytes: u32 = 0;
+            var used: u32 = 0;
             var nr_sectors: u32 = 0;
             const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
-            while (track_nr != 0) {
-                const allocation = try toAllocationADOS(self.image_type, .{ .track = track_nr, .sector = sector_nr });
-                self.free_allocations.unset(allocation);
-                if (sector_nr % sectors_per_alloc == 0) {
-                    try allocations.append(self.allocator(), allocation);
+            if (entry.raw.mode == 0x02) {
+                while (track_nr != 0) {
+                    const allocation = try toAllocationADOS(self.image_type, .{ .track = track_nr, .sector = sector_nr });
+                    self.free_allocations.unset(allocation);
+                    if (sector_nr % sectors_per_alloc == 0) {
+                        try allocations.append(self.allocator(), allocation);
+                    }
+
+                    var sector: DiskSector = .initUnformatted(self.image_type, self.image_type.OS.ados.directory_track);
+                    image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| switch (err) {
+                        error.InvalidTrack, error.InvalidSector => {
+                            log.warn("{s} has invalid track or sector links. File will not be copied correctly: {t}", .{ entry.raw.filename, err });
+                            break;
+                        },
+                        else => {
+                            logerr("Error reading from disk image: {t}\n", .{err});
+                            return error.InvalidImageFile;
+                        },
+                    };
+                    nbytes += sector.mits_track_6_76.nbytes;
+                    nr_sectors += 1;
+                    track_nr = sector.mits_track_6_76.next_track;
+                    sector_nr = sector.mits_track_6_76.next_sector;
                 }
-
-                var sector: DiskSector = .initUnformatted(self.image_type, self.image_type.OS.ados.directory_track);
-                image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| switch (err) {
-                    error.InvalidTrack, error.InvalidSector => {
-                        log.warn("{s} has invalid track or sector links. File will not be copied correctly: {t}", .{ entry.raw.filename, err });
-                        break;
-                    },
-
-                    else => {
-                        logerr("Error reading from disk image: {t}\n", .{err});
-                        return error.InvalidImageFile;
-                    },
+                used = (nr_sectors + (sectors_per_alloc - 1)) / sectors_per_alloc;
+            } else if (entry.raw.mode == 0x04) { // Random access
+                var sector: DiskSector = .initUnformatted(self.image_type, 6); // TODO
+                image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
+                    logerr("Error reading from disk image: {t}\n", .{err});
+                    return error.InvalidImageFile;
                 };
-                nbytes += sector.mits_track_6_76.nbytes;
-                nr_sectors += 1;
-                track_nr = sector.mits_track_6_76.next_track;
-                sector_nr = sector.mits_track_6_76.next_sector;
-            }
 
+                nbytes = sector.mits_track_6_76.nbytes * 8 * self.image_type.block_size; // TODO:
+                used = sector.mits_track_6_76.nbytes * 8;
+            } else unreachable; // Should have already been validated before we get here.
             break :blk .{
                 .track = entry.raw.track,
                 .sector = entry.raw.sector,
                 .size = nbytes,
-                .used = (nr_sectors + 7) / sectors_per_alloc,
+                .used = used,
             };
         };
         self.cooked_directories.appendAssumeCapacity(try CookedDirEntry.initADOS(entry, os_ados, allocations, self.image_type));
+        // const this_entry = self.cooked_directories.items[self.cooked_directories.items.len].filename;
+        // for (self.cooked_directories.items[0 .. self.cooked_directories.items.len - 1]) |item| {
+        //     if (std.mem.eql(u8, &item.filename, &this_entry) and false) @panic("how now brown cow");
+        // }
     }
 
     /// Remove a file from the image.
@@ -875,11 +892,11 @@ pub const DirectoryTable = struct {
         return to_filename[0..index];
     }
 
-    /// Note this is used by the tests
+    /// Note this is used by the tests: // TODO: Then move it to the TESTS..
     pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
         return switch (self.raw_directories) {
             .cpm => self.allocationGetFreeCPM(),
-            .ados => self.allocationGetFreeADOS(),
+            .ados => self.allocationGetFreeADOS(false),
         };
     }
 
@@ -894,38 +911,51 @@ pub const DirectoryTable = struct {
     }
 
     /// Return a free allocation
-    pub fn allocationGetFreeADOS(self: *DirectoryTable) error{OutOfAllocs}!u16 {
+    pub fn allocationGetFreeADOS(self: *DirectoryTable, for_random_access: bool) error{OutOfAllocs}!u16 {
         // Allocations are performed in the order track 71 to track 76
         // Then from track 69 down to 6
         const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
         const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
 
-        for (71..self.image_type.tracks) |track_nr| {
-            for (0..allocs_per_track) |alloc_in_track| {
-                const alloc_nr = (track_nr - self.image_type.reserved_tracks) * allocs_per_track + alloc_in_track;
-                if (self.free_allocations.isSet(alloc_nr)) {
-                    self.free_allocations.unset(alloc_nr);
-                    return @intCast(alloc_nr);
+        if (!for_random_access) {
+            for (71..self.image_type.tracks) |track_nr| {
+                for (0..allocs_per_track) |alloc_in_track| {
+                    const alloc_nr = (track_nr - self.image_type.reserved_tracks) * allocs_per_track + alloc_in_track;
+                    if (self.free_allocations.isSet(alloc_nr)) {
+                        self.free_allocations.unset(alloc_nr);
+                        return @intCast(alloc_nr);
+                    }
                 }
             }
-        }
 
-        // Then look for free allocs from track 69 downwards
-        if (self.free_allocations.findLastSet()) |free| {
-            // This will return the last alloc on the track. But we need to
-            // allocate from the first alloc for the track, upwards.
-            const first_alloc = free / allocs_per_track * allocs_per_track;
-            for (first_alloc..first_alloc + allocs_per_track) |alloc| {
-                if (self.free_allocations.isSet(alloc)) {
-                    self.free_allocations.unset(alloc);
-                    return @intCast(alloc);
+            // Then look for free allocs from track 69 downwards
+            if (self.free_allocations.findLastSet()) |free| {
+                // This will return the last alloc on the track. But we need to
+                // allocate from the first alloc for the track, upwards.
+                const first_alloc = free / allocs_per_track * allocs_per_track;
+                for (first_alloc..first_alloc + allocs_per_track) |alloc| {
+                    if (self.free_allocations.isSet(alloc)) {
+                        self.free_allocations.unset(alloc);
+                        return @intCast(alloc);
+                    }
+                }
+                unreachable;
+            }
+            return error.OutOfAllocs;
+        } else {
+            var track: u8 = 69;
+            while (track >= 0) : (track -= 1) {
+                for (0..allocs_per_track) |offset| {
+                    const alloc = track * allocs_per_track + offset;
+                    if (self.free_allocations.isSet(alloc)) {
+                        self.free_allocations.unset(alloc);
+                        return @intCast(alloc);
+                    }
                 }
             }
-            unreachable;
+            return error.OutOfAllocs;
         }
-        return error.OutOfAllocs;
     }
-
     /// Return a free CPM directory entry
     pub fn rawEntryGetFreeInitializedCPM(self: *const DirectoryTable, extent_nr: *u16) error{OutOfExtents}!*RawCpmDirEntry {
         for (self.raw_directories.cpm.items, 0..) |*dir, i| {

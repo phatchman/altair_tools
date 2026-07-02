@@ -297,6 +297,7 @@ fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
         .AUTO => .Auto,
         .ASCII => .Text,
         .BINARY => .Binary,
+        // TODO: ADD RANDOM
     };
 }
 

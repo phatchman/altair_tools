@@ -378,10 +378,13 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     defer out_file.close(ctx.io);
 
     var text_mode: DiskImage.TextMode = .Auto;
-    if (options.text_mode) {
+    if (options.text_mode) { // TODO: Change this to work as an enum option.. three options is just too much?
+        // We should also restrict to the OS it applies to... maybe twe add a "BASIC" enum instead of abusing Ascii?
         text_mode = .Text;
     } else if (options.bin_mode) {
         text_mode = .Binary;
+    } else if (options.rand_mode) {
+        text_mode = .Rand;
     }
 
     var file_writer = out_file.writer(ctx.io, &.{});
@@ -399,14 +402,14 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
 
 /// Copy a file to the image
 pub fn putFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
-    try _putFile(ctx, disk_image, options.multiple_files[0], options.cpm_user, options.force, if (options.text_mode) .Text else .Auto);
+    try _putFile(ctx, disk_image, options.multiple_files[0], options);
 }
 
 /// Copy multiple files to the image
 pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
     var had_error = false;
     for (options.multiple_files) |filename| {
-        _putFile(ctx, disk_image, filename, options.cpm_user, options.force, if (options.text_mode) .Text else .Auto) catch |err| {
+        _putFile(ctx, disk_image, filename, options) catch |err| {
             if (err == error.CommandFailedCanContinue) {
                 had_error = true;
                 continue;
@@ -420,8 +423,18 @@ pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
     }
 }
 
-pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user: ?u8, force: bool, text_mode: DiskImage.TextMode) !void {
-    const cpm_user = user orelse 0;
+pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, options: CommandLineOptions) !void {
+    const cpm_user = options.cpm_user orelse 0;
+
+    var text_mode: DiskImage.TextMode = .Auto;
+    if (options.text_mode) { // TODO: Change this to work as an enum option.. three options is just too much?
+        // We should also restrict to the OS it applies to... maybe twe add a "BASIC" enum instead of abusing Ascii?
+        text_mode = .Text;
+    } else if (options.bin_mode) {
+        text_mode = .Binary;
+    } else if (options.rand_mode) {
+        text_mode = .Rand;
+    }
 
     var cwd = std.Io.Dir.cwd();
 
@@ -432,7 +445,7 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, user
     defer in_file.close(ctx.io);
 
     var file_reader = in_file.reader(ctx.io, &.{});
-    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, force, text_mode) catch |err| {
+    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, options.force, text_mode) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
                 printErrorMessage(current_command, .file_exists, .{filename}, err);

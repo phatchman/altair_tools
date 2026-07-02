@@ -93,6 +93,7 @@ pub const CommandLineOptions = struct {
     do_label_set: bool = false,
     text_mode: bool = false,
     bin_mode: bool = false,
+    rand_mode: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
     force: bool = false,
@@ -225,6 +226,12 @@ pub fn main(init_args: std.process.Init) !void {
                     .help = "Put or get a file in binary mode",
                     .short_alias = 'b',
                     .value_ref = r.mkRef(&options.bin_mode),
+                },
+                .{
+                    .long_name = "rand",
+                    .help = "Put or get a random access file (Altair DOS/BASIC only)",
+                    .short_alias = 'n',
+                    .value_ref = r.mkRef(&options.rand_mode),
                 },
                 .{
                     .long_name = "user",
