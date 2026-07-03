@@ -679,8 +679,6 @@ pub const DiskImage = struct {
 
             switch (entry.attribs[0]) {
                 'S' => { // sequential
-                    std.debug.print("t'her\n", .{});
-
                     var file_no: u8 = 255;
                     var decode_basic_file: bool = false;
                     var first_sector: bool = true;
@@ -760,7 +758,7 @@ pub const DiskImage = struct {
                     return std.Io.File.OpenError.PathAlreadyExists;
                 }
             }
-            std.debug.print("text mode = {t}\n", .{text_mode});
+
             // These are used as temporary buffers for converting BASIC files.
             var conversion_buffer_in: std.Io.Writer.Allocating = .init(self.allocator);
             defer conversion_buffer_in.deinit();
@@ -807,6 +805,10 @@ pub const DiskImage = struct {
             var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
             var sector_nr: u16 = (alloc % allocs_per_track) * sectors_per_alloc; // This is the first sector for this allocation of 8 sectors.
             var group_map: [256]u8 = @splat(0); // Store track / sector allocations for random access files.
+            var group_map_location: PhysicalAddress = .{
+                .track = self.image_type.reserved_tracks + alloc / allocs_per_track,
+                .sector = (alloc % allocs_per_track) * sectors_per_alloc,
+            };
 
             new_entry.raw.track = @intCast(track_nr);
             new_entry.raw.sector = @intCast(sector_nr);
@@ -817,18 +819,22 @@ pub const DiskImage = struct {
             var prev_sector: DiskSector = undefined;
             var start_sector: usize = if (text_mode == .Rand) 2 else 0; // For random access files, first 2 sectors are index bytes
             var group_idx: usize = 0;
-            var group_map_location: PhysicalAddress = .{
-                .track = self.image_type.reserved_tracks + alloc / allocs_per_track,
-                .sector = (alloc % allocs_per_track) * sectors_per_alloc,
-            };
             while (nbytes != 0) {
-                if (text_mode == .Rand and nbytes != 128) {
-                    logerr("Random access files must be a multiple of 128 bytes in length.", .{});
-                    return error.InvalidFormat;
+                if (text_mode == .Rand) {
+                    if (nbytes != 128) {
+                        logerr("Random access files must be a multiple of 128 bytes in length.", .{});
+                        return error.InvalidFormat;
+                    } else if (group_idx == 256) {
+                        // TODO: Test this
+                        log.warn("Random access files are limited to {d} bytes. File truncated.", .{255 * sectors_per_alloc * self.image_type.sector_size_data});
+                        break;
+                    }
                 }
                 track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
-                group_map[group_idx] = @as(u8, @intCast(alloc % allocs_per_track)) << 6 | (@as(u8, @intCast(track_nr)) - 6);
-                group_idx += 1;
+                if (text_mode == .Rand) {
+                    group_map[group_idx] = @as(u8, @intCast(alloc % allocs_per_track)) << 6 | (@as(u8, @intCast(track_nr)) - 6);
+                    group_idx += 1;
+                }
 
                 for (start_sector..sectors_per_alloc) |offset| {
                     sector_nr = (alloc % allocs_per_track) * sectors_per_alloc + @as(u16, @intCast(offset));
@@ -887,6 +893,10 @@ pub const DiskImage = struct {
             // Once all 8 sectors have been written, a new allocation is taken.
             // This means we need to keep going back to the previous sector to write the track and sector pointers after we have
             // written data to the next sector.
+
+            // Random access files are laid down the same way as sequential files, except that the first
+            // 256 bytes of the file contain encoded pointers to the track and group into the random access file.
+            // The nbytes field for the sector tells us how many index entries to scan.
         }
 
         /// write an Altair DOS diretory entry (RawDirEntry)

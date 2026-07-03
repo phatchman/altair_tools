@@ -220,7 +220,7 @@ pub const RawAdosDirEntry = struct {
     };
 
     pub fn isDeleted(self: *const RawAdosDirEntry) bool {
-        return self.raw.filename[0] == 0x00;
+        return self.raw.filename[0] == 0x00 or self.raw.filename[0] == 0xff;
     }
 
     pub fn setDeleted(self: *RawAdosDirEntry) void {
@@ -250,15 +250,16 @@ pub const RawAdosDirEntry = struct {
                 .{ entry_nr, raw.sector, image_type.sectors_per_track - 1 },
             );
         }
-        switch (raw.mode) {
-            0x02, 0x04 => {}, // TODO: enum it
+        if (!self.isDeleted()) switch (raw.mode) {
+            0x02, 0x04 => {}, // TODO: enumify this?
             else => {
                 logerr(
                     "Invalid directory entry: {} [Invalid mode: {}. Must be 0x2 (sequential) or 0x4 (random access)]",
                     .{ entry_nr, raw.mode },
                 );
+                @panic("oops");
             },
-        }
+        };
     }
 };
 
@@ -669,7 +670,7 @@ pub const DirectoryTable = struct {
             var nr_sectors: u32 = 0;
             const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
 
-            if (entry.raw.mode == 0x02) {
+            if (entry.raw.mode == 0x02) { // Sequential
                 while (track_nr != 0) {
                     const allocation = try toAllocationADOS(self.image_type, .{ .track = track_nr, .sector = sector_nr });
                     self.free_allocations.unset(allocation);
@@ -712,10 +713,6 @@ pub const DirectoryTable = struct {
             };
         };
         self.cooked_directories.appendAssumeCapacity(try CookedDirEntry.initADOS(entry, os_ados, allocations, self.image_type));
-        // const this_entry = self.cooked_directories.items[self.cooked_directories.items.len].filename;
-        // for (self.cooked_directories.items[0 .. self.cooked_directories.items.len - 1]) |item| {
-        //     if (std.mem.eql(u8, &item.filename, &this_entry) and false) @panic("how now brown cow");
-        // }
     }
 
     /// Remove a file from the image.
