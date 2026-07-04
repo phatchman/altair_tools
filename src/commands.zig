@@ -2,6 +2,12 @@
 //! Dispatches command line options to the appropriate command and prints the results
 //! Any errors are reported back via the error context.
 
+// TODO: Put multiple is tryign to copy the same files multiple times?
+// PS C:\src\altair_tools> .\zig-out\bin\altairdsk.exe mini.dsk -P PIP STARTREK
+// Error performing put multiple files: Error creating file PIP. Use --force to overwrite: File already exists
+// Error performing put multiple files: Error creating file STARTREK. Use --force to overwrite: File already exists
+// TODO: Errors readings DISK02.DSK
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;

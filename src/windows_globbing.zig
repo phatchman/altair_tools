@@ -9,6 +9,7 @@ pub fn glob(io: std.Io, gpa: std.mem.Allocator, pattern: []const u8, out_paths: 
     // Check if any globbing is required.
     if (std.mem.findAny(u8, basename, "*?") == null) {
         try out_paths.append(gpa, try gpa.dupe(u8, pattern));
+        return;
     }
 
     const cwd = try std.Io.Dir.cwd().openDir(io, dirname, .{ .iterate = true });

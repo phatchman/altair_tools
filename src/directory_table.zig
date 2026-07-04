@@ -239,25 +239,26 @@ pub const RawAdosDirEntry = struct {
         const raw = self.raw;
         if (raw.track >= image_type.tracks) {
             logerr(
-                "Invalid directory entry: {} [Invalid track: {}. Must be 0 - {}.]",
+                "Invalid directory entry: {} [Invalid track: {}. Must be 0 - {}]",
                 .{ entry_nr, raw.track, image_type.tracks - 1 },
             );
             return error.InvalidDirectoryEntry;
         }
         if (raw.sector >= image_type.sectors_per_track) {
             logerr(
-                "Invalid directory entry: {} [Invalid sector: {}. Must be 0 - {}.]",
+                "Invalid directory entry: {} [Invalid sector: {}. Must be 0 - {}]",
                 .{ entry_nr, raw.sector, image_type.sectors_per_track - 1 },
             );
+            return error.InvalidDirectoryEntry;
         }
         if (!self.isDeleted()) switch (raw.mode) {
             0x02, 0x04 => {}, // TODO: enumify this?
             else => {
                 logerr(
-                    "Invalid directory entry: {} [Invalid mode: {}. Must be 0x2 (sequential) or 0x4 (random access)]",
+                    "Invalid directory entry: {} [Invalid mode: {}. Must be 0x02 (sequential) or 0x04 (random access)]",
                     .{ entry_nr, raw.mode },
                 );
-                @panic("oops");
+                return error.InvalidDirectoryEntry;
             },
         };
     }
@@ -468,6 +469,12 @@ pub const DirectoryTable = struct {
         };
     }
 
+    // TODO: Issue is that track 0 is not usable on mini disk data disks. so total allocs it 2 less,
+    // but really we want to pretend those are available because otherwise we'd have to do special
+    // indexing into the disk.
+    // So we can mark alloc 0 and 1 as used on directory load. but then we need to work out a
+    // fix for the max file size calc.
+
     pub fn deinit(self: *DirectoryTable) void {
         self.arena.deinit();
     }
@@ -602,6 +609,11 @@ pub const DirectoryTable = struct {
             // 8 sectors per block (block_size / sector_size_data)
             self.free_allocations.unset(try toAllocationADOS(self.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
         }
+        if (self.image_type.type_id == .ADOS_MINI) {
+            // Can't use track 0 to store data.
+            self.free_allocations.unset(0);
+            self.free_allocations.unset(1);
+        }
         var sector: DiskSector = .initUnformatted(self.image_type, directory_track);
         try self.raw_directories.ados.ensureTotalCapacity(self.allocator(), self.image_type.directories);
         for (0..self.image_type.sectors_per_track) |sector_nr| {
@@ -610,7 +622,6 @@ pub const DirectoryTable = struct {
             try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
             self.raw_directories.ados.appendSliceAssumeCapacity(entries);
         }
-        if (self.image_type.type_id == .ADOS_MINI) return; // TODO: TEMP
 
         try self.cooked_directories.ensureTotalCapacity(self.allocator(), self.raw_directories.ados.items.len);
         loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
@@ -689,21 +700,42 @@ pub const DirectoryTable = struct {
                             return error.InvalidImageFile;
                         },
                     };
-                    nbytes += sector.mits_track_6_76.nbytes;
+                    nbytes += sector.data.nbytes;
                     nr_sectors += 1;
-                    track_nr = sector.mits_track_6_76.next_track;
-                    sector_nr = sector.mits_track_6_76.next_sector;
+                    track_nr = sector.data.next_track;
+                    sector_nr = sector.data.next_sector;
                 }
                 used = (nr_sectors + (sectors_per_alloc - 1)) / sectors_per_alloc;
             } else if (entry.raw.mode == 0x04) { // Random access
-                var sector: DiskSector = .initUnformatted(self.image_type, 6); // TODO
+                var group_map: [256]u8 = undefined;
+                var sector: DiskSector = .initUnformatted(self.image_type, track_nr);
                 image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
                     logerr("Error reading from disk image: {t}\n", .{err});
                     return error.InvalidImageFile;
                 };
+                const nr_groups: u32 = sector.data.nbytes;
+                nbytes = nr_groups * self.image_type.block_size;
+                used = nr_groups;
+                @memcpy(group_map[0..128], sector.dataBytes());
 
-                nbytes = sector.mits_track_6_76.nbytes * 8 * self.image_type.block_size; // TODO:
-                used = sector.mits_track_6_76.nbytes * 8;
+                image.readSectorPhysical(.{ .track = sector.data.next_track, .sector = sector.data.next_sector }, &sector) catch |err| {
+                    logerr("Error reading from disk image: {t}\n", .{err});
+                    return error.InvalidImageFile;
+                };
+                @memcpy(group_map[128..], sector.dataBytes());
+                // Can't use track-size here as we only care about the size of the data porttions of the track
+                //const allocs_per_track = (self.image_type.sector_size_data * self.image_type.sectors_per_track) / self.image_type.block_size;
+                for (0..nr_groups) |idx| {
+                    const encoded_group: u8 = group_map[idx];
+                    const alloc = try toAllocationADOS(self.image_type, .{
+                        .track = encoded_group & 0x3f + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
+                        .sector = (encoded_group >> 6) * sectors_per_alloc,
+                    });
+                    // const group_in_track = encoded_group >> 6;
+                    // const group = track * allocs_per_track + group_in_track;
+                    //             std.debug.print("enc = {}, apt = {}, tk = {}, git = {}, g = {}\n", .{ encoded_group, allocs_per_track, track, group_in_track, group });
+                    self.free_allocations.unset(alloc); // TODO: We need checks around all of these. it is coming from untrusted data.
+                }
             } else unreachable; // Should have already been validated before we get here.
             break :blk .{
                 .track = entry.raw.track,
@@ -755,12 +787,12 @@ pub const DirectoryTable = struct {
                                     },
                                     else => return err,
                                 };
-                                track_nr = sector.mits_track_6_76.next_track;
-                                sector_nr = sector.mits_track_6_76.next_sector;
-                                sector.mits_track_6_76.file_nr = 0;
-                                sector.mits_track_6_76.nbytes = 0;
-                                sector.mits_track_6_76.next_sector = 0;
-                                sector.mits_track_6_76.next_track = 0;
+                                track_nr = sector.data.next_track;
+                                sector_nr = sector.data.next_sector;
+                                sector.data.file_nr = 0;
+                                sector.data.nbytes = 0;
+                                sector.data.next_sector = 0;
+                                sector.data.next_track = 0;
                                 try disk_image.writeSector(location, &sector);
                             }
                         }
@@ -915,7 +947,7 @@ pub const DirectoryTable = struct {
         const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
 
         if (!for_random_access) {
-            for (71..self.image_type.tracks) |track_nr| {
+            for (self.image_type.OS.ados.directory_track + 1..self.image_type.tracks) |track_nr| {
                 for (0..allocs_per_track) |alloc_in_track| {
                     const alloc_nr = (track_nr - self.image_type.reserved_tracks) * allocs_per_track + alloc_in_track;
                     if (self.free_allocations.isSet(alloc_nr)) {
@@ -939,11 +971,11 @@ pub const DirectoryTable = struct {
                 unreachable;
             }
             return error.OutOfAllocs;
-        } else {
-            var track: u8 = 69;
-            while (track >= 0) : (track -= 1) {
+        } else { // Randomn access
+            var track: u8 = self.image_type.OS.ados.directory_track - 1;
+            while (track >= self.image_type.reserved_tracks) : (track -= 1) {
                 for (0..allocs_per_track) |offset| {
-                    const alloc = track * allocs_per_track + offset;
+                    const alloc = (track - self.image_type.reserved_tracks) * allocs_per_track + offset;
                     if (self.free_allocations.isSet(alloc)) {
                         self.free_allocations.unset(alloc);
                         return @intCast(alloc);

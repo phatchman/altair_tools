@@ -259,7 +259,12 @@ pub const DiskImage = struct {
     }
 
     pub fn installOperatingSystem(self: *DiskImage, io: std.Io, in_file: File) !void {
+        std.debug.print("here\n", .{});
         const in_size = try in_file.length(io);
+        if (self.image_type.reserved_tracks == 0) {
+            logerr("Not a bootable disk", .{});
+            return error.InvalidImagefile;
+        }
         // This is safe as only track 0 can have a different sector count.
         const expected_size = self.sectorsForTrack(0) * self.image_type.sectorSizeRawForTrack(0) +
             (self.image_type.reserved_tracks - 1) * self.sectorsForTrack(1) * self.image_type.sectorSizeRawForTrack(1);
@@ -270,7 +275,18 @@ pub const DiskImage = struct {
 
         var buf: [4096]u8 = undefined;
         var file_reader = in_file.reader(io, &buf);
-        _ = try file_reader.interface.stream(self.writer.interface(), .unlimited);
+        // TODO: Investigate why these don't work. SendFile mneeds a buffer in the writer, not the reader.
+        // but streamRemaining should work??
+        //_ = try file_reader.interface.streamRemaining(self.writer.interface());
+        //_ = try self.writer.interface().sendFileAll(&file_reader, .unlimited);
+        while (true) {
+            const nbytes = file_reader.interface.readSliceShort(&buf) catch |err| switch (err) {
+                error.ReadFailed => return file_reader.err.?,
+            };
+            if (nbytes == 0) break;
+            try self.writer.interface().writeAll(buf[0..nbytes]);
+        }
+
         try self.writer.seekTo(0);
     }
 
@@ -687,29 +703,29 @@ pub const DiskImage = struct {
 
                     while (track_nr != 0) {
                         try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
-                        if (file_no == 255) file_no = sector.mits_track_6_76.file_nr;
+                        if (file_no == 255) file_no = sector.data.file_nr;
 
-                        if (file_no == sector.mits_track_6_76.file_nr) {
+                        if (file_no == sector.data.file_nr) {
                             if (first_sector and text_mode == .Text) {
-                                if (sector.mits_track_6_76.data[0] == 0xff) { // Indicates a BASIC file.
+                                if (sector.data.data[0] == 0xff) { // Indicates a BASIC file.
                                     decode_basic_file = true;
                                 } else {
-                                    log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.mits_track_6_76.data[0]});
+                                    log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.data.data[0]});
                                     return error.InvalidFormat;
                                 }
                             }
                             if (decode_basic_file) {
-                                try temp_file.writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+                                try temp_file.writer.writeAll(sector.data.data[0..sector.data.nbytes]);
                             } else {
-                                try out_writer.writeAll(sector.mits_track_6_76.data[0..sector.mits_track_6_76.nbytes]);
+                                try out_writer.writeAll(sector.data.data[0..sector.data.nbytes]);
                             }
                             first_sector = false;
                         } else {
-                            log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.mits_track_6_76.file_nr });
+                            log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.data.file_nr });
                             return error.InvalidRecordNumber;
                         }
-                        track_nr = sector.mits_track_6_76.next_track;
-                        sector_nr = sector.mits_track_6_76.next_sector;
+                        track_nr = sector.data.next_track;
+                        sector_nr = sector.data.next_sector;
                     }
                     if (decode_basic_file) {
                         var reader: std.Io.Reader = .fixed(temp_file.written());
@@ -723,10 +739,10 @@ pub const DiskImage = struct {
                     // The first sector's `nbytes` holds the number of groups.
                     var group_map: [256]u8 = undefined;
                     try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
-                    const group_count = sector.mits_track_6_76.nbytes;
+                    const group_count = sector.data.nbytes;
                     @memcpy(group_map[0..128], sector.dataBytes());
-                    track_nr = sector.mits_track_6_76.next_track;
-                    sector_nr = sector.mits_track_6_76.next_sector;
+                    track_nr = sector.data.next_track;
+                    sector_nr = sector.data.next_sector;
                     try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
                     @memcpy(group_map[128..], sector.dataBytes());
 
@@ -737,7 +753,7 @@ pub const DiskImage = struct {
                         track_nr = (group_encoded & 0x3f) + 6;
                         const group_nr = group_encoded >> 6;
                         sector_nr = @intCast(group_nr * sectors_per_group);
-                        // The first 2 sectors of the first group are the group_index and group_map. So skip during
+                        // The first 2 sectors of the first group are the group_index and group_map. So skip during file writing
                         for (if (idx == 0) 2 else 0..sectors_per_group) |offset| {
                             try self.readSectorPhysical(.{ .track = track_nr, .sector = @intCast(sector_nr + offset) }, &sector);
                             try out_writer.writeAll(sector.dataBytes());
@@ -772,10 +788,11 @@ pub const DiskImage = struct {
                 var reader_in: std.Io.Reader = .fixed(conversion_buffer_in.written());
 
                 try conversion_buffer_out.writer.writeByte(' ');
-                while (reader_in.takeDelimiter('\n')) |slice| {
-                    if (slice == null or slice.?.len == 0) break;
-                    try conversion_buffer_out.writer.writeAll(slice.?);
-                    if (slice.?[slice.?.len - 1] == '\r') {
+                while (reader_in.takeDelimiter('\n')) |maybe_slice| {
+                    const slice = maybe_slice orelse break;
+                    if (slice.len == 0) break;
+                    try conversion_buffer_out.writer.writeAll(slice);
+                    if (slice[slice.len - 1] == '\r') {
                         try conversion_buffer_out.writer.writeByte('\n');
                     } else {
                         try conversion_buffer_out.writer.writeAll("\r\n");
@@ -821,7 +838,7 @@ pub const DiskImage = struct {
             var group_idx: usize = 0;
             while (nbytes != 0) {
                 if (text_mode == .Rand) {
-                    if (nbytes != 128) {
+                    if (nbytes != 128) { // TODO: Really they need to be a multiple of 1K.
                         logerr("Random access files must be a multiple of 128 bytes in length.", .{});
                         return error.InvalidFormat;
                     } else if (group_idx == 256) {
@@ -832,7 +849,8 @@ pub const DiskImage = struct {
                 }
                 track_nr = self.image_type.reserved_tracks + alloc / allocs_per_track;
                 if (text_mode == .Rand) {
-                    group_map[group_idx] = @as(u8, @intCast(alloc % allocs_per_track)) << 6 | (@as(u8, @intCast(track_nr)) - 6);
+                    const track_offset: u8 = if (self.image_type.type_id == .ADOS_8IN) 6 else 0;
+                    group_map[group_idx] = @as(u8, @intCast(alloc % allocs_per_track)) << 6 | (@as(u8, @intCast(track_nr)) - track_offset);
                     group_idx += 1;
                 }
 
@@ -842,12 +860,12 @@ pub const DiskImage = struct {
                     const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
                     var sector: DiskSector = .initFormatted(self.image_type, location);
                     @memcpy(sector.dataBytes()[0..nbytes], file_data[0..nbytes]);
-                    sector.mits_track_6_76.nbytes = @intCast(nbytes);
-                    sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
+                    sector.data.nbytes = @intCast(nbytes);
+                    sector.data.file_nr = @intCast(extent_nr + 1);
                     try self.writeSector(location, &sector);
                     if (prev_location) |prev| {
-                        prev_sector.mits_track_6_76.next_track = @intCast(track_nr);
-                        prev_sector.mits_track_6_76.next_sector = @intCast(sector_nr);
+                        prev_sector.data.next_track = @intCast(track_nr);
+                        prev_sector.data.next_sector = @intCast(sector_nr);
                         try self.writeSector(prev, &prev_sector);
                     }
                     prev_location = location;
@@ -864,18 +882,19 @@ pub const DiskImage = struct {
             if (text_mode == .Rand) {
                 // Write the group index block.
                 var sector: DiskSector = .initFormatted(self.image_type, group_map_location);
-                sector.mits_track_6_76.nbytes = @intCast(group_idx);
-                sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
-                sector.mits_track_6_76.next_track = @intCast(group_map_location.track);
-                sector.mits_track_6_76.next_sector = @intCast(group_map_location.sector + 1);
+                sector.data.nbytes = @intCast(group_idx);
+                sector.data.file_nr = @intCast(extent_nr + 1);
+                sector.data.next_track = @intCast(group_map_location.track);
+                sector.data.next_sector = @intCast(group_map_location.sector + 1);
                 @memcpy(sector.dataBytes(), group_map[0..128]);
+                std.debug.print("writing to {} with nbytes = {}\n", .{ group_map_location, sector.data.nbytes });
                 try self.writeSector(group_map_location, &sector);
                 group_map_location.sector += 1;
                 sector = .initFormatted(self.image_type, group_map_location);
-                sector.mits_track_6_76.nbytes = @intCast(group_idx);
-                sector.mits_track_6_76.file_nr = @intCast(extent_nr + 1);
-                sector.mits_track_6_76.next_track = @intCast(group_map_location.track);
-                sector.mits_track_6_76.next_sector = @intCast(group_map_location.sector + 1);
+                sector.data.nbytes = @intCast(group_idx);
+                sector.data.file_nr = @intCast(extent_nr + 1);
+                sector.data.next_track = @intCast(group_map_location.track);
+                sector.data.next_sector = @intCast(group_map_location.sector + 1);
                 @memcpy(sector.dataBytes(), group_map[128..]);
                 try self.writeSector(group_map_location, &sector);
             }
@@ -895,8 +914,8 @@ pub const DiskImage = struct {
             // written data to the next sector.
 
             // Random access files are laid down the same way as sequential files, except that the first
-            // 256 bytes of the file contain encoded pointers to the track and group into the random access file.
-            // The nbytes field for the sector tells us how many index entries to scan.
+            // 256 bytes of the file contain encoded pointers to the track and group holding the random access file.
+            // The nbytes field for the index sectors tells us how many index entries to scan.
         }
 
         /// write an Altair DOS diretory entry (RawDirEntry)
@@ -909,7 +928,7 @@ pub const DiskImage = struct {
             }
 
             // 16 bytes per directory entry. Directory start at Track 70
-            const location: PhysicalAddress = .{ .track = 70, .sector = extent_nr / entries_per_sector };
+            const location: PhysicalAddress = .{ .track = self.image_type.OS.ados.directory_track, .sector = extent_nr / entries_per_sector };
             var sector: DiskSector = .initFormatted(self.image_type, location);
 
             // start_index is the index of the directory entry that is at

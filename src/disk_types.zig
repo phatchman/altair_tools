@@ -86,6 +86,7 @@ pub const PhysicalAddress = struct {
                 "Attempt to read from an invalid track. [Read track {}. Expected 0-{}]",
                 .{ self.track, image_type.tracks - 1 },
             );
+            if (true) @panic("oop");
             return error.InvalidTrack;
         }
         if (self.sector >= image_type.sectorsForTrack(self.track)) {
@@ -98,46 +99,6 @@ pub const PhysicalAddress = struct {
     }
 };
 
-const Sector = union(enum) {
-    track_0_5: extern struct {
-        track_nr: u8,
-        address: u16 align(1),
-        data: [128]u8,
-        stop: u8,
-        checksum: u8,
-        unused: [4]u8,
-    },
-    track_6_76: extern struct {
-        track_nr: u8,
-        sector_nr: u8,
-        file_nr: u8,
-        bytes_written: u8,
-        checksum: u8,
-        next_track: u8,
-        next_sector: u8,
-        data: [128]u8,
-        stop: u8,
-        unused: u8,
-    },
-
-    pub fn format(self: *const Sector, writer: *std.Io.Writer) !void {
-        switch (self.*) {
-            .track_0_5 => |tk| {
-                try writer.print(
-                    "TK[{x:02}] AD[{x:04}] ST[{x:02}] CK[{x:02}]",
-                    .{ tk.track_nr, tk.address, tk.stop, tk.checksum },
-                );
-            },
-            .track_6_76 => |tk| {
-                try writer.print(
-                    "TK[{x:02}] SK[{x:02}] FN[{x:04}] NB[{x:02}] CK[{x:02}] NT[{x:02}] NS[{x:02}] ST[{x:02}]",
-                    .{ tk.track_nr, tk.sector_nr, tk.file_nr, tk.bytes_written, tk.checksum, tk.next_track, tk.next_sector, tk.stop },
-                );
-            },
-        }
-    }
-};
-
 /// Represents a single disk sector.
 /// For MITS hard-sectored disks, the raw on-disk sector length is different to the data length.
 pub const DiskSector = union(enum) {
@@ -145,7 +106,7 @@ pub const DiskSector = union(enum) {
     const DUMP = false;
     pub const sector_size_max = 512;
 
-    mits_track_0_5: extern struct {
+    reserved: extern struct {
         track_nr: u8,
         address: u16 align(1),
         data: [128]u8,
@@ -153,7 +114,7 @@ pub const DiskSector = union(enum) {
         checksum: u8,
         zero: [4]u8,
     },
-    mits_track_6_76: extern struct {
+    data: extern struct {
         track_nr: u8,
         sector_nr: u8,
         file_nr: u8,
@@ -172,10 +133,19 @@ pub const DiskSector = union(enum) {
         return switch (image_type.type_id) {
             // TODO: Need to make this so when add a new 137 byte format we
             // either get a compile error here, or don;t have to update this switch. Either one.
-            .FDD_8IN, .FDD_8IN_8MB, .ADOS_8IN, .ADOS_MINI => if (track_nr < 6)
-                .{ .mits_track_0_5 = undefined }
+            .FDD_8IN,
+            .FDD_8IN_8MB,
+            => if (track_nr < 6)
+                .{ .reserved = undefined }
             else
-                .{ .mits_track_6_76 = undefined },
+                .{ .data = undefined },
+            .ADOS_8IN,
+            .ADOS_MINI,
+            .ADOS_MINI_BOOT,
+            => if (track_nr < image_type.reserved_tracks)
+                .{ .reserved = undefined }
+            else
+                .{ .data = undefined },
             else => switch (image_type.sectorSizeDataForTrack(track_nr)) {
                 128 => .{ .cpm_128 = undefined },
                 512 => .{ .cpm_512 = undefined },
@@ -188,19 +158,16 @@ pub const DiskSector = union(enum) {
         var result: DiskSector = .initUnformatted(image_type, location.track);
         @memset(result.rawBytes(), 0xe5);
         switch (result) {
-            .mits_track_0_5 => |*sector| {
-                // At least PIP in altair basic doesn't cause the first 6 tracks to be initialized.
-                // I still need to test with altair dos.
-                if (image_type.OS == .cpm) {
-                    result.rawBytes()[1] = 0x00;
-                    result.rawBytes()[2] = 0x01;
-                    sector.track_nr = @truncate(location.track | 0x80);
-                    sector.stop = 0xff;
-                    @memset(&sector.zero, 0x00);
-                    sector.checksum = result.mitsChecksum(location);
-                }
+            .reserved => |*sector| {
+                // sets `address`. Do it with raw bytes to avoid endian issues.
+                result.rawBytes()[1] = 0x00;
+                result.rawBytes()[2] = 0x01;
+                sector.track_nr = @truncate(location.track | 0x80);
+                sector.stop = 0xff;
+                @memset(&sector.zero, 0x00);
+                sector.checksum = result.mitsChecksum(location);
             },
-            .mits_track_6_76 => |*sector| {
+            .data => |*sector| {
                 switch (image_type.OS) {
                     .cpm => {
                         result.rawBytes()[1] = 0x00;
@@ -216,15 +183,23 @@ pub const DiskSector = union(enum) {
                         @memset(result.rawBytes(), 0x00);
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
-                        sector.sector_nr = @intCast((image_type.skew_table[location.sector] * 17) % 32);
+                        sector.sector_nr = if (image_type.type_id == .ADOS_8IN)
+                            @intCast((image_type.skew_table[location.sector] * 17) % 32)
+                        else
+                            @intCast(location.sector);
                         sector.nbytes = 0;
                         // For each sector of directory track, set the first byte of the directory
                         // entry to 0xff, indicating "end of directory"
                         if (location.track == image_type.OS.ados.directory_track and location.sector == 0) {
-                            sector.nbytes = 0x80;
+                            if (image_type.type_id == .ADOS_8IN)
+                                sector.nbytes = 0x80;
                             sector.data[0] = 0xff;
+                        } else if (image_type.type_id == .ADOS_MINI and location.track == 0 and location.sector == 0) {
+                            result.data.nbytes = 0x15;
+                            result.data.checksum = 0x15;
+                        } else {
+                            sector.checksum = result.mitsChecksum(location);
                         }
-                        sector.checksum = result.mitsChecksum(location);
                     },
                     else => unreachable,
                 }
@@ -261,19 +236,23 @@ pub const DiskSector = union(enum) {
     /// Called just before the sector is written to disk.
     pub fn prepareWrite(self: *DiskSector, image_type: *const DiskImageType, location: PhysicalAddress) void {
         switch (self.*) {
-            .mits_track_0_5 => |*sector| {
+            .reserved => |*sector| {
                 switch (image_type.OS) {
                     .cpm => {
                         sector.checksum = self.mitsChecksum(location);
                     },
-                    .ados => if (location.track > 5) {
+                    .ados => { // if (location.track > 5) { // TODO: Need to sort out why >5 and do we need to do this for ADOS?
                         sector.checksum = self.mitsChecksum(location);
                     },
                     else => unreachable,
                 }
             },
-            .mits_track_6_76 => |*sector| {
-                sector.checksum = self.mitsChecksum(location);
+            .data => |*sector| {
+                if (image_type.type_id == .ADOS_MINI and location.track == 0 and location.sector == 0) {
+                    sector.checksum = 0x15;
+                } else {
+                    sector.checksum = self.mitsChecksum(location);
+                }
             },
             else => {},
         }
@@ -460,7 +439,9 @@ pub const DiskImageType = struct {
 
     /// Return total number of sectors used to store data.
     pub fn largestFileBytes(self: *const DiskImageType) u32 {
-        return (self.total_allocs - self.directory_allocs) * self.block_size;
+        // ADOS Mini can't use track 0, but still counts it as an allocation.
+        const adjustment: u32 = if (self.type_id == .ADOS_MINI) 2 else 0;
+        return (self.total_allocs - self.directory_allocs - adjustment) * self.block_size;
     }
 
     // By default, use the provided skew table, with no other adjustment required.
@@ -1070,7 +1051,7 @@ pub const DiskImageType_ADOS_8IN = struct {
                 reader.interface.readSliceAll(sector.rawBytes()) catch return false;
                 //           std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
 
-                return sector.mits_track_6_76.file_nr == entry_nr;
+                return sector.data.file_nr == entry_nr;
             }
             start = 0;
             reader.interface.readSliceAll(sector.rawBytes()) catch return false;
@@ -1084,8 +1065,8 @@ pub const DiskImageType_ADOS_8IN = struct {
 pub const DiskImageType_ADOS_MINI = struct {
     // Note that mits skew algorithm requires first sector to be 1, not 0
     const skew_table = [16]u16{
-        0, 2, 4, 6, 8, 10, 12, 14,
-        1, 3, 5, 7, 9, 11, 13, 15,
+        0, 1, 2,  3,  4,  5,  6,  7,
+        8, 9, 10, 11, 12, 13, 14, 15,
     };
 
     const sector_size = 137; // Note non-standard sector size.
@@ -1095,25 +1076,86 @@ pub const DiskImageType_ADOS_MINI = struct {
         var result = DiskImageType{
             .type_id = .ADOS_MINI,
             .type_name = "ADOS_MINI",
-            .description = "Altair DOS & BASIC 5.25\" Bootable Floppy Disk ",
+            .description = "Altair DOS & BASIC 5.25\" Data Floppy Disk ",
             .OS = .{
                 .ados = .{ .directory_track = 34 },
             },
             .tracks = 35,
-            .reserved_tracks = 11,
+            .reserved_tracks = 0, // was 11
             .sectors_per_track = 16,
             .sector_size_raw = sector_size,
             .sector_size_data = sector_data_size,
             .block_size = 1024,
             .directories = 127,
             .directory_allocs = 2,
-            .image_size = 76800,
+            .image_size = 76720,
             .varying_sector_format = true,
             .skew_table = &skew_table,
-            .detect_fn = DiskImageType_ADOS_8IN.isCorrectFormat, // TODO: Split this into OS-specific function?
+            .detect_fn = isCorrectFormat,
         };
         result.init();
         return result;
+    }
+
+    pub fn isCorrectFormat(_: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        var sector: [sector_size]u8 = undefined;
+        var reader = image_file.reader(io, &.{});
+        reader.interface.readSliceAll(&sector) catch return false;
+        return sector[135] == 0xff; // Look for stop byte vs zero bytes
+    }
+};
+
+pub const DiskImageType_ADOS_MINI_BOOT = struct {
+    // Note that mits skew algorithm requires first sector to be 1, not 0
+    const skew_table = [16]u16{
+        0, 2, 4, 6, 8, 10, 12, 14,
+        1, 3, 5, 7, 9, 11, 13, 15,
+    };
+
+    const sector_size = 137; // Note non-standard sector size.
+    const sector_data_size = 128;
+    const reserved_tracks = 12;
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .ADOS_MINI_BOOT,
+            .type_name = "ADOS_MINI_BOOT",
+            .description = "Altair DOS & BASIC 5.25\" Bootable Floppy Disk ",
+            .OS = .{
+                .ados = .{ .directory_track = 34 },
+            },
+            .tracks = 35,
+            .reserved_tracks = reserved_tracks,
+            .sectors_per_track = 16,
+            .sector_size_raw = sector_size,
+            .sector_size_data = sector_data_size,
+            .block_size = 1024,
+            .directories = 127,
+            .directory_allocs = 2,
+            .image_size = 76720,
+            .varying_sector_format = true,
+            .skew_table = &skew_table,
+            .skew_fn = skew,
+            .detect_fn = isCorrectFormat,
+        };
+        result.init();
+        return result;
+    }
+
+    pub fn isCorrectFormat(_: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        var sector: [sector_size]u8 = undefined;
+        var reader = image_file.reader(io, &.{});
+        reader.interface.readSliceAll(&sector) catch return false;
+        return sector[135] == 0x00; // Look for stop byte vs zero bytes
+    }
+
+    // This is never currently called for reserved tracks as they are written as raw 1367 byte sectors.
+    pub fn skew(table: []const u16, track: u16, sector: u16) u16 {
+        if (track < reserved_tracks) {
+            return table[sector];
+        } else {
+            return sector;
+        }
     }
 };
 
@@ -1134,6 +1176,7 @@ pub const DiskImageTypes = enum {
     CDOS_LGDSDD,
     ADOS_8IN,
     ADOS_MINI,
+    ADOS_MINI_BOOT,
 
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
@@ -1177,6 +1220,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .CDOS_LGDSDD = DiskImageType_CDOS_LGDSDD.init(),
     .ADOS_8IN = DiskImageType_ADOS_8IN.init(),
     .ADOS_MINI = DiskImageType_ADOS_MINI.init(),
+    .ADOS_MINI_BOOT = DiskImageType_ADOS_MINI_BOOT.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

@@ -29,6 +29,7 @@ test "disk formatted" {
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_fmt.dsk")),
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
             .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_fmt.dsk")),
+            .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_fmt.dsk")),
         };
         defer allocator.free(compare_image);
 
@@ -67,80 +68,25 @@ test "8in alt size" {
     try disk_image.loadDirectories(.full);
 }
 
-test "HDD 5MB formatted" {
-    const compare_image = @embedFile("test_disks/5mb_fmt.dsk");
-    var test_buffer: [HDD_5MB.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, HDD_5MB);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-test "HDD 5MB 1024 dirs formatted" {
-    const compare_image = @embedFile("test_disks/5mb_fmt.dsk");
-    var test_buffer: [HDD_5MB_1024.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, HDD_5MB_1024);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-test "Tarbell formatted" {
-    const compare_image = @embedFile("test_disks/tar_fmt.dsk");
-    var test_buffer: [TAR.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, TAR);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-test "FDC 1.5MB formatted" {
-    const compare_image = @embedFile("test_disks/1.5mb_fmt.dsk");
-    var test_buffer: [FDC.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDC);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-test "FDC 8MB formatted" {
-    const compare_image = @embedFile("test_disks/8mb_fmt.dsk");
-    var test_buffer: [FDC_8MB.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&test_buffer);
-
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDC_8MB);
-    defer disk_image.deinit();
-    try std.testing.expectEqualSlices(u8, compare_image, &test_buffer);
-}
-
-/// There are some part of the disk are essentially random as they are
-/// not explicitely set by the CPM bios and is just whatever happens to be in that part of memory
+/// There are some part of the disk which are essentially random as they are
+/// not explicitely set by the CPM BIOS and are just whatever happens to be in that part of memory
 /// These bytes are leftovers from Altair DOS, so are essentially ignored.
 /// These "random" bytes are also included in the checksum!!
 /// Which means that we can't even compare the checksums between two images.
-fn clearVariableBytes(in: []u8, os: OperatingSystem) []u8 {
-    if (os == .ados) {
+fn clearVariableBytes(in: []u8, image_type: *const DiskImageType) []u8 {
+    if (image_type.OS == .ados) {
         // Clear nbytes and checksum on directory track 70 as nbytes has no meaning there and
         // seems "random"
-        for (0..32) |sect_nr| {
+        for (0..image_type.sectors_per_track) |sect_nr| {
             // TODO: Need to change this for 5.25IN.
-            const start_idx: usize = (70 * 32 * 137) + sect_nr * 137;
+            const start_idx: usize = (image_type.OS.ados.directory_track * @as(usize, image_type.track_size)) + sect_nr * image_type.sector_size_raw;
             in[start_idx + 3] = 0xaa; // data bytes count (unused)
             in[start_idx + 4] = 0xaa; // checksum
         }
     } else {
         for (6..77) |track_nr| {
             for (0..32) |sect_nr| {
-                const start_idx: usize = (track_nr * 32 * 137) + sect_nr * 137;
+                const start_idx: usize = (track_nr * image_type.track_size) + sect_nr * image_type.sector_size_raw;
                 in[start_idx + 2] = 0xaa; // directory index (unused)
                 in[start_idx + 3] = 0xaa; // data bytes count (unused)
                 in[start_idx + 4] = 0xaa; // checksum
@@ -168,6 +114,8 @@ test "disk filled" {
             .CDOS_LGDSSD => try allocator.dupe(u8, @embedFile("test_disks/lgdssd_full.dsk")),
             .CDOS_LGDSDD => try allocator.dupe(u8, @embedFile("test_disks/lgdsdd_full.dsk")),
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_full.dsk")),
+            .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_full.dsk")),
+            .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_full.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -223,7 +171,7 @@ test "disk filled" {
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt.OS), clearVariableBytes(test_buffer, fmt.OS)),
+                .FDD_8IN, .ADOS_8IN, .ADOS_MINI, .ADOS_MINI_BOOT => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt)),
                 else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
@@ -277,8 +225,12 @@ test "overfill directory" {
         };
         defer if (compare_image) |ci| allocator.free(ci);
 
-        var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
-        var test_stream: std.Io.Reader = .fixed(&test_file);
+        // Need to create 0 length files for ados mini, otherwise run out of space before running out of dirs.
+        const test_file = switch (fmt.type_id) {
+            .ADOS_MINI, .ADOS_MINI_BOOT => "",
+            else => "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall",
+        };
+        var test_stream: std.Io.Reader = .fixed(test_file);
 
         const image_file = try allocator.alloc(u8, fmt.image_size);
         defer allocator.free(image_file);
@@ -301,7 +253,7 @@ test "overfill directory" {
         );
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt.OS), clearVariableBytes(image_file, fmt.OS)),
+                .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(image_file, fmt)),
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
@@ -317,7 +269,7 @@ test "overfill directory" {
         try std.testing.expect(cooked_dir != null);
         try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
         try disk_image.copyFromImage(cooked_dir.?, &out_file, .Auto);
-        try std.testing.expectEqualSlices(u8, &test_file, out_buf);
+        try std.testing.expectEqualSlices(u8, test_file, out_buf);
     }
 }
 
@@ -642,6 +594,7 @@ test "autodetect image" {
             .CDOS_LGDSDD => "src/test_disks/lgdsdd_fmt.dsk",
             .ADOS_8IN => "src/test_disks/ados_basic_fmt.dsk",
             .ADOS_MINI => "src/test_disks/ados_mini_fmt.dsk",
+            .ADOS_MINI_BOOT => "src/test_disks/ados_miniboot_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -686,13 +639,14 @@ fn randomData(_: void, smith: *std.testing.Smith) !void {
 
         disk_image.loadDirectories(.full) catch return;
 
-        var test_file: [1024 * 1024]u8 = undefined;
+        var test_file: []u8 = try std.testing.allocator.alloc(u8, 1024 * 1024);
+        defer std.testing.allocator.free(test_file);
 
         if (disk_image.directory.cooked_directories.items.len > 0) {
-            var file_writer: std.Io.Writer = .fixed(&test_file);
+            var file_writer: std.Io.Writer = .fixed(test_file);
             disk_image.copyFromImage(&disk_image.directory.cooked_directories.items[smith.index(disk_image.directory.cooked_directories.items.len)], &file_writer, smith.value(DiskImage.TextMode)) catch {};
         }
-        var len = smith.slice(&test_file);
+        var len = smith.slice(test_file);
         var file_reader: std.Io.Reader = .fixed(test_file[0..len]);
         var filename: [32]u8 = undefined;
         len = smith.slice(&filename);
@@ -853,10 +807,12 @@ const CDOS_LGSSDD = all_disk_types.getPtrConst(.CDOS_LGSSDD);
 const CDOS_LGDSSD = all_disk_types.getPtrConst(.CDOS_LGDSSD);
 const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
-const ADOS_MINI = all_disk_types.getPtrConst(.CDOS_LGDSDD);
+const ADOS_MINI = all_disk_types.getPtrConst(.ADOS_MINI);
+const ADOS_MINI_BOOT = all_disk_types.getPtrConst(.ADOS_MINI_BOOT);
 // Can be set to a limited set of formats when wanting to test a subset.
-//const all_formats = .{ADOS_8IN};
-const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
+//const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
+const all_formats = .{ADOS_MINI_BOOT};
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
 //     var result: [fields.len]*const DiskImageType = undefined;
