@@ -142,6 +142,7 @@ pub const DiskSector = union(enum) {
             .ADOS_8IN,
             .ADOS_MINI,
             .ADOS_MINI_BOOT,
+            .CPM_MINI,
             => if (track_nr < image_type.reserved_tracks)
                 .{ .reserved = undefined }
             else
@@ -159,25 +160,32 @@ pub const DiskSector = union(enum) {
         @memset(result.rawBytes(), 0xe5);
         switch (result) {
             .reserved => |*sector| {
-                // sets `address`. Do it with raw bytes to avoid endian issues.
-                result.rawBytes()[1] = 0x00;
-                result.rawBytes()[2] = 0x01;
+                // TODO:
+                if (image_type.type_id == .CPM_MINI and location.track == 0 and location.sector == 0) {
+                    @memset(result.rawBytes()[1..7], 0x00);
+                    result.rawBytes()[4] = 0x80;
+                } else {
+                    // sets `address`. Do it with raw bytes to avoid endian issues.
+                    result.rawBytes()[1] = 0x00;
+                    result.rawBytes()[2] = 0x01;
+                }
                 sector.track_nr = @truncate(location.track | 0x80);
                 sector.stop = 0xff;
                 @memset(&sector.zero, 0x00);
-                sector.checksum = result.mitsChecksum(location);
             },
             .data => |*sector| {
                 switch (image_type.OS) {
                     .cpm => {
-                        result.rawBytes()[1] = 0x00;
-                        result.rawBytes()[2] = 0x01;
+                        if (image_type.type_id == .CPM_MINI) {
+                            @memset(result.rawBytes()[1..7], 0);
+                        } else {
+                            result.rawBytes()[1] = 0x00;
+                            result.rawBytes()[2] = 0x01;
+                        }
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
                         sector.zero = 0x00;
-                        //std.debug.print("logical sector = {}, physical sector = {}:{x:02}\n", .{ location.sector, ((location.sector) * 17) % 32, ((location.sector) * 17) % 32 });
                         sector.sector_nr = @intCast(image_type.skew_table[location.sector]);
-                        sector.checksum = result.mitsChecksum(location);
                     },
                     .ados => {
                         @memset(result.rawBytes(), 0x00);
@@ -197,8 +205,6 @@ pub const DiskSector = union(enum) {
                         } else if (image_type.type_id == .ADOS_MINI and location.track == 0 and location.sector == 0) {
                             result.data.nbytes = 0x15;
                             result.data.checksum = 0x15;
-                        } else {
-                            sector.checksum = result.mitsChecksum(location);
                         }
                     },
                     else => unreachable,
@@ -218,17 +224,26 @@ pub const DiskSector = union(enum) {
     }
 
     /// Calculate the checksum for MITS hard-sectored 8" disks
-    fn mitsChecksum(self: *DiskSector, location: PhysicalAddress) u8 {
+    fn mitsChecksum(self: *DiskSector, _: PhysicalAddress) u8 {
         var csum: u8 = 0;
 
         for (self.dataBytes()) |b| {
             csum +%= b;
         }
-        if (location.track >= 6) {
+        if (self.* == .data) {
             csum +%= self.rawBytes()[2];
             csum +%= self.rawBytes()[3];
             csum +%= self.rawBytes()[5];
             csum +%= self.rawBytes()[6];
+        }
+        return csum;
+    }
+
+    fn mitsChecksumMini(self: *DiskSector, _: PhysicalAddress) u8 {
+        var csum: u8 = 0;
+
+        for (self.dataBytes()) |b| {
+            csum +%= b;
         }
         return csum;
     }
@@ -250,6 +265,8 @@ pub const DiskSector = union(enum) {
             .data => |*sector| {
                 if (image_type.type_id == .ADOS_MINI and location.track == 0 and location.sector == 0) {
                     sector.checksum = 0x15;
+                } else if (image_type.type_id == .CPM_MINI) {
+                    sector.checksum = self.mitsChecksumMini(location);
                 } else {
                     sector.checksum = self.mitsChecksum(location);
                 }
@@ -1097,11 +1114,14 @@ pub const DiskImageType_ADOS_MINI = struct {
         return result;
     }
 
-    pub fn isCorrectFormat(_: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
-        var sector: [sector_size]u8 = undefined;
-        var reader = image_file.reader(io, &.{});
-        reader.interface.readSliceAll(&sector) catch return false;
-        return sector[135] == 0xff; // Look for stop byte vs zero bytes
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        if (DiskImageType_ADOS_8IN.isCorrectFormat(self, io, image_file)) {
+            var sector: [sector_size]u8 = undefined;
+            var reader = image_file.reader(io, &.{});
+            reader.interface.readSliceAll(&sector) catch return false;
+            return sector[135] == 0xff; // Look for stop byte vs zero bytes
+        }
+        return false;
     }
 };
 
@@ -1142,11 +1162,14 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
         return result;
     }
 
-    pub fn isCorrectFormat(_: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
-        var sector: [sector_size]u8 = undefined;
-        var reader = image_file.reader(io, &.{});
-        reader.interface.readSliceAll(&sector) catch return false;
-        return sector[135] == 0x00; // Look for stop byte vs zero bytes
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        if (DiskImageType_ADOS_8IN.isCorrectFormat(self, io, image_file)) {
+            var sector: [sector_size]u8 = undefined;
+            var reader = image_file.reader(io, &.{});
+            reader.interface.readSliceAll(&sector) catch return false;
+            return sector[135] == 0x00; // Look for stop byte vs zero bytes
+        }
+        return false;
     }
 
     // This is never currently called for reserved tracks as they are written as raw 1367 byte sectors.
@@ -1156,6 +1179,44 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
         } else {
             return sector;
         }
+    }
+};
+
+pub const DiskImageType_CPM_MINI = struct {
+    // Note that mits skew algorithm requires first sector to be 1, not 0
+    // const skew_table = [16]u16{
+    //     0, 2, 4, 6, 8, 10, 12, 14,
+    //     1, 3, 5, 7, 9, 11, 13, 15,
+    // };
+    const skew_table = [16]u16{
+        0, 2, 4, 6, 8, 10, 12, 14,
+        1, 3, 5, 7, 9, 11, 13, 15,
+    };
+
+    const sector_size = 137; // Note non-standard sector size.
+    const sector_data_size = 128;
+    const reserved_tracks = 4;
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .CPM_MINI,
+            .type_name = "CPM_MINI",
+            .description = "Altair CPM 5.25\" Floppy Disk",
+            .OS = .cpm,
+            .tracks = 35,
+            .reserved_tracks = reserved_tracks,
+            .sectors_per_track = 16,
+            .sector_size_raw = sector_size,
+            .sector_size_data = sector_data_size,
+            .block_size = 1024,
+            .directories = 32,
+            .directory_allocs = 1,
+            .image_size = 76720,
+            .varying_sector_format = true,
+            .skew_table = &skew_table,
+        };
+        result.init();
+        return result;
     }
 };
 
@@ -1177,6 +1238,7 @@ pub const DiskImageTypes = enum {
     ADOS_8IN,
     ADOS_MINI,
     ADOS_MINI_BOOT,
+    CPM_MINI,
 
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
@@ -1221,6 +1283,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .ADOS_8IN = DiskImageType_ADOS_8IN.init(),
     .ADOS_MINI = DiskImageType_ADOS_MINI.init(),
     .ADOS_MINI_BOOT = DiskImageType_ADOS_MINI_BOOT.init(),
+    .CPM_MINI = DiskImageType_CPM_MINI.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls

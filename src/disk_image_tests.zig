@@ -9,7 +9,7 @@ const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    //    std.testing.log_level = .info;
+    std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
         const compare_image: []u8 = switch (fmt.type_id) {
@@ -30,6 +30,7 @@ test "disk formatted" {
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_fmt.dsk")),
             .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_fmt.dsk")),
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_fmt.dsk")),
+            .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_fmt.dsk")),
         };
         defer allocator.free(compare_image);
 
@@ -40,6 +41,7 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
     }
@@ -80,18 +82,18 @@ fn clearVariableBytes(in: []u8, image_type: *const DiskImageType) []u8 {
         for (0..image_type.sectors_per_track) |sect_nr| {
             // TODO: Need to change this for 5.25IN.
             const start_idx: usize = (image_type.OS.ados.directory_track * @as(usize, image_type.track_size)) + sect_nr * image_type.sector_size_raw;
-            in[start_idx + 3] = 0xaa; // data bytes count (unused)
-            in[start_idx + 4] = 0xaa; // checksum
+            in[start_idx + 3] = 0xbb; // data bytes count (unused)
+            in[start_idx + 4] = 0xbb; // checksum
         }
     } else {
-        for (6..77) |track_nr| {
-            for (0..32) |sect_nr| {
+        for (image_type.reserved_tracks..image_type.tracks) |track_nr| {
+            for (0..image_type.sectors_per_track) |sect_nr| {
                 const start_idx: usize = (track_nr * image_type.track_size) + sect_nr * image_type.sector_size_raw;
-                in[start_idx + 2] = 0xaa; // directory index (unused)
-                in[start_idx + 3] = 0xaa; // data bytes count (unused)
-                in[start_idx + 4] = 0xaa; // checksum
-                in[start_idx + 5] = 0xaa; // data pointer (unused)
-                in[start_idx + 6] = 0xaa; // data pointer (unused)
+                in[start_idx + 2] = 0xbb; // directory index (unused)
+                in[start_idx + 3] = 0xbb; // data bytes count (unused)
+                in[start_idx + 4] = 0xbb; // checksum
+                in[start_idx + 5] = 0xbb; // data pointer (unused)
+                in[start_idx + 6] = 0xbb; // data pointer (unused)
             }
         }
     }
@@ -116,6 +118,7 @@ test "disk filled" {
             .ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_full.dsk")),
             .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_full.dsk")),
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_full.dsk")),
+            .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_full.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -155,7 +158,7 @@ test "disk filled" {
         const in_file = try allocator.alloc(u8, big_file.len);
         defer allocator.free(in_file);
         var in_stream: std.Io.Writer = .fixed(in_file);
-
+        saveImage(test_buffer);
         // Important to re-init to rebuild the in-memory directory entries from the image.
         try reinitDiskImage(&disk_image);
 
@@ -172,6 +175,13 @@ test "disk filled" {
         if (compare_image) |ci| {
             switch (fmt.type_id) {
                 .FDD_8IN, .ADOS_8IN, .ADOS_MINI, .ADOS_MINI_BOOT => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt)),
+                .CPM_MINI => {
+                    // CPM formats the first 4 tracks like they are data tracks. We format them as boot tracks, so ignore the
+                    // first 4 tracks
+                    @memset(ci[0 .. 4 * 16 * 137], 0xbb);
+                    @memset(test_buffer[0 .. 4 * 16 * 137], 0xbb);
+                    try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt));
+                },
                 else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
@@ -595,6 +605,7 @@ test "autodetect image" {
             .ADOS_8IN => "src/test_disks/ados_basic_fmt.dsk",
             .ADOS_MINI => "src/test_disks/ados_mini_fmt.dsk",
             .ADOS_MINI_BOOT => "src/test_disks/ados_miniboot_fmt.dsk",
+            .CPM_MINI => "src/test_disks/cpm_mini_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -809,9 +820,10 @@ const CDOS_LGDSDD = all_disk_types.getPtrConst(.CDOS_LGDSDD);
 const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 const ADOS_MINI = all_disk_types.getPtrConst(.ADOS_MINI);
 const ADOS_MINI_BOOT = all_disk_types.getPtrConst(.ADOS_MINI_BOOT);
+const CPM_MINI = all_disk_types.getPtrConst(.CPM_MINI);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
-const all_formats = .{ADOS_MINI_BOOT};
+const all_formats = .{CPM_MINI};
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);

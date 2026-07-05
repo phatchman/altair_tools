@@ -184,11 +184,24 @@ pub const DiskImage = struct {
     }
 
     /// Try and auto-detect what type of disk image this is
+    /// TODO: Maybe we just detect in a specific order than in a loop? And somehow we have to make sure
+    /// they are all included.
     pub fn detectImageType(io: std.Io, image_file: File, is_unique: *bool) ?*const DiskImageType {
         is_unique.* = true;
         for (&all_disk_types.values) |*dt| {
             if (dt.isCorrectFormat(io, image_file)) {
                 switch (dt.type_id) {
+                    .CPM_MINI => {
+                        const ados_mini = all_disk_types.getPtrConst(.ADOS_MINI);
+                        const ados_miniboot = all_disk_types.getPtrConst(.ADOS_MINI_BOOT);
+                        if (ados_mini.isCorrectFormat(io, image_file)) {
+                            return ados_mini;
+                        } else if (ados_miniboot.isCorrectFormat(io, image_file)) {
+                            return ados_miniboot;
+                        } else {
+                            return dt;
+                        }
+                    },
                     .FDD_8IN => {
                         const ados = all_disk_types.getPtrConst(.ADOS_8IN);
                         if (ados.isCorrectFormat(io, image_file)) {
