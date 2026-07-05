@@ -86,7 +86,6 @@ pub const PhysicalAddress = struct {
                 "Attempt to read from an invalid track. [Read track {}. Expected 0-{}]",
                 .{ self.track, image_type.tracks - 1 },
             );
-            if (true) @panic("oop");
             return error.InvalidTrack;
         }
         if (self.sector >= image_type.sectorsForTrack(self.track)) {
@@ -142,11 +141,14 @@ pub const DiskSector = union(enum) {
             .ADOS_8IN,
             .ADOS_MINI,
             .ADOS_MINI_BOOT,
-            .CPM_MINI,
             => if (track_nr < image_type.reserved_tracks)
                 .{ .reserved = undefined }
             else
                 .{ .data = undefined },
+            // CPM Mini formats all tracks as data tracks, but expects the system tracks to be formatted as
+            // system tracks when read. Since we onlyt ever write system tracks raw, we just pretend this
+            // format only has data tracks
+            .CPM_MINI => .{ .data = undefined },
             else => switch (image_type.sectorSizeDataForTrack(track_nr)) {
                 128 => .{ .cpm_128 = undefined },
                 512 => .{ .cpm_512 = undefined },
@@ -160,15 +162,9 @@ pub const DiskSector = union(enum) {
         @memset(result.rawBytes(), 0xe5);
         switch (result) {
             .reserved => |*sector| {
-                // TODO:
-                if (image_type.type_id == .CPM_MINI and location.track == 0 and location.sector == 0) {
-                    @memset(result.rawBytes()[1..7], 0x00);
-                    result.rawBytes()[4] = 0x80;
-                } else {
-                    // sets `address`. Do it with raw bytes to avoid endian issues.
-                    result.rawBytes()[1] = 0x00;
-                    result.rawBytes()[2] = 0x01;
-                }
+                // sets `address`. Do it with raw bytes to avoid endian issues.
+                result.rawBytes()[1] = 0x00;
+                result.rawBytes()[2] = 0x01;
                 sector.track_nr = @truncate(location.track | 0x80);
                 sector.stop = 0xff;
                 @memset(&sector.zero, 0x00);

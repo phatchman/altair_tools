@@ -321,6 +321,8 @@ pub const DiskImage = struct {
                 self.image_type.sectors_per_track;
 
             for (0..sectors_per_track) |sector_nr| {
+                // CPM_MINI formats all tracks as if they are data tracks, but expects the first
+                // 4 tracks to be formatted as system tracks when read from. So we offsetjust do this override for fomatting.
                 const location: PhysicalAddress = .{ .track = @intCast(track_nr), .sector = @intCast(sector_nr) };
                 if (varying_sector_format) {
                     // Request a new formatted sector for each sector.

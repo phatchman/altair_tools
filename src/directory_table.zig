@@ -644,7 +644,9 @@ pub const DirectoryTable = struct {
     // convert track and sector to allocation
     fn toAllocationADOS(image_type: *const DiskImageType, location: PhysicalAddress) PhysicalAddress.ValidateError!u16 {
         try location.validate(image_type);
-        if (location.track < image_type.reserved_tracks) return error.InvalidTrack;
+        if (location.track < image_type.reserved_tracks) {
+            return error.InvalidTrack;
+        }
         const sectors_per_alloc: u16 = image_type.block_size / image_type.sector_size_data;
         return @as(u16, location.track - image_type.reserved_tracks) * (image_type.sectors_per_track / sectors_per_alloc) + @as(u16, location.sector / sectors_per_alloc);
     }
@@ -670,7 +672,7 @@ pub const DirectoryTable = struct {
         const entry = &self.raw_directories.ados.items[raw_entry_idx];
         try entry.validate(self.image_type, raw_entry_idx);
         var allocations: std.ArrayList(u16) = .empty;
-        const os_ados: @FieldType(CookedDirEntry, "os").ADOS = blk: {
+        const os_ados: ?@FieldType(CookedDirEntry, "os").ADOS = blk: {
             // Calculate File size and Allocations
             // Walk the linked list of sectors and add up the bytes.
             // At the same time, build the list of allocations used by the file.
@@ -693,7 +695,7 @@ pub const DirectoryTable = struct {
                     image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| switch (err) {
                         error.InvalidTrack, error.InvalidSector => {
                             log.warn("{s} has invalid track or sector links. File will not be copied correctly: {t}", .{ entry.raw.filename, err });
-                            break;
+                            break :blk null;
                         },
                         else => {
                             logerr("Error reading from disk image: {t}\n", .{err});
@@ -723,14 +725,22 @@ pub const DirectoryTable = struct {
                     return error.InvalidImageFile;
                 };
                 @memcpy(group_map[128..], sector.dataBytes());
-                // Can't use track-size here as we only care about the size of the data porttions of the track
+                // Can't use track-size here as we only care about the size of the data portions of the track
                 //const allocs_per_track = (self.image_type.sector_size_data * self.image_type.sectors_per_track) / self.image_type.block_size;
                 for (0..nr_groups) |idx| {
                     const encoded_group: u8 = group_map[idx];
-                    const alloc = try toAllocationADOS(self.image_type, .{
+                    const alloc = toAllocationADOS(self.image_type, .{
                         .track = encoded_group & 0x3f + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
                         .sector = (encoded_group >> 6) * sectors_per_alloc,
-                    });
+                    }) catch |err| switch (err) {
+                        error.InvalidTrack, error.InvalidSector => {
+                            logerr(
+                                "Directory entry for {s} has invalid track of sector information and is not shown: {t}. Use --raw for more details.",
+                                .{ std.mem.trimEnd(u8, &entry.raw.filename, " "), err },
+                            );
+                            break :blk null;
+                        },
+                    };
                     // const group_in_track = encoded_group >> 6;
                     // const group = track * allocs_per_track + group_in_track;
                     //             std.debug.print("enc = {}, apt = {}, tk = {}, git = {}, g = {}\n", .{ encoded_group, allocs_per_track, track, group_in_track, group });
@@ -744,7 +754,9 @@ pub const DirectoryTable = struct {
                 .used = used,
             };
         };
-        self.cooked_directories.appendAssumeCapacity(try CookedDirEntry.initADOS(entry, os_ados, allocations, self.image_type));
+        if (os_ados) |ados| {
+            self.cooked_directories.appendAssumeCapacity(try CookedDirEntry.initADOS(entry, ados, allocations, self.image_type));
+        }
     }
 
     /// Remove a file from the image.

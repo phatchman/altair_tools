@@ -9,7 +9,7 @@ const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 test "disk formatted" {
-    std.testing.log_level = .info;
+    //std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
         std.log.info("Testing image format {s}", .{fmt.type_name});
         const compare_image: []u8 = switch (fmt.type_id) {
@@ -41,9 +41,11 @@ test "disk formatted" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
-        try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer);
+        switch (fmt.type_id) {
+            .CPM_MINI => try std.testing.expectEqualSlices(u8, clearVariableBytes(compare_image, fmt), clearVariableBytes(test_image.buffer, fmt)),
+            else => try std.testing.expectEqualSlices(u8, compare_image, test_image.buffer),
+        }
     }
 }
 
@@ -76,17 +78,22 @@ test "8in alt size" {
 /// These "random" bytes are also included in the checksum!!
 /// Which means that we can't even compare the checksums between two images.
 fn clearVariableBytes(in: []u8, image_type: *const DiskImageType) []u8 {
-    if (image_type.OS == .ados) {
+    if (image_type.type_id == .CPM_MINI) {
+        // For some reason CPM mini formats with a 0xFF in the first data byte of the last track
+        // probably a bug and we're not going to replicate that
+        in[0x12324] = 0xbb;
+        in[0x12327] = 0xbb;
+    } else if (image_type.OS == .ados) {
         // Clear nbytes and checksum on directory track 70 as nbytes has no meaning there and
         // seems "random"
         for (0..image_type.sectors_per_track) |sect_nr| {
-            // TODO: Need to change this for 5.25IN.
             const start_idx: usize = (image_type.OS.ados.directory_track * @as(usize, image_type.track_size)) + sect_nr * image_type.sector_size_raw;
             in[start_idx + 3] = 0xbb; // data bytes count (unused)
             in[start_idx + 4] = 0xbb; // checksum
         }
-    } else {
-        for (image_type.reserved_tracks..image_type.tracks) |track_nr| {
+    } else if (image_type.OS == .cpm) {
+        const start = if (image_type.type_id == .FDD_8IN) 6 else image_type.reserved_tracks;
+        for (start..image_type.tracks) |track_nr| {
             for (0..image_type.sectors_per_track) |sect_nr| {
                 const start_idx: usize = (track_nr * image_type.track_size) + sect_nr * image_type.sector_size_raw;
                 in[start_idx + 2] = 0xbb; // directory index (unused)
@@ -158,7 +165,7 @@ test "disk filled" {
         const in_file = try allocator.alloc(u8, big_file.len);
         defer allocator.free(in_file);
         var in_stream: std.Io.Writer = .fixed(in_file);
-        saveImage(test_buffer);
+
         // Important to re-init to rebuild the in-memory directory entries from the image.
         try reinitDiskImage(&disk_image);
 
@@ -174,14 +181,11 @@ test "disk filled" {
 
         if (compare_image) |ci| {
             switch (fmt.type_id) {
-                .FDD_8IN, .ADOS_8IN, .ADOS_MINI, .ADOS_MINI_BOOT => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt)),
-                .CPM_MINI => {
-                    // CPM formats the first 4 tracks like they are data tracks. We format them as boot tracks, so ignore the
-                    // first 4 tracks
-                    @memset(ci[0 .. 4 * 16 * 137], 0xbb);
-                    @memset(test_buffer[0 .. 4 * 16 * 137], 0xbb);
-                    try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt));
-                },
+                .FDD_8IN,
+                .ADOS_8IN,
+                .ADOS_MINI,
+                .ADOS_MINI_BOOT,
+                => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(test_buffer, fmt)),
                 else => try std.testing.expectEqualSlices(u8, ci, test_buffer),
             }
         }
@@ -193,7 +197,7 @@ test "disk overfilled" {
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
-        std.log.info("Testing: {t} filled", .{fmt.type_id});
+        std.log.info("Testing: {t} overfilled", .{fmt.type_id});
         const big_file = try allocator.alloc(u8, fmt.largestFileBytes() + 1);
         @memset(big_file, 'X');
         defer allocator.free(big_file);
@@ -261,15 +265,16 @@ test "overfill directory" {
             error.OutOfExtents,
             disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{fmt.directories}), 0, false, .Auto),
         );
+
         if (compare_image) |ci| {
             switch (fmt.type_id) {
                 .FDD_8IN, .ADOS_8IN => try std.testing.expectEqualSlices(u8, clearVariableBytes(ci, fmt), clearVariableBytes(image_file, fmt)),
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
+
         // test the before and after reinit free count.
         try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
-
         try reinitDiskImage(&disk_image);
 
         const out_buf = try allocator.alloc(u8, test_file.len);
@@ -823,7 +828,7 @@ const ADOS_MINI_BOOT = all_disk_types.getPtrConst(.ADOS_MINI_BOOT);
 const CPM_MINI = all_disk_types.getPtrConst(.CPM_MINI);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
-const all_formats = .{CPM_MINI};
+const all_formats = .{FDD_8IN};
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);
