@@ -568,7 +568,23 @@ pub const DirectoryTable = struct {
             if (!dir.isDeleted()) {
                 const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.cpm.items[0])) / @sizeOf(RawCpmDirEntry);
                 if (option == .full) {
-                    try self.buildCookedEntryCPM(@intCast(entry_nr));
+                    self.buildCookedEntryCPM(@intCast(entry_nr)) catch |err| switch (err) {
+                        error.InvalidUser,
+                        error.InvalidExtent,
+                        error.InvalidRecordNumber,
+                        error.InvalidAllocation,
+                        error.InvalidEntryNumber,
+                        error.InvalidDirectoryEntry,
+                        => {
+                            logerr(
+                                "Directory entry {} for \"{s}\" has invalid directory entries and has been hidden. Use --recover to try and recover the image: {t}",
+                                .{ i, std.mem.trimEnd(u8, &dir.raw.filename, " "), err },
+                            );
+                        },
+                        error.OutOfMemory,
+                        error.InvalidImageFile,
+                        => return err,
+                    };
                 }
                 // Mark off the used allocations
                 for (0..dir.allocationsCount(image_type)) |alloc_nr| {
@@ -730,14 +746,15 @@ pub const DirectoryTable = struct {
                 for (0..nr_groups) |idx| {
                     const encoded_group: u8 = group_map[idx];
                     const alloc = toAllocationADOS(self.image_type, .{
-                        .track = encoded_group & 0x3f + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
+                        .track = (encoded_group & 0x3f) + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
                         .sector = (encoded_group >> 6) * sectors_per_alloc,
                     }) catch |err| switch (err) {
                         error.InvalidTrack, error.InvalidSector => {
-                            logerr(
-                                "Directory entry for {s} has invalid track of sector information and is not shown: {t}. Use --raw for more details.",
-                                .{ std.mem.trimEnd(u8, &entry.raw.filename, " "), err },
-                            );
+                            logerr("Directory entry for {s} has invalid track of sector information and is not shown: {t}. Use --raw for more details.", .{ std.mem.trimEnd(u8, &entry.raw.filename, " "), err });
+                            std.debug.print("{}:{}\n", .{
+                                encoded_group & 0x3f + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
+                                (encoded_group >> 6) * sectors_per_alloc,
+                            });
                             break :blk null;
                         },
                     };
