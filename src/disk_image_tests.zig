@@ -31,6 +31,7 @@ test "disk formatted" {
             .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_fmt.dsk")),
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_fmt.dsk")),
             .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_fmt.dsk")),
+            .HD_BASIC => try allocator.dupe(u8, @embedFile("test_disks/hdbasic_fmt.dsk")),
         };
         defer allocator.free(compare_image);
 
@@ -611,6 +612,7 @@ test "autodetect image" {
             .ADOS_MINI => "src/test_disks/ados_mini_fmt.dsk",
             .ADOS_MINI_BOOT => "src/test_disks/ados_miniboot_fmt.dsk",
             .CPM_MINI => "src/test_disks/cpm_mini_fmt.dsk",
+            .HD_BASIC => "src/test_disks/hd_basic_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -731,6 +733,9 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
             label.cdos.date_mmddyy[2] = 12;
             try disk_image.labelDisk(label);
         },
+        .hd_basic => {
+            // TODO: Handle the labelling here as well
+        },
     }
     return disk_image;
 }
@@ -826,21 +831,22 @@ const ADOS_8IN = all_disk_types.getPtrConst(.ADOS_8IN);
 const ADOS_MINI = all_disk_types.getPtrConst(.ADOS_MINI);
 const ADOS_MINI_BOOT = all_disk_types.getPtrConst(.ADOS_MINI_BOOT);
 const CPM_MINI = all_disk_types.getPtrConst(.CPM_MINI);
+const HD_BASIC = all_disk_types.getPtrConst(.HD_BASIC);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
-//const all_formats = .{FDD_8IN};
+const all_formats = .{HD_BASIC};
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
-const all_formats = _: {
-    const fields = std.meta.fields(DiskImageTypes);
-    var result: [fields.len]*const DiskImageType = undefined;
-    var idx: usize = 0;
-    for (fields) |field| {
-        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-        idx += 1;
-    }
-    const result_c = result;
-    break :_ &result_c;
-};
+// const all_formats = _: {
+//     const fields = std.meta.fields(DiskImageTypes);
+//     var result: [fields.len]*const DiskImageType = undefined;
+//     var idx: usize = 0;
+//     for (fields) |field| {
+//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+//         idx += 1;
+//     }
+//     const result_c = result;
+//     break :_ &result_c;
+// };
 
 test {
     std.testing.refAllDecls(@This());

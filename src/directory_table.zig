@@ -439,8 +439,9 @@ pub const DirectoryTable = struct {
     /// The CPM directory entries in on-disk format.
     /// note there may be multiple raw entries per file.
     raw_directories: union(enum) {
-        cpm: std.ArrayListUnmanaged(RawCpmDirEntry),
-        ados: std.ArrayListUnmanaged(RawAdosDirEntry),
+        cpm: std.ArrayList(RawCpmDirEntry),
+        ados: std.ArrayList(RawAdosDirEntry),
+        hd_basic: std.ArrayList(hd_basic.DirEntry),
     },
 
     /// The friendlier versions of the raw directories with
@@ -461,6 +462,7 @@ pub const DirectoryTable = struct {
             .raw_directories = switch (image_type.OS) {
                 .cpm, .cdos => .{ .cpm = try .initCapacity(arena.allocator(), image_type.directories) },
                 .ados => .{ .ados = try .initCapacity(arena.allocator(), image_type.directories) },
+                .hd_basic => .{ .hd_basic = try .initCapacity(arena.allocator(), image_type.directories) },
             },
             .cooked_directories = try .initCapacity(arena.allocator(), image_type.directories),
             .free_allocations = try .initFull(arena.allocator(), image_type.total_allocs),
@@ -492,6 +494,7 @@ pub const DirectoryTable = struct {
         try switch (image.image_type.OS) {
             .cpm, .cdos => loadCPM(self, image, option),
             .ados => loadAltairDOS(self, image, option),
+            .hd_basic => hd_basic.loadDirectory(self, image, option),
         };
     }
 
@@ -955,6 +958,7 @@ pub const DirectoryTable = struct {
         return switch (self.raw_directories) {
             .cpm => self.allocationGetFreeCPM(),
             .ados => self.allocationGetFreeADOS(false),
+            .hd_basic => @panic("TODO"),
         };
     }
 
@@ -1055,7 +1059,7 @@ pub const DirectoryTable = struct {
                     }
                 }
             },
-            .ados => |ados| {
+            inline .ados, .hd_basic => |ados| {
                 for (ados.items) |dir| {
                     if (dir.isLastEntry()) break;
                     if (!dir.isDeleted()) {
@@ -1163,3 +1167,4 @@ const DiskSector = @import("disk_types.zig").DiskSector;
 const OperatingSystem = @import("disk_types.zig").OperatingSystem;
 const LogicalAddress = @import("disk_image.zig").LogicalAddress;
 const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;
+const hd_basic = @import("hd_basic.zig");

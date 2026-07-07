@@ -173,6 +173,7 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyFromImage(self, entry, out_writer, text_mode),
             .ados => ADOS.copyFromImage(self, entry, out_writer, text_mode),
+            .hd_basic => @panic("TODO"),
         };
     }
 
@@ -180,6 +181,7 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => self.cpm.rawEntryWrite(raw_entry_nr),
             .ados => self.ados.rawEntryWrite(raw_entry_nr),
+            .hd_basic => @panic("TODO"),
         };
     }
 
@@ -241,6 +243,7 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyToImage(self, file_reader, to_filename, user, force),
             .ados => ADOS.copyToImage(self, file_reader, to_filename, force, text_mode),
+            .hd_basic => @panic("TODO"),
         };
     }
 

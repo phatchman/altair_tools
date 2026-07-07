@@ -22,7 +22,7 @@
 //         Number of directory entries (64-512) . . . .  <128> -
 //         ```
 
-pub const OperatingSystem = enum { cpm, cdos, ados };
+pub const OperatingSystem = enum { cpm, cdos, ados, hd_basic };
 const log = std.log.scoped(.altair_disk_lib);
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
@@ -34,13 +34,13 @@ pub const DiskLabel = union(OperatingSystem) {
         date_mmddyy: [3]u8,
     },
     ados: void,
+    hd_basic: void, // TODO: Add label support here.
 
     pub fn format(self: *const DiskLabel, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.*) {
             .cpm, .ados => {},
             .cdos => |lbl| try writer.print("Label: {s}  Date: {c}{c}/{c}{c}/{c}{c}", .{
                 lbl.user_label,
-                // TODO: Cant't we just use a formatter for this?
                 lbl.date_mmddyy[0] / 10 + '0',
                 lbl.date_mmddyy[0] % 10 + '0',
                 lbl.date_mmddyy[1] / 10 + '0',
@@ -48,6 +48,8 @@ pub const DiskLabel = union(OperatingSystem) {
                 lbl.date_mmddyy[2] / 10 + '0',
                 lbl.date_mmddyy[2] % 10 + '0',
             }),
+            .hd_basic => {},
+            // TODO: hd_basic volume label support
         }
     }
 };
@@ -125,6 +127,7 @@ pub const DiskSector = union(enum) {
         stop: u8,
         zero: u8,
     },
+    hd_basic: extern struct { data: [256]u8 },
     cpm_128: extern struct { data: [128]u8 },
     cpm_512: extern struct { data: [512]u8 },
 
@@ -146,9 +149,10 @@ pub const DiskSector = union(enum) {
             else
                 .{ .data = undefined },
             // CPM Mini formats all tracks as data tracks, but expects the system tracks to be formatted as
-            // system tracks when read. Since we onlyt ever write system tracks raw, we just pretend this
+            // system tracks when read. Since we only ever write system tracks raw, we just pretend this
             // format only has data tracks
             .CPM_MINI => .{ .data = undefined },
+            .HD_BASIC => .{ .hd_basic = undefined },
             else => switch (image_type.sectorSizeDataForTrack(track_nr)) {
                 128 => .{ .cpm_128 = undefined },
                 512 => .{ .cpm_512 = undefined },
@@ -213,6 +217,13 @@ pub const DiskSector = union(enum) {
                     .cdos => if (location.track == 0 and location.sector == 0)
                         @memcpy(result.dataBytes()[120..126], @tagName(image_type.type_id)[5..]), // Remove the CDOS_
                     else => {},
+                }
+            },
+            .hd_basic => {
+                if (location.track < image_type.reserved_tracks) {
+                    @memset(result.rawBytes(), 0x00);
+                } else {
+                    @memset(result.rawBytes(), 0xE5);
                 }
             },
         }
@@ -352,11 +363,12 @@ pub const DiskImageType = struct {
     varying_sector_format: bool,
     // Which operating system is this?
     OS: union(OperatingSystem) {
-        cpm,
+        cpm: void,
         cdos: void,
         ados: struct {
             directory_track: u8,
         },
+        hd_basic: void,
     },
     // Skew from logical to physical sector
     skew_fn: *const fn (skew_table: []const u16, track: u16, sector: u16) u16 = defaultSkewFn,
@@ -385,6 +397,7 @@ pub const DiskImageType = struct {
         self.dir_entry_size = switch (self.OS) {
             .cpm, .cdos => 32,
             .ados => 16,
+            .hd_basic => 128,
         };
         self.dirs_per_alloc = self.block_size / self.dir_entry_size;
         self.dirs_per_sector = self.sector_size_data / self.dir_entry_size;
@@ -1235,7 +1248,7 @@ pub const DiskImageTypes = enum {
     ADOS_MINI,
     ADOS_MINI_BOOT,
     CPM_MINI,
-
+    HD_BASIC,
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
         const fields = std.meta.fields(@This());
@@ -1280,6 +1293,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .ADOS_MINI = DiskImageType_ADOS_MINI.init(),
     .ADOS_MINI_BOOT = DiskImageType_ADOS_MINI_BOOT.init(),
     .CPM_MINI = DiskImageType_CPM_MINI.init(),
+    .HD_BASIC = hd_basic.DiskImageType_HD_BASIC.init(),
 });
 
 // Zig creates these array at compile time, including setting up the function calls
@@ -1301,3 +1315,4 @@ fn initDiskTypeNames() [all_disk_types.values.len][]const u8 {
 }
 
 const std = @import("std");
+const hd_basic = @import("hd_basic.zig");
