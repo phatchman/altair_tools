@@ -288,7 +288,7 @@ pub const CookedDirEntry = struct {
     block_size: u16,
 
     pub fn initCPM(arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
-        var filename: [12:' ']u8 = @splat(' '); // space terminated string
+        var filename: [12]u8 = @splat(' '); // space terminated string
 
         var filename_len = rawStrlen(&raw_dir.raw.filename);
         @memcpy(filename[0..filename_len], raw_dir.raw.filename[0..filename_len]);

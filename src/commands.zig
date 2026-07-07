@@ -289,16 +289,29 @@ pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOp
 }
 
 pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOptions) CommandError!void {
-    try Console.stdout().print("FNR:FILENAME:MD:TK:SC\n", .{});
+    try Console.stdout().print("IDX:FILENAME                :CREATE:MODIFY:R:S:EPG:EBY:NGP:LGP:[ALLOCATIONS ... ]\n", .{});
 
     for (disk_image.directory.raw_directories.hd_basic.items, 1..) |entry, file_nr| {
         if (entry.isLastEntry()) break;
         if (!entry.isDeleted()) {
-            try Console.stdout().print("{d:03}:{s}:{x:02}\n", .{
+            try Console.stdout().print("{d:03}:{s}:{x}:{x}:{x}:{x}:{d:03}:{d:03}:{d:03}:{d:03}:[", .{
                 file_nr,
                 entry.filename,
+                entry.creation_date,
+                entry.modification_date,
+                entry.read_only,
                 entry.status,
+                entry.eof_page,
+                entry.eof_byte,
+                entry.group_count,
+                entry.last_group,
             });
+            try Console.stdout().print("{d:03}", .{entry.allocations[0]});
+            for (entry.allocations[1..]) |alloc| {
+                if (alloc == 0xffff) break;
+                try Console.stdout().print(", {d:03}", .{alloc});
+            }
+            try Console.stdout().print("]\n", .{});
         }
     }
     try Console.stdout().print("FREE DIRECTORIES: ({})\n", .{disk_image.directory.rawEntryFreeCount()});
