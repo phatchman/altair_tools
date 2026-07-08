@@ -281,11 +281,22 @@ pub const CookedDirEntry = struct {
             num_allocs: u32,
         },
         ados: ADOS,
+        hd_basic: struct {
+            creation_date: [3]u8,
+            modification_date: [3]u8,
+            nbytes_last_page: u16,
+            npages: u16,
+            ngroups: u16,
+            last_group: u16,
+        },
     },
+    size_in_bytes: u32,
+    used_in_kbytes: u32,
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [12]u8,
     block_size: u16,
+    has_extension: bool,
 
     pub fn initCPM(arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var filename: [12]u8 = @splat(' '); // space terminated string
@@ -320,15 +331,23 @@ pub const CookedDirEntry = struct {
             .filename = filename,
             .block_size = image_type.block_size,
             .allocations = .empty,
+            .size_in_bytes = undefined,
+            .used_in_kbytes = undefined,
+            .has_extension = true,
         };
         result.os.cpm.num_allocs = try result.copyAllocations(arena, raw_dir, image_type);
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and result.os.cpm.num_allocs > 4) {
             // CPM records only go up to 128, but can represent up to 256 records.
             result.os.cpm.num_records += 128;
         }
+        result.size_in_bytes = result.os.cpm.num_records * 128;
+        result.used_in_kbytes = result.os.cpm.num_allocs * image_type.block_size / 1024;
         return result;
     }
 
+    // TODO: Do we even need to store the os-specific stuff? We could jsut pass it?
+    // Well at least with suize and used? We're storing it twice here.
+    // TODO: And do we still need block_size??
     pub fn initADOS(raw_dir: *const RawAdosDirEntry, ados: @FieldType(CookedDirEntry, "os").ADOS, allocations: std.ArrayList(u16), image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var result: CookedDirEntry = .{
             .user = 0,
@@ -337,8 +356,46 @@ pub const CookedDirEntry = struct {
             .block_size = image_type.block_size,
             .allocations = allocations,
             .os = .{ .ados = ados },
+            .size_in_bytes = ados.size,
+            .used_in_kbytes = ados.used,
+            .has_extension = false,
         };
         @memcpy(result.filename[0..raw_dir.raw.filename.len], &raw_dir.raw.filename);
+        return result;
+    }
+
+    // TODO: Invert this so it lives in hd_basic instead?
+    // TODO: (error{OutOfMemory} || RawDirError)
+    pub fn initHDBasic(arena: std.mem.Allocator, raw_dir: *const hd_basic.DirEntry, image_type: *const DiskImageType) !CookedDirEntry {
+        var result: CookedDirEntry = .{
+            .user = 0,
+            .filename = @splat(' '),
+            .attribs = if (raw_dir.read_only != 0x00) "R ".* else "W ".*,
+            .block_size = image_type.block_size,
+            .allocations = .empty,
+            .os = .{
+                .hd_basic = .{
+                    .creation_date = raw_dir.creation_date,
+                    .modification_date = raw_dir.modification_date,
+                    .nbytes_last_page = raw_dir.eof_byte,
+                    .ngroups = raw_dir.ngroups,
+                    .last_group = raw_dir.last_group,
+                    .npages = raw_dir.npages + 1, // raw dir only counts fully filled pages
+                },
+            },
+            .size_in_bytes = @as(u32, raw_dir.npages) * image_type.sector_size_data + raw_dir.eof_byte,
+            .used_in_kbytes = @as(u32, raw_dir.ngroups) * image_type.block_size / 1024,
+            .has_extension = false,
+        };
+        try result.allocations.ensureTotalCapacity(arena, raw_dir.allocations.len);
+        // TODO: Future support additional hd_basic fields, like creation and modification date.
+        for (raw_dir.allocations) |alloc| {
+            if (alloc == 0xffff) break;
+            result.allocations.appendAssumeCapacity(alloc);
+        }
+        @memcpy(&result.filename, raw_dir.filename[0..12]); // TODO: Support larger filenames
+        //        result.used_in_kbytes = @intCast(result.allocations.items.len * image_type.block_size);
+        // TODO: size in bytes
         return result;
     }
 
@@ -356,27 +413,15 @@ pub const CookedDirEntry = struct {
     }
 
     pub fn filenameOnly(self: *const CookedDirEntry) []const u8 {
+        if (!self.has_extension) return self.filenameAndExtension();
         const pos = std.mem.indexOfScalar(u8, &self.filename, '.') orelse return self.filenameAndExtension();
         return self.filename[0..pos];
     }
 
     pub fn extensionOnly(self: *const CookedDirEntry) []const u8 {
+        if (!self.has_extension) return "";
         const pos = std.mem.indexOfScalar(u8, &self.filename, '.') orelse return "";
         return rawSlice(self.filename[pos + 1 ..]);
-    }
-
-    pub fn allocsUsedInKB(self: *const CookedDirEntry) u32 {
-        switch (self.os) {
-            .cpm => |cpm| return cpm.num_allocs * self.block_size / 1024,
-            .ados => |ados| return ados.used,
-        }
-    }
-
-    pub fn recordsUsedInB(self: *const CookedDirEntry) u32 {
-        return switch (self.os) {
-            .cpm => |cpm| cpm.num_records * 128,
-            .ados => |ados| ados.size,
-        };
     }
 
     /// Add any new allocations to the list of used allocations.
@@ -494,7 +539,7 @@ pub const DirectoryTable = struct {
         try switch (image.image_type.OS) {
             .cpm, .cdos => loadCPM(self, image, option),
             .ados => loadAltairDOS(self, image, option),
-            .hd_basic => hd_basic.loadDirectory(self, image, option),
+            .hd_basic => hd_basic.loadDirectory(self.arena.allocator(), self, image, option),
         };
     }
 
@@ -646,6 +691,7 @@ pub const DirectoryTable = struct {
         loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
             switch (self.raw_directories.ados.items[raw_entry_idx].raw.filename[0]) {
                 0 => continue, // Deleted
+                // TODO: Can we use isLast and isDelted here instead?
                 255 => break :loop, // End of Directory
                 else => self.buildCookedEntryADOS(image, @intCast(raw_entry_idx)) catch |err| {
                     if (option != .raw_only) return err;

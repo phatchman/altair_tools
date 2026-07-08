@@ -50,9 +50,9 @@ pub const DirEntry = extern struct {
     unused: [23]u8,
     status: u8,
     unused2: u8,
-    eof_page: u16 align(1),
+    npages: u16 align(1),
     eof_byte: u16 align(1),
-    group_count: u16 align(1),
+    ngroups: u16 align(1),
     last_group: u16 align(1),
     allocations: [32]u16 align(1),
 
@@ -80,9 +80,9 @@ pub const DirEntry = extern struct {
         try writer.print("Modification     : {f}\n", .{fmtDate(self.modification_date)});
         try writer.print("Read Only        : {}\n", .{self.read_only});
         try writer.print("Status           : {x}\n", .{self.status});
-        try writer.print("Last Page        : {}\n", .{self.eof_page});
+        try writer.print("Last Page        : {}\n", .{self.npages});
         try writer.print("Last Byte        : {}\n", .{self.eof_byte});
-        try writer.print("Group Count      : {}\n", .{self.group_count});
+        try writer.print("Group Count      : {}\n", .{self.ngroups});
         try writer.print("Last Group       : {}\n", .{self.last_group});
         try writer.print("Allocations      : {any}\n", .{self.allocations});
     }
@@ -157,8 +157,8 @@ fn extract(reader: *std.Io.File.Reader, writer: *std.Io.Writer, filename: []cons
                 try seekToPage(reader, start_page);
                 for (0..8) |offset| {
                     try reader.interface.readSliceAll(&buffer);
-                    std.debug.print("page = {}, eof_page = {}\n", .{ start_page + offset, dir_entry.eof_page });
-                    if (page_count == dir_entry.eof_page) {
+                    std.debug.print("page = {}, eof_page = {}\n", .{ start_page + offset, dir_entry.npages });
+                    if (page_count == dir_entry.npages) {
                         std.debug.print("eof_byte = {}\n", .{dir_entry.eof_byte});
                         try writer.writeAll(buffer[0..dir_entry.eof_byte]);
                         return;
@@ -196,13 +196,13 @@ pub const DiskImageType_HD_BASIC = struct {
             .sector_size_data = 256,
             .block_size = 2048,
             .directories = 512,
-            .directory_allocs = 32,
+            .directory_allocs = 56,
             .image_size = 4988928,
             .varying_sector_format = false,
             .skew_table = &skew_table,
         };
         result.init();
-        result.total_allocs = 305;
+        result.total_allocs = @as(u32, result.tracks) * result.sectors_per_track * result.sector_size_data / result.block_size;
         return result;
     }
 };
@@ -211,8 +211,7 @@ fn unsupported() void {
     @panic("TODO: unsupported");
 }
 
-pub fn loadDirectory(dir: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryTable.DirectoryLoadError!void {
-    _ = option;
+pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryTable.DirectoryLoadError!void {
     var label_sector: DiskSector = undefined;
     const label = try loadVolumeLabel(image, &label_sector);
     if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
@@ -233,6 +232,30 @@ pub fn loadDirectory(dir: *DirectoryTable, image: *DiskImage, option: LoadOption
         dir_count += @intCast(entries.len);
         dir_page += 1;
         dir_location = toPhysicalAddress(image.image_type, dir_page);
+    }
+    for (0..image.image_type.directory_allocs) |alloc| {
+        dir.free_allocations.unset(alloc);
+    }
+    // Last sector is used to store a duplicate volume label. TODO: So we assume that
+    // means the last allocation is also unusable?
+    dir.free_allocations.unset(image.image_type.total_allocs - 1);
+    for (dir.raw_directories.hd_basic.items) |entry| {
+        // TODO: validate external data
+        for (entry.allocations) |alloc| {
+            if (alloc == 0xffff) break;
+            dir.free_allocations.unset(alloc);
+        }
+    }
+    if (option == .full) {
+        for (dir.raw_directories.hd_basic.items) |entry| {
+            // TODO: Validate each entry. We need to do it in the non-full case as well to generate the error
+            // messages even for raw extract.
+            if (entry.isLastEntry()) break;
+            if (!entry.isDeleted()) {
+                const cooked: directory_table.CookedDirEntry = try .initHDBasic(arena, &entry, image.image_type);
+                try dir.cooked_directories.append(arena, cooked);
+            }
+        }
     }
 }
 

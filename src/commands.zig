@@ -171,12 +171,12 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         if (options.cpm_user) |user| {
             if (user != entry.user) continue;
         }
-        const this_kb = entry.allocsUsedInKB();
+        const this_kb = entry.used_in_kbytes;
         kb_used += this_kb;
         try Console.stdout().print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
             entry.filenameOnly(),
             entry.extensionOnly(),
-            entry.recordsUsedInB(),
+            entry.size_in_bytes,
             this_kb,
             entry.user,
             entry.attribs,
@@ -301,9 +301,9 @@ pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOpt
                 entry.modification_date,
                 entry.read_only,
                 entry.status,
-                entry.eof_page,
+                entry.npages,
                 entry.eof_byte,
-                entry.group_count,
+                entry.ngroups,
                 entry.last_group,
             });
             try Console.stdout().print("{d:03}", .{entry.allocations[0]});
@@ -315,19 +315,21 @@ pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOpt
         }
     }
     try Console.stdout().print("FREE DIRECTORIES: ({})\n", .{disk_image.directory.rawEntryFreeCount()});
-    // const free_allocations = disk_image.directory.free_allocations;
-    // try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
-    // var nr_output: usize = 0;
-    // for (0..free_allocations.capacity()) |alloc_nr| {
-    //     if (free_allocations.isSet(alloc_nr)) {
-    //         try Console.stdout().print("{:0>3} ", .{alloc_nr});
-    //         nr_output += 1;
-    //         if (nr_output % 16 == 0) {
-    //             try Console.stdout().print("\n", .{});
-    //         }
-    //     }
-    // }
-    // try Console.stdout().print("\n", .{});
+
+    // TODO: This is common code- refactor.
+    const free_allocations = disk_image.directory.free_allocations;
+    try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
+    var nr_output: usize = 0;
+    for (0..free_allocations.capacity()) |alloc_nr| {
+        if (free_allocations.isSet(alloc_nr)) {
+            try Console.stdout().print("{:0>3} ", .{alloc_nr});
+            nr_output += 1;
+            if (nr_output % 16 == 0) {
+                try Console.stdout().print("\n", .{});
+            }
+        }
+    }
+    try Console.stdout().print("\n", .{});
 }
 
 /// Get a file from the image.
