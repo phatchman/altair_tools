@@ -128,6 +128,7 @@ test "disk filled" {
             .ADOS_MINI => try allocator.dupe(u8, @embedFile("test_disks/ados_mini_full.dsk")),
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_full.dsk")),
             .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_full.dsk")),
+            .HD_BASIC => try allocator.dupe(u8, @embedFile("test_disks/hdbasic_full.dsk")),
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -154,7 +155,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -220,7 +220,7 @@ test "disk overfilled" {
         try std.testing.expectEqual(1, disk_image.directory.cooked_directories.items.len);
 
         try reinitDiskImage(&disk_image);
-        try std.testing.expectError(error.OutOfAllocs, disk_image.directory.allocationGetFree());
+        try std.testing.expectError(error.OutOfAllocs, allocationGetFree(&disk_image.directory));
         try std.testing.expect(disk_image.directory.findByFilename("BIG.TXT", null) != null);
     }
 }
@@ -258,7 +258,11 @@ test "overfill directory" {
         defer disk_image.deinit();
 
         var name_buf: [256]u8 = undefined;
-        const max_dirs = if (fmt.OS == .cdos) fmt.directories - 1 else fmt.directories;
+        const max_dirs = switch (fmt.OS) {
+            .cdos => fmt.directories - 1,
+            .hd_basic => fmt.directories - 2,
+            .cpm, .ados => fmt.directories,
+        };
         for (0..max_dirs) |num| {
             test_stream.seek = 0;
             try disk_image.copyToImage(&test_stream, try std.fmt.bufPrint(&name_buf, "T{d}.TST", .{num}), 0, false, .Auto);
@@ -275,7 +279,7 @@ test "overfill directory" {
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
-
+        saveImage(image_file);
         // test the before and after reinit free count.
         try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
         try reinitDiskImage(&disk_image);
@@ -680,6 +684,14 @@ fn randomData(_: void, smith: *std.testing.Smith) !void {
     }
 }
 
+fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
+    return switch (self.raw_directories) {
+        .cpm => self.allocationGetFreeCPM(),
+        .ados => self.allocationGetFreeADOS(false),
+        .hd_basic => @import("hd_basic.zig").allocationGetFree(self),
+    };
+}
+
 /// Create readers and writers against a []const u8
 /// deinit() must be called to free allocated buffer
 const InMemoryConstImage = struct {
@@ -818,7 +830,7 @@ const DiskImageTypes = @import("disk_types.zig").DiskImageTypes;
 const DiskLabel = @import("disk_types.zig").DiskLabel;
 const FileNameIterator = @import("directory_table.zig").FileNameIterator;
 const OperatingSystem = @import("disk_types.zig").OperatingSystem;
-
+const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const FDD_8IN = all_disk_types.getPtrConst(.FDD_8IN);
 const HDD_5MB = all_disk_types.getPtrConst(.HDD_5MB);

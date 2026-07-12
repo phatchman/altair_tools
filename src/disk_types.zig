@@ -232,11 +232,9 @@ pub const DiskSector = union(enum) {
                     } else if (location.track == 0 and location.sector == 1) {
                         hd_basic.initAllocationMap(&result, .first);
                     } else if (location.track == 0 and location.sector == 2) {
-                        std.debug.print("initting alloc map\n", .{});
                         hd_basic.initAllocationMap(&result, .second);
                     }
                 } else if (location.track == image_type.reserved_tracks and location.sector == 0) {
-                    std.debug.print("initting dir entries\n", .{});
                     hd_basic.initDirectoryEntries(image_type, &result);
                 } else if (location.track == image_type.tracks - 1 and location.sector == image_type.sectors_per_track - 1) {
                     // Last sector contains a copy of the volume descriptor

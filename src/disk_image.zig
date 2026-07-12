@@ -279,7 +279,6 @@ pub const DiskImage = struct {
     }
 
     pub fn installOperatingSystem(self: *DiskImage, io: std.Io, in_file: File) !void {
-        std.debug.print("here\n", .{});
         const in_size = try in_file.length(io);
         if (self.image_type.reserved_tracks == 0) {
             logerr("Not a bootable disk", .{});

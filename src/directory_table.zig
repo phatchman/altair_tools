@@ -801,16 +801,9 @@ pub const DirectoryTable = struct {
                     }) catch |err| switch (err) {
                         error.InvalidTrack, error.InvalidSector => {
                             logerr("Directory entry for {s} has invalid track of sector information and is not shown: {t}. Use --raw for more details.", .{ std.mem.trimEnd(u8, &entry.raw.filename, " "), err });
-                            std.debug.print("{}:{}\n", .{
-                                encoded_group & 0x3f + if (self.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
-                                (encoded_group >> 6) * sectors_per_alloc,
-                            });
                             break :blk null;
                         },
                     };
-                    // const group_in_track = encoded_group >> 6;
-                    // const group = track * allocs_per_track + group_in_track;
-                    //             std.debug.print("enc = {}, apt = {}, tk = {}, git = {}, g = {}\n", .{ encoded_group, allocs_per_track, track, group_in_track, group });
                     self.free_allocations.unset(alloc); // TODO: We need checks around all of these. it is coming from untrusted data.
                 }
             } else unreachable; // Should have already been validated before we get here.
@@ -1001,14 +994,6 @@ pub const DirectoryTable = struct {
     }
 
     /// Note this is used by the tests: // TODO: Then move it to the TESTS..
-    pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
-        return switch (self.raw_directories) {
-            .cpm => self.allocationGetFreeCPM(),
-            .ados => self.allocationGetFreeADOS(false),
-            .hd_basic => @panic("TODO"),
-        };
-    }
-
     /// Return a free allocation
     pub fn allocationGetFreeCPM(self: *DirectoryTable) error{OutOfAllocs}!u16 {
         if (self.free_allocations.findFirstSet()) |free_alloc| {

@@ -3,6 +3,9 @@
 // or at least validate it against the files allocations?
 // TODO: Chwcek of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
 // TODO: Think about with this new structure how to group things e.g. raw dir operations
+
+const log = std.log.scoped(.altair_disk_lib);
+
 pub const VolumeDecriptor = extern struct {
     label: [20]u8,
     dates_encoded: [6]u8,
@@ -138,7 +141,7 @@ pub const DiskImageType_HD_BASIC = struct {
             .block_size = 2048,
             .directories = 512,
             // TODO: This isn't really the number of directory allocs. It's the number of reserved allocs.
-            .directory_allocs = 57,
+            .directory_allocs = 56,
             .image_size = 4988928,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -151,8 +154,9 @@ pub const DiskImageType_HD_BASIC = struct {
     }
 };
 
-fn unsupported() void {
+fn unsupported(label: *VolumeDecriptor) void {
     // TODO:
+    std.debug.print("{f}\n", .{label});
     @panic("TODO: unsupported");
 }
 
@@ -161,11 +165,10 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         var label_sector: DiskSector = undefined;
         const label = try loadVolumeLabel(image, &label_sector);
         if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
-            return unsupported();
+            return unsupported(label);
         } else if (label.allocation_pages[0] != DiskImageType_HD_BASIC.allocation_page) {
-            return unsupported();
+            return unsupported(label);
         }
-        std.debug.print("{f}\n", .{label});
 
         var dir_page: u16 = DiskImageType_HD_BASIC.directory_page;
         var dir_location = toPhysicalAddress(image.image_type, dir_page);
@@ -269,7 +272,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirE
             var sector: DiskSector = .initUnformatted(image.image_type, location.track);
             try image.readSectorPhysical(location, &sector);
             if (entry.attribs[1] == 'S') { // Small
-                if (page_count == entry.os.hd_basic.npages) {
+                if (page_count + 1 == entry.os.hd_basic.npages) {
                     try out_writer.writeAll(sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
                     break :copy;
                 } else {
@@ -310,18 +313,21 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     var entry_nr: u16 = undefined;
     var free_entry = try rawEntryGetFree(&image.directory, &entry_nr);
     // TODO: There prob needs ot be an init fn for this? Where else do we init this?
+    // Default the dates the the disk formatted date..
+    const creation_date, const modification_date = decodeDates(label.dates_encoded);
     free_entry.* = .{
-        .creation_date = label.dates_encoded[0..3].*,
-        .modification_date = label.dates_encoded[3..].*,
+        .creation_date = creation_date,
+        .modification_date = modification_date,
         .filename = @splat(' '),
         .status = 0x01,
-        .read_only = 0x1,
+        .read_only = 0x3, // read/write
         .ngroups = 0,
         .npages = 0,
         .ref_count = 0,
         .last_group = 0,
         .eof_byte = 0,
         .allocations = @splat(0xffff),
+        .unused = @splat(0),
     };
     { // Filename
         var idx: usize = 0;
@@ -334,76 +340,170 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         }
     }
 
-    const helper = struct {
-        pub fn newAllocation(dir: *DirectoryTable, entry: *DirEntry) error{OutOfAllocs}!void {
-            entry.last_group = try allocationGetFree(dir);
-            std.debug.print("ngroups = {}\n", .{entry.ngroups});
-            if (entry.ngroups < entry.allocations.len) {
-                entry.allocations[entry.ngroups] = entry.last_group;
+    const CopyToImage = struct {
+        const CopyToImage = @This();
+        // // TODO: Consider???
+        img: *DiskImage,
+        vol: *VolumeDecriptor,
+        entry: *DirEntry,
+        indirect_location: ?PhysicalAddress,
+        indirect_group_idx: u16,
+        indirect_alloc_idx: u8,
+        indirect_groups: [128]u16 align(1),
+
+        // TODO: Maybe this can create entry as well?
+        pub fn init(img: *DiskImage, vol: *VolumeDecriptor, entry: *DirEntry) CopyToImage {
+            return .{
+                .vol = vol,
+                .img = img,
+                .entry = entry,
+                .indirect_location = null,
+                .indirect_group_idx = 0,
+                .indirect_alloc_idx = 0,
+                .indirect_groups = @splat(0xffff),
+            };
+        }
+        // TODO: allocs are added to the directory entry before the sub-allocs are written to disk.
+        // Could result in file corruption.
+
+        // TODO: This should prob stil lreturn u16?? as well as updating everything?
+        // TODO: Error set
+        pub fn newAllocation(self: *CopyToImage) !void { //error{OutOfAllocs}!void {
+            // This should be impossible to trigger on 5MB hd_basic disks.
+            if (self.indirect_alloc_idx >= self.entry.allocations.len) return error.OutOfAllocs;
+
+            const image_type = self.img.image_type;
+            const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+
+            self.entry.last_group = try allocationGetFree(&self.img.directory);
+            //            self.vol. = self.entry.last_group;
+            self.vol.free_groups -= 1;
+            if (self.entry.ngroups < self.entry.allocations.len) {
+                self.entry.allocations[self.entry.ngroups] = self.entry.last_group;
+                self.entry.ngroups += 1;
+            } else if (self.entry.status == 0x01 and self.entry.ngroups == self.entry.allocations.len) {
+                // convert to large file format and get a new allocation for that file.
+                self.convertToLargeFile();
+                // Now get a new allocation for the actual file data.
+                return self.newAllocation();
             } else {
-                @panic("TODO");
+                // groups are u16 = 128 per sector. 8 sectors per group
+                // = 1024 groups per indirect block. TODO: Calc this?
+                if (self.indirect_group_idx % 128 == 0 and self.indirect_group_idx != 0) {
+                    try self.writeIndirectGroupPage();
+                    if (self.indirect_group_idx % 1024 == 0) {
+                        // new indirect allocation page required.
+                        self.indirect_location = toPhysicalAddress(self.img.image_type, self.entry.last_group * sectors_per_alloc);
+                        try self.initIndirectGroupPages();
+                        self.entry.allocations[self.indirect_alloc_idx] = self.entry.last_group;
+                        self.indirect_alloc_idx += 1;
+                        self.indirect_group_idx = 0;
+                        self.entry.ngroups += 1;
+                        return self.newAllocation();
+                    }
+                }
+                self.indirect_groups[self.indirect_group_idx % 128] = self.entry.last_group;
+                self.indirect_group_idx += 1;
+                self.entry.ngroups += 1;
             }
-            entry.ngroups += 1;
+        }
+
+        fn initIndirectGroupPages(self: *CopyToImage) !void {
+            // TODO: Sectors per alloc
+            const location = self.indirect_location.?;
+            for (0..8) |offset| {
+                var sector: DiskSector = .initUnformatted(self.img.image_type, location.track);
+                @memset(sector.dataBytes(), 0xff);
+                try self.img.writeSector(.{ .track = location.track, .sector = @intCast(location.sector + offset) }, &sector);
+            }
+        }
+
+        fn writeIndirectGroupPage(self: *CopyToImage) !void {
+            var sector: DiskSector = .initUnformatted(self.img.image_type, self.indirect_location.?.track);
+            @memcpy(sector.dataBytes(), @as([]u8, @ptrCast(&self.indirect_groups)));
+            try self.img.writeSector(self.indirect_location.?, &sector);
+            self.indirect_location.?.sector += 1;
+            @memset(&self.indirect_groups, 0xffff);
+        }
+
+        fn convertToLargeFile(self: *CopyToImage) void {
+            const image_type = self.img.image_type;
+            const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+
+            self.entry.status = 0x03;
+            self.indirect_location = toPhysicalAddress(image_type, self.entry.last_group * sectors_per_alloc);
+
+            for (self.indirect_groups[0..self.entry.allocations.len], 0..) |*group, i| {
+                group.* = self.entry.allocations[i];
+            }
+            @memset(&self.entry.allocations, 0xffff);
+            self.entry.allocations[0] = self.entry.last_group;
+            self.entry.ngroups += 1;
+            self.indirect_alloc_idx = 1;
+            self.indirect_group_idx = self.entry.allocations.len;
         }
 
         // TODO: errorsets.
-        pub fn writePage(img: *DiskImage, entry: *DirEntry, data: []const u8) !void {
-            if (data.len != 0) {
-                // TODO: sectors_per_alloc is everythere. just move it to image type so it is a constant.
-                const image_type = img.image_type;
-                const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
-                const write_page = entry.last_group * sectors_per_alloc + (entry.npages % sectors_per_alloc);
-                const write_location = toPhysicalAddress(image_type, write_page);
+        pub fn writePage(self: *CopyToImage, data: []const u8) !void {
+            if (data.len == 0) return;
+            // TODO: sectors_per_alloc is everythere. just move it to image type so it is a constant.
+            const image_type = self.img.image_type;
+            const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+            const write_page = self.entry.last_group * sectors_per_alloc + (self.entry.npages % sectors_per_alloc);
+            const write_location = toPhysicalAddress(image_type, write_page);
 
-                var write_sector: DiskSector = .initFormatted(image_type, write_location);
-                @memcpy(write_sector.dataBytes()[0..data.len], data);
-                try img.writeSector(write_location, &write_sector);
-                entry.npages += 1;
+            var write_sector: DiskSector = .initFormatted(image_type, write_location);
+            @memcpy(write_sector.dataBytes()[0..data.len], data);
+            try self.img.writeSector(write_location, &write_sector);
+            if (data.len == self.img.image_type.sector_size_data) {
+                self.entry.npages += 1;
+            } else {
+                self.entry.eof_byte = @intCast(data.len);
             }
-            entry.eof_byte = @intCast(data.len);
         }
 
         // TODO: Error sets
-        pub fn copyFile(img: *DiskImage, entry: *DirEntry, reader: *std.Io.Reader) !void {
+        pub fn copyFile(self: *CopyToImage, reader: *std.Io.Reader) !void {
             var read_buffer: [256]u8 = undefined;
-            const sectors_per_alloc = img.image_type.block_size / img.image_type.sector_size_data;
+            const sectors_per_alloc = self.img.image_type.block_size / self.img.image_type.sector_size_data;
             var nbytes = try reader.readSliceShort(&read_buffer);
-
-            while (nbytes == read_buffer.len) {
-                try newAllocation(&img.directory, entry);
+            while (nbytes != 0) {
+                try self.newAllocation();
                 for (0..sectors_per_alloc) |_| {
-                    try writePage(img, entry, read_buffer[0..nbytes]);
+                    try self.writePage(read_buffer[0..nbytes]);
                     nbytes = try reader.readSliceShort(&read_buffer);
                     if (nbytes == 0) break;
                 }
-                if (entry.ngroups == entry.allocations.len) {
-                    if (false) @panic("TODO"); // switch to large file mode
-                    break;
-                }
             }
+        }
+
+        pub fn flush(self: *CopyToImage) !void {
+            if (self.indirect_location != null) {
+                try self.writeIndirectGroupPage();
+            }
+            // anything else?
+            // this should do the dir entry as well in future.
         }
     };
 
-    {
-        helper.copyFile(image, free_entry, file_reader) catch |err| {
-            try hd_basic.rawEntryWrite(image, entry_nr);
-            return err;
-        };
-        std.debug.print("free_entry = {*}\n", .{free_entry});
-        std.debug.print("raw_entry = {*}\n", .{&image.directory.raw_directories.hd_basic.items[entry_nr]});
-
-        try hd_basic.rawEntryWrite(image, entry_nr);
-    }
+    var copy: CopyToImage = .init(image, label, free_entry);
+    const copy_err = copy.copyFile(file_reader);
+    try copy.flush();
+    try hd_basic.rawEntryWrite(image, entry_nr);
     // TODO: Think about allocators.. And sohuld we just pass them everywhere instead of storing them??
 
     var allocation_bitmap: [512]u8 = @splat(0);
     for (&allocation_bitmap, 0..) |*byte, idx| {
+        const capacity = image.directory.free_allocations.capacity();
         for (0..8) |bit| {
-            if (image.directory.free_allocations.isSet(idx)) {
+            const group = idx * 8 + bit;
+            if (group >= capacity) break;
+            if (!image.directory.free_allocations.isSet(group)) {
                 byte.* |= @as(u8, 1) << @intCast(bit);
             }
         }
     }
+    allocation_bitmap[305] = 0xF8; // Some fixed guard byte?
     var alloc_location = toPhysicalAddress(image.image_type, 1);
     var alloc_sector: DiskSector = .initFormatted(image.image_type, alloc_location);
     @memcpy(alloc_sector.rawBytes(), allocation_bitmap[0..256]);
@@ -411,13 +511,26 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     alloc_location = toPhysicalAddress(image.image_type, 2);
     @memcpy(alloc_sector.rawBytes(), allocation_bitmap[256..]);
     try image.writeSector(alloc_location, &alloc_sector);
-    const cooked: directory_table.CookedDirEntry = try .initHDBasic(image.directory.arena.allocator(), free_entry, image.image_type);
+    const cooked: directory_table.CookedDirEntry = try .initHDBasic(
+        image.directory.arena.allocator(),
+        free_entry,
+        image.image_type,
+    );
     image.directory.cooked_directories.appendAssumeCapacity(cooked);
+
+    // TODO: Turn this int a fn? We also need to sort out the error handling. keeping the bitmaps in sync etc.
+    try image.writeSector(.{ .track = 0, .sector = 0 }, &label_sector);
+    try image.writeSector(.{
+        .track = image.image_type.tracks - 1,
+        .sector = image.image_type.sectors_per_track - 1,
+    }, &label_sector);
+    try copy_err;
 }
 
 /// Get a free allocation (group) and unmark it from the free groups in memory
 /// This needs to be committed to disk in the volume label to make it a permanent allocation
-fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
+/// only pub for tests
+pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
     const free = dir.free_allocations.findFirstSet() orelse return error.OutOfAllocs;
     dir.free_allocations.unset(free);
     return @intCast(free);
@@ -474,9 +587,9 @@ pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) vo
         .directory_page_current = DiskImageType_HD_BASIC.directory_page,
         .directory_page_count = image_type.directories / 2, // 2 dirs per page
         .last_page = @intCast(image_type.tracks * image_type.sectors_per_track - 1),
-        .reserved_groups = image_type.directory_allocs,
+        .reserved_groups = image_type.directory_allocs + 1,
         .unusable_groups = DiskImageType_HD_BASIC.unusable_groups,
-        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 33), // TODO: Sigh.
+        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 32), // TODO: Sigh.
         .unknown = @splat(0), // TODO: move these to right place.
         .unused3 = @splat(0), // TODO: move these to right place
         .swap_area = .{ 0xffff, 0xffff },
@@ -561,7 +674,6 @@ test "encode dates" {
 
 // TODO: Be consistent about what namespace the errors live in.
 fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || directory_table.RawDirError)!void {
-    std.debug.print("raw entry write {}\n", .{entry_nr});
     const image_type = img.image_type;
 
     const this_entry = &img.directory.raw_directories.hd_basic.items[entry_nr];
@@ -577,7 +689,6 @@ fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || 
     // Copy 1 full sector worth of extents/raw entries i.e. 2. TODO: This is genric, but small.
     @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(img.directory.raw_directories.hd_basic.items[start_index..][0..image_type.dirs_per_sector]));
     try img.writeSector(location, &sector);
-    std.debug.print("raw entry write write sector {}, {}\n{}\n", .{ location, entry_page, this_entry });
 }
 
 pub fn initAllocationMap(sector: *DiskSector, which: enum { first, second }) void {
@@ -623,7 +734,7 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
         .allocations = undefined,
     };
     // TODO: -1 because we can't work out whether 56 or 57 allocs. The directory starts at 57, but only 56 allocs are marked as unused???
-    for (&dir_table.allocations, dir_alloc..image_type.directory_allocs - 1) |*alloc, idx| {
+    for (&dir_table.allocations, dir_alloc..image_type.directory_allocs) |*alloc, idx| {
         alloc.* = @intCast(idx);
     }
 }
