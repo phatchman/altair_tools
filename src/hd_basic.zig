@@ -1,6 +1,11 @@
+// TODO: There is a 12 group discrepancy between total and free.
+// We should also prob use the allocation map to set the free allocations
+// or at least validate it against the files allocations?
+// TODO: Chwcek of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
+// TODO: Think about with this new structure how to group things e.g. raw dir operations
 pub const VolumeDecriptor = extern struct {
     label: [20]u8,
-    date: [6]u8,
+    dates_encoded: [6]u8,
     backup_set: u16 align(1),
     allocation_pages: [3]u16 align(1),
     directory_pages: [3]u16 align(1),
@@ -10,8 +15,8 @@ pub const VolumeDecriptor = extern struct {
     unused: [18]u8,
     allocation_page_current: u16 align(1),
     allocation_page_count: u16 align(1),
-    directory_entry_current: u16 align(1),
-    directory_entry_count: u16 align(1),
+    directory_page_current: u16 align(1),
+    directory_page_count: u16 align(1),
     unknown: [4]u8,
     last_page: u16 align(1),
     free_groups: u16 align(1),
@@ -23,7 +28,7 @@ pub const VolumeDecriptor = extern struct {
 
     pub fn format(self: *const VolumeDecriptor, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Label             : {s}\n", .{self.label});
-        try writer.print("Date              : {f}\n", .{fmtDate(self.date[0..3].*)});
+        try writer.print("Date              : {x}\n", .{self.dates_encoded});
         try writer.print("Backup Set        : {}\n", .{self.backup_set});
         try writer.print("Allocation Pages  : {any}\n", .{self.allocation_pages});
         try writer.print("Directory Pages   : {any}\n", .{self.directory_pages});
@@ -31,8 +36,8 @@ pub const VolumeDecriptor = extern struct {
         try writer.print("Mounted           : {d}\n", .{self.mount_flag});
         try writer.print("Alloc Page Current: {d}\n", .{self.allocation_page_current});
         try writer.print("Alloc Page Count  : {d}\n", .{self.allocation_page_count});
-        try writer.print("Dir Entry Current : {d}\n", .{self.directory_entry_current});
-        try writer.print("Dir Entry Count   : {d}\n", .{self.directory_entry_count});
+        try writer.print("Dir Entry Current : {d}\n", .{self.directory_page_current});
+        try writer.print("Dir Entry Count   : {d}\n", .{self.directory_page_count});
         try writer.print("Last Page         : {d}\n", .{self.last_page});
         try writer.print("Free Groups       : {d}\n", .{self.free_groups});
         try writer.print("Reserved Groups   : {d}\n", .{self.reserved_groups});
@@ -46,10 +51,11 @@ pub const DirEntry = extern struct {
     filename: [24]u8,
     creation_date: [3]u8,
     modification_date: [3]u8,
-    read_only: u8,
-    unused: [23]u8,
+    read_only: u16 align(1),
+    unused: [20]u8 = @splat(0xff),
+    ref_count: u16 align(1),
     status: u8,
-    unused2: u8,
+    unused2: u8 = 0,
     npages: u16 align(1),
     eof_byte: u16 align(1),
     ngroups: u16 align(1),
@@ -57,7 +63,7 @@ pub const DirEntry = extern struct {
     allocations: [32]u16 align(1),
 
     pub fn isDeleted(self: *const DirEntry) bool {
-        return self.status != 0x01;
+        return self.status != 0x01 and self.status != 0x3;
     }
 
     pub fn setDeleted(self: *DirEntry) void {
@@ -65,14 +71,19 @@ pub const DirEntry = extern struct {
     }
 
     pub fn isLastEntry(self: *const DirEntry) bool {
+        // TODO: Test this.. what actually happens for deleted files?
         return self.status == 0xff;
     }
 
     pub fn eql(self: *DirEntry, cooked: *directory_table.CookedDirEntry) bool {
-        _ = self;
-        _ = cooked;
-        @panic("TODO");
+        return std.mem.eql(
+            u8,
+            std.mem.trimEnd(u8, &cooked.filename, " "),
+            std.mem.trimEnd(u8, &self.filename, " "),
+        );
     }
+
+    //TODO: Validate!
 
     pub fn format(self: *const DirEntry, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Filename         : {s}\n", .{self.filename});
@@ -100,79 +111,6 @@ comptime {
     std.debug.assert(@sizeOf(DirEntry) == 128);
 }
 
-const page_size: u16 = 256;
-var dir_entries: std.ArrayList(DirEntry) = .empty;
-
-// pub fn main(init: std.process.Init) !void {
-//     var stdout_buffer: [256]u8 = undefined;
-//     var stdout_writer: std.Io.File.Writer = .init(.stdout(), init.io, &stdout_buffer);
-//     const stdout = &stdout_writer.interface;
-//     defer stdout.flush() catch {};
-
-//     const args = try init.minimal.args.toSlice(init.arena.allocator());
-//     if (args.len != 2) {
-//         std.debug.print("Usage: {s} <filename>\n", .{std.fs.path.basename(args[0])});
-//         return;
-//     }
-
-//     var image_file = try std.Io.Dir.cwd().openFile(init.io, args[1], .{ .mode = .read_only });
-//     defer image_file.close(init.io);
-
-//     var read_buffer: [256]u8 = undefined;
-//     var reader = image_file.reader(init.io, &read_buffer);
-//     const vol_label = try reader.interface.takeStruct(VolumeDecriptor, .little);
-//     std.debug.print("{f}\n", .{&vol_label});
-//     try seekToPage(&reader, vol_label.directory_pages[0]);
-//     for (0..vol_label.directory_entry_count) |_| {
-//         const entry = try reader.interface.takeStruct(DirEntry, .little);
-//         if (entry.status == 0xff) break // End of directory
-//         else if (entry.status == 0x01) { // "small file"
-//             try dir_entries.append(init.arena.allocator(), entry);
-//             std.debug.print("{f}\n", .{&entry});
-//         }
-//     }
-//     const filename = "HELP.TXT";
-//     const out_file = try std.Io.Dir.cwd().createFile(init.io, filename, .{ .truncate = true });
-//     defer out_file.close(init.io);
-//     var file_writer = out_file.writer(init.io, &.{});
-//     try extract(&reader, &file_writer.interface, filename);
-// }
-
-fn seekToPage(reader: *std.Io.File.Reader, page_nr: u16) !void {
-    try reader.seekTo(@as(u64, page_nr) * page_size);
-}
-
-fn extract(reader: *std.Io.File.Reader, writer: *std.Io.Writer, filename: []const u8) !void {
-    defer writer.flush() catch {};
-    for (dir_entries.items) |dir_entry| {
-        if (std.mem.eql(u8, filename, std.mem.trimEnd(u8, &dir_entry.filename, " "))) {
-            var buffer: [256]u8 = undefined;
-            var page_count: usize = 0;
-            for (dir_entry.allocations) |alloc| {
-                if (alloc == 0xffff) {
-                    @panic("Shouldn't get here");
-                    //                    return;
-                }
-                const start_page = alloc * 8;
-                try seekToPage(reader, start_page);
-                for (0..8) |offset| {
-                    try reader.interface.readSliceAll(&buffer);
-                    std.debug.print("page = {}, eof_page = {}\n", .{ start_page + offset, dir_entry.npages });
-                    if (page_count == dir_entry.npages) {
-                        std.debug.print("eof_byte = {}\n", .{dir_entry.eof_byte});
-                        try writer.writeAll(buffer[0..dir_entry.eof_byte]);
-                        return;
-                    } else {
-                        try writer.writeAll(&buffer);
-                    }
-                    page_count += 1;
-                }
-                if (alloc == dir_entry.last_group) return;
-            }
-        }
-    }
-}
-
 pub const DiskImageType_HD_BASIC = struct {
     const skew_table = [48]u16{
         0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -182,6 +120,9 @@ pub const DiskImageType_HD_BASIC = struct {
     };
     const directory_page = 192;
     const allocation_page = 1;
+    const unusable_groups = 4;
+    // These groups at end of disk are never allocated to a file.
+    const never_allocated_groups = 29;
 
     pub fn init() DiskImageType {
         var result = DiskImageType{
@@ -196,70 +137,305 @@ pub const DiskImageType_HD_BASIC = struct {
             .sector_size_data = 256,
             .block_size = 2048,
             .directories = 512,
-            .directory_allocs = 56,
+            // TODO: This isn't really the number of directory allocs. It's the number of reserved allocs.
+            .directory_allocs = 57,
             .image_size = 4988928,
-            .varying_sector_format = false,
+            .varying_sector_format = true,
             .skew_table = &skew_table,
         };
         result.init();
-        result.total_allocs = @as(u32, result.tracks) * result.sectors_per_track * result.sector_size_data / result.block_size;
+        // TODO: Don;t think we can use the last track? There is a copy of he volume label in the last sector.
+        // TODO: 4 unusable allocs...
+        result.total_allocs = 2403;
         return result;
     }
 };
 
 fn unsupported() void {
+    // TODO:
     @panic("TODO: unsupported");
 }
 
 pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryTable.DirectoryLoadError!void {
-    var label_sector: DiskSector = undefined;
-    const label = try loadVolumeLabel(image, &label_sector);
-    if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
-        return unsupported();
-    } else if (label.allocation_pages[0] != DiskImageType_HD_BASIC.allocation_page) {
-        return unsupported();
-    }
+    {
+        var label_sector: DiskSector = undefined;
+        const label = try loadVolumeLabel(image, &label_sector);
+        if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
+            return unsupported();
+        } else if (label.allocation_pages[0] != DiskImageType_HD_BASIC.allocation_page) {
+            return unsupported();
+        }
+        std.debug.print("{f}\n", .{label});
 
-    var dir_page: u16 = DiskImageType_HD_BASIC.directory_page;
-    var dir_location = toPhysicalAddress(image.image_type, dir_page);
-    var dir_sector: DiskSector = .initUnformatted(image.image_type, dir_location.track);
-    var dir_count: u16 = 0;
-    while (dir_count < image.image_type.directories) {
-        try image.readSectorPhysical(dir_location, &dir_sector);
-        // Each 256B sector contains 2 x 128B diectory entries
-        const entries = bytesAsSliceLE(DirEntry, dir_sector.dataBytes());
-        dir.raw_directories.hd_basic.appendSliceAssumeCapacity(entries);
-        dir_count += @intCast(entries.len);
-        dir_page += 1;
-        dir_location = toPhysicalAddress(image.image_type, dir_page);
-    }
-    for (0..image.image_type.directory_allocs) |alloc| {
-        dir.free_allocations.unset(alloc);
-    }
-    // Last sector is used to store a duplicate volume label. TODO: So we assume that
-    // means the last allocation is also unusable?
-    dir.free_allocations.unset(image.image_type.total_allocs - 1);
-    for (dir.raw_directories.hd_basic.items) |entry| {
-        // TODO: validate external data
-        for (entry.allocations) |alloc| {
-            if (alloc == 0xffff) break;
+        var dir_page: u16 = DiskImageType_HD_BASIC.directory_page;
+        var dir_location = toPhysicalAddress(image.image_type, dir_page);
+        var dir_sector: DiskSector = .initUnformatted(image.image_type, dir_location.track);
+        var dir_count: u16 = 0;
+        while (dir_count < image.image_type.directories) {
+            try image.readSectorPhysical(dir_location, &dir_sector);
+            // Each 256B sector contains 2 x 128B diectory entries
+            const entries = bytesAsSliceLE(DirEntry, dir_sector.dataBytes());
+            dir.raw_directories.hd_basic.appendSliceAssumeCapacity(entries);
+            dir_count += @intCast(entries.len);
+            dir_page += 1;
+            dir_location = toPhysicalAddress(image.image_type, dir_page);
+        }
+        for (0..image.image_type.directory_allocs) |alloc| {
             dir.free_allocations.unset(alloc);
+        }
+        //dir.free_allocations.setRangeValue(dir.free_allocations.capacity() - DiskImageType_HD_BASIC.never_allocated_groups, dir.free_allocations.capacity() - 1);
+        // Last sector is used to store a duplicate volume label. TODO: So we assume that
+        // means the last allocation is also unusable? I think it is acutally the last track?
+        //dir.free_allocations.unset(image.image_type.total_allocs - 1);
+        const sectors_per_alloc = image.image_type.block_size / image.image_type.sector_size_data; // 8
+        for (dir.raw_directories.hd_basic.items) |entry| {
+            // TODO: validate external data
+            for (entry.allocations) |alloc| {
+                if (alloc == 0xffff) break;
+                if (!entry.isDeleted()) {
+                    dir.free_allocations.unset(alloc);
+                    // Large files use an indirect allocation scheme.
+                    if (entry.status == 0x03) { // Large file
+                        sub_allocs: for (0..sectors_per_alloc) |offset| {
+                            const alloc_location = toPhysicalAddress(image.image_type, @intCast(alloc * 8 + offset));
+                            var alloc_sector: DiskSector = .initUnformatted(image.image_type, alloc_location.track);
+                            try image.readSectorPhysical(alloc_location, &alloc_sector);
+                            const allocations: []align(1) u16 align(1) = @ptrCast(alloc_sector.dataBytes());
+                            for (allocations) |ind_alloc| {
+                                if (ind_alloc == 0xffff) break :sub_allocs;
+                                dir.free_allocations.unset(ind_alloc);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Check the free allocations vs the allocation bitmap from page 1 and 2.
+    {
+        var allocation_bitmap: [512]u8 = undefined;
+        var location: PhysicalAddress = toPhysicalAddress(image.image_type, 1);
+        var sector: DiskSector = .initUnformatted(image.image_type, location.track);
+        try image.readSectorPhysical(location, &sector);
+        @memcpy(allocation_bitmap[0..256], sector.dataBytes());
+        location = toPhysicalAddress(image.image_type, 2);
+        sector = .initUnformatted(image.image_type, location.track);
+        try image.readSectorPhysical(location, &sector);
+        @memcpy(allocation_bitmap[256..], sector.dataBytes());
+        var alloc_nr: u16 = 0;
+        for (&allocation_bitmap) |byte| {
+            var to_shift: u8 = byte;
+            for (0..8) |_| {
+                if (alloc_nr == dir.free_allocations.capacity()) break;
+                if (dir.free_allocations.isSet(alloc_nr) == if (to_shift & 0x01 == 1) true else false) {
+                    // TODO: Make this a log message
+                    std.debug.print(
+                        "Allocation validation for {}. disk map is {} directory map is {}\n",
+                        .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
+                    );
+                }
+                to_shift = to_shift >> 1;
+                alloc_nr += 1;
+            }
         }
     }
     if (option == .full) {
-        for (dir.raw_directories.hd_basic.items) |entry| {
+        if (dir.raw_directories.hd_basic.items.len <= 2) {
+            @panic("TODO");
+            //logerr("TODO", .{});
+        }
+        for (dir.raw_directories.hd_basic.items[2..]) |entry| {
             // TODO: Validate each entry. We need to do it in the non-full case as well to generate the error
             // messages even for raw extract.
             if (entry.isLastEntry()) break;
             if (!entry.isDeleted()) {
                 const cooked: directory_table.CookedDirEntry = try .initHDBasic(arena, &entry, image.image_type);
-                try dir.cooked_directories.append(arena, cooked);
+                dir.cooked_directories.appendAssumeCapacity(cooked);
             }
         }
     }
 }
 
-fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) PhysicalAddress {
+// TODO: Errorset
+pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirEntry, out_writer: *std.Io.Writer, _: DiskImage.TextMode) !void {
+    const sectors_per_alloc = image.image_type.block_size / image.image_type.sector_size_data; // 8
+    var page_count: usize = 0;
+    copy: for (entry.allocations.items) |alloc| {
+        if (alloc == 0xffff) break :copy;
+
+        const start_page = alloc * sectors_per_alloc;
+        for (0..sectors_per_alloc) |offset| {
+            const location = toPhysicalAddress(image.image_type, @intCast(start_page + offset));
+            var sector: DiskSector = .initUnformatted(image.image_type, location.track);
+            try image.readSectorPhysical(location, &sector);
+            if (entry.attribs[1] == 'S') { // Small
+                if (page_count == entry.os.hd_basic.npages) {
+                    try out_writer.writeAll(sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
+                    break :copy;
+                } else {
+                    try out_writer.writeAll(sector.dataBytes());
+                }
+                page_count += 1;
+            } else if (entry.attribs[1] == 'L') { // Larger
+                const sub_allocations: []align(1) u16 align(1) = @ptrCast(sector.dataBytes());
+                // Large files use indirect allocations
+                for (sub_allocations) |sub_alloc| {
+                    if (sub_alloc == 0xffff) break :copy;
+                    for (0..sectors_per_alloc) |sub| {
+                        const sub_location = toPhysicalAddress(image.image_type, @intCast(sub_alloc * sectors_per_alloc + sub));
+                        var sub_sector: DiskSector = .initUnformatted(image.image_type, sub_location.track);
+                        try image.readSectorPhysical(sub_location, &sub_sector);
+                        if (page_count == entry.os.hd_basic.npages) {
+                            try out_writer.writeAll(sub_sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
+                            break :copy;
+                        } else {
+                            try out_writer.writeAll(sub_sector.dataBytes());
+                        }
+                        page_count += 1;
+                    }
+                }
+            }
+        }
+        if (alloc == entry.os.hd_basic.last_group) break :copy;
+    }
+}
+
+pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) !void {
+    _ = force; // TODO
+    _ = text_mode; // Not required.
+
+    var label_sector: DiskSector = .initUnformatted(image.image_type, 0);
+    const label: *VolumeDecriptor = try loadVolumeLabel(image, &label_sector);
+
+    var entry_nr: u16 = undefined;
+    var free_entry = try rawEntryGetFree(&image.directory, &entry_nr);
+    // TODO: There prob needs ot be an init fn for this? Where else do we init this?
+    free_entry.* = .{
+        .creation_date = label.dates_encoded[0..3].*,
+        .modification_date = label.dates_encoded[3..].*,
+        .filename = @splat(' '),
+        .status = 0x01,
+        .read_only = 0x1,
+        .ngroups = 0,
+        .npages = 0,
+        .ref_count = 0,
+        .last_group = 0,
+        .eof_byte = 0,
+        .allocations = @splat(0xffff),
+    };
+    { // Filename
+        var idx: usize = 0;
+        for (to_filename) |ch| {
+            if (idx == free_entry.filename.len) break;
+            if (std.ascii.isPrint(ch)) {
+                free_entry.filename[idx] = ch;
+                idx += 1;
+            }
+        }
+    }
+
+    const helper = struct {
+        pub fn newAllocation(dir: *DirectoryTable, entry: *DirEntry) error{OutOfAllocs}!void {
+            entry.last_group = try allocationGetFree(dir);
+            std.debug.print("ngroups = {}\n", .{entry.ngroups});
+            if (entry.ngroups < entry.allocations.len) {
+                entry.allocations[entry.ngroups] = entry.last_group;
+            } else {
+                @panic("TODO");
+            }
+            entry.ngroups += 1;
+        }
+
+        // TODO: errorsets.
+        pub fn writePage(img: *DiskImage, entry: *DirEntry, data: []const u8) !void {
+            if (data.len != 0) {
+                // TODO: sectors_per_alloc is everythere. just move it to image type so it is a constant.
+                const image_type = img.image_type;
+                const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+                const write_page = entry.last_group * sectors_per_alloc + (entry.npages % sectors_per_alloc);
+                const write_location = toPhysicalAddress(image_type, write_page);
+
+                var write_sector: DiskSector = .initFormatted(image_type, write_location);
+                @memcpy(write_sector.dataBytes()[0..data.len], data);
+                try img.writeSector(write_location, &write_sector);
+                entry.npages += 1;
+            }
+            entry.eof_byte = @intCast(data.len);
+        }
+
+        // TODO: Error sets
+        pub fn copyFile(img: *DiskImage, entry: *DirEntry, reader: *std.Io.Reader) !void {
+            var read_buffer: [256]u8 = undefined;
+            const sectors_per_alloc = img.image_type.block_size / img.image_type.sector_size_data;
+            var nbytes = try reader.readSliceShort(&read_buffer);
+
+            while (nbytes == read_buffer.len) {
+                try newAllocation(&img.directory, entry);
+                for (0..sectors_per_alloc) |_| {
+                    try writePage(img, entry, read_buffer[0..nbytes]);
+                    nbytes = try reader.readSliceShort(&read_buffer);
+                    if (nbytes == 0) break;
+                }
+                if (entry.ngroups == entry.allocations.len) {
+                    if (false) @panic("TODO"); // switch to large file mode
+                    break;
+                }
+            }
+        }
+    };
+
+    {
+        helper.copyFile(image, free_entry, file_reader) catch |err| {
+            try hd_basic.rawEntryWrite(image, entry_nr);
+            return err;
+        };
+        std.debug.print("free_entry = {*}\n", .{free_entry});
+        std.debug.print("raw_entry = {*}\n", .{&image.directory.raw_directories.hd_basic.items[entry_nr]});
+
+        try hd_basic.rawEntryWrite(image, entry_nr);
+    }
+    // TODO: Think about allocators.. And sohuld we just pass them everywhere instead of storing them??
+
+    var allocation_bitmap: [512]u8 = @splat(0);
+    for (&allocation_bitmap, 0..) |*byte, idx| {
+        for (0..8) |bit| {
+            if (image.directory.free_allocations.isSet(idx)) {
+                byte.* |= @as(u8, 1) << @intCast(bit);
+            }
+        }
+    }
+    var alloc_location = toPhysicalAddress(image.image_type, 1);
+    var alloc_sector: DiskSector = .initFormatted(image.image_type, alloc_location);
+    @memcpy(alloc_sector.rawBytes(), allocation_bitmap[0..256]);
+    try image.writeSector(alloc_location, &alloc_sector);
+    alloc_location = toPhysicalAddress(image.image_type, 2);
+    @memcpy(alloc_sector.rawBytes(), allocation_bitmap[256..]);
+    try image.writeSector(alloc_location, &alloc_sector);
+    const cooked: directory_table.CookedDirEntry = try .initHDBasic(image.directory.arena.allocator(), free_entry, image.image_type);
+    image.directory.cooked_directories.appendAssumeCapacity(cooked);
+}
+
+/// Get a free allocation (group) and unmark it from the free groups in memory
+/// This needs to be committed to disk in the volume label to make it a permanent allocation
+fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
+    const free = dir.free_allocations.findFirstSet() orelse return error.OutOfAllocs;
+    dir.free_allocations.unset(free);
+    return @intCast(free);
+}
+
+// TODO: Turn this into rawEmtyrGetFreeInitialized.
+fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtents}!*DirEntry {
+    for (dir.raw_directories.hd_basic.items, 0..) |*entry, nr| {
+        if (entry.isDeleted()) {
+            entry_nr.* = @intCast(nr);
+            return entry;
+        }
+    }
+    return error.OutOfExtents;
+}
+
+// TODO: Doesn;t need to be pub after we fix up the init stuff
+pub fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) PhysicalAddress {
     // TODO: Add validation
     // Pages are sequentially numbered sectors starting from track 0
     return .{
@@ -278,6 +454,178 @@ fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDecriptor {
     if (@import("builtin").target.cpu.arch.endian() == .big)
         byteSwapAllFields(VolumeDecriptor, result);
     return result;
+}
+
+// TODO: Needs to pass disk image type here.
+pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) void {
+    const label: *VolumeDecriptor = std.mem.bytesAsValue(VolumeDecriptor, sector.dataBytes());
+    label.* = .{
+        .label = @splat(' '),
+        .dates_encoded = @splat(0),
+        .backup_set = 0,
+        .allocation_pages = @splat(DiskImageType_HD_BASIC.allocation_page),
+        .directory_pages = @splat(DiskImageType_HD_BASIC.directory_page),
+        .os_start_page = 24, // This is set even for a freshly formatted disk with no OS
+        .os_page_count = 168,
+        .mount_flag = 0,
+        .unused = @splat(0),
+        .allocation_page_current = DiskImageType_HD_BASIC.allocation_page,
+        .allocation_page_count = 305, // TODO: ?? What ??
+        .directory_page_current = DiskImageType_HD_BASIC.directory_page,
+        .directory_page_count = image_type.directories / 2, // 2 dirs per page
+        .last_page = @intCast(image_type.tracks * image_type.sectors_per_track - 1),
+        .reserved_groups = image_type.directory_allocs,
+        .unusable_groups = DiskImageType_HD_BASIC.unusable_groups,
+        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 33), // TODO: Sigh.
+        .unknown = @splat(0), // TODO: move these to right place.
+        .unused3 = @splat(0), // TODO: move these to right place
+        .swap_area = .{ 0xffff, 0xffff },
+        .swap_area2 = .{ 0x0000, 0x0000 },
+    };
+}
+
+// TODO: error sets
+pub fn setVolumeLabel(image: *DiskImage, label: DiskLabel) !void {
+    var sector: DiskSector = .initUnformatted(image.image_type, 0);
+    try image.readSectorPhysical(.{ .track = 0, .sector = 0 }, &sector);
+    const vd: *VolumeDecriptor = std.mem.bytesAsValue(VolumeDecriptor, sector.dataBytes());
+    vd.label = label.hd_basic.user_label;
+    const encoded_date = encodeDates(label.hd_basic.created_yymmdd, label.hd_basic.modified_yymmdd);
+    vd.dates_encoded = encoded_date;
+    try image.writeSector(.{ .track = 0, .sector = 0 }, &sector);
+    // There is a copy on the last sector
+    try image.writeSector(.{ .track = image.image_type.tracks - 1, .sector = image.image_type.sectors_per_track - 1 }, &sector);
+    // Update the VOLUME_LABEL and DIRECTORY_LABEL dates
+    const dir_location = toPhysicalAddress(image.image_type, DiskImageType_HD_BASIC.directory_page);
+    try image.readSectorPhysical(dir_location, &sector);
+    const vol_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[0..128]);
+    const dir_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[128..]);
+    vol_table.creation_date = encoded_date[0..3].*;
+    dir_table.creation_date = encoded_date[0..3].*;
+    vol_table.modification_date = encoded_date[3..].*;
+    dir_table.modification_date = encoded_date[3..].*;
+    try image.writeSector(dir_location, &sector);
+}
+
+// 0 - created month, BCD +0x30
+// 1 - created year, BCD
+// 2 - modified year, BCD +0x30
+// 3 - created day, BCD
+// 4 - modified day, BCD +0x30
+// 5 - modified month, BCD
+fn encodeDates(created_yymmdd: [3]u8, modified_yymmdd: [3]u8) [6]u8 {
+    var result: [6]u8 = undefined;
+    result[0] = ((created_yymmdd[1] / 10 << 4) | (created_yymmdd[1] % 10)) + 0x30;
+    result[1] = (created_yymmdd[0] / 10 << 4) | (created_yymmdd[0] % 10);
+    result[2] = ((modified_yymmdd[0] / 10 << 4) | (modified_yymmdd[0] % 10)) + 0x30;
+    result[3] = (created_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10);
+    result[4] = ((modified_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10)) + 0x30;
+    result[5] = (modified_yymmdd[1] / 10 << 4) | (modified_yymmdd[1] % 10);
+    return result;
+}
+
+fn decodeDates(encoded: [6]u8) struct { [3]u8, [3]u8 } {
+    var created_yymmdd: [3]u8 = undefined;
+    var modified_yymmdd: [3]u8 = undefined;
+    created_yymmdd[0] = (encoded[1] >> 4) * 10 + (encoded[1] & 0x0f);
+    created_yymmdd[1] = ((encoded[0] - 0x30) >> 4) * 10 + ((encoded[0] - 0x30) & 0x0f);
+    created_yymmdd[2] = (encoded[3] >> 4) * 10 + (encoded[3] & 0x0f);
+
+    modified_yymmdd[0] = ((encoded[2] - 0x30) >> 4) * 10 + ((encoded[2] - 0x30) & 0x0f);
+    modified_yymmdd[1] = (encoded[5] >> 4) * 10 + (encoded[5] & 0x0f);
+    modified_yymmdd[2] = ((encoded[4] - 0x30) >> 4) * 10 + ((encoded[4] - 0x30) & 0x0f);
+    return .{ created_yymmdd, modified_yymmdd };
+}
+
+test "encode dates" {
+    const l = struct {
+        fn enc(year: u8, month: u8, day: u8) [2][3]u8 {
+            return .{ .{ year, month, day }, .{ year, month, day } };
+        }
+    };
+    var created: [3]u8 = undefined;
+    var modified: [3]u8 = undefined;
+    // - 01/01/70 = 31 70 A0 01 31 01
+    created, modified = l.enc(70, 1, 1);
+    try std.testing.expectEqual(.{ 0x31, 0x70, 0xA0, 0x01, 0x31, 0x01 }, encodeDates(created, modified));
+    try std.testing.expectEqual(.{ created, modified }, decodeDates(.{ 0x31, 0x70, 0xA0, 0x01, 0x31, 0x01 }));
+    // - 06/15/85 = 36 85 B5 15 45 06
+    created, modified = l.enc(85, 6, 15);
+    try std.testing.expectEqual(.{ 0x36, 0x85, 0xB5, 0x15, 0x45, 0x06 }, encodeDates(created, modified));
+    try std.testing.expectEqual(.{ created, modified }, decodeDates(.{ 0x36, 0x85, 0xB5, 0x15, 0x45, 0x06 }));
+    // - 11/23/91 = 41 91 C1 23 53 11
+    created, modified = l.enc(91, 11, 23);
+    try std.testing.expectEqual(.{ 0x41, 0x91, 0xC1, 0x23, 0x53, 0x11 }, encodeDates(created, modified));
+    try std.testing.expectEqual(.{ created, modified }, decodeDates(.{ 0x41, 0x91, 0xC1, 0x23, 0x53, 0x11 }));
+}
+
+// TODO: Be consistent about what namespace the errors live in.
+fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || directory_table.RawDirError)!void {
+    std.debug.print("raw entry write {}\n", .{entry_nr});
+    const image_type = img.image_type;
+
+    const this_entry = &img.directory.raw_directories.hd_basic.items[entry_nr];
+    if (!this_entry.isDeleted()) {
+        // TODO: Validation
+        //    try this_entry.validate(img.image_type, extent_nr);
+    }
+    const entry_page = DiskImageType_HD_BASIC.directory_page + entry_nr / image_type.dirs_per_sector;
+    const location = toPhysicalAddress(image_type, entry_page);
+    var sector: DiskSector = .initFormatted(img.image_type, location);
+    // start_index is the index of the directory entry that is first in the sector.
+    const start_index = entry_nr / image_type.dirs_per_sector * image_type.dirs_per_sector;
+    // Copy 1 full sector worth of extents/raw entries i.e. 2. TODO: This is genric, but small.
+    @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(img.directory.raw_directories.hd_basic.items[start_index..][0..image_type.dirs_per_sector]));
+    try img.writeSector(location, &sector);
+    std.debug.print("raw entry write write sector {}, {}\n{}\n", .{ location, entry_page, this_entry });
+}
+
+pub fn initAllocationMap(sector: *DiskSector, which: enum { first, second }) void {
+    switch (which) {
+        .first => @memset(sector.dataBytes()[0..7], 0xff),
+        .second => sector.dataBytes()[49] = 0xF8, // TODO: Allocations 2440 - 2440 are marked as unsed / unsable??
+    }
+}
+
+// The first 3 directory entries are "VOLUME TABLE" and "DIRECTORY TABLE"
+pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSector) void {
+    const vol_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[0..128]);
+    const dir_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[128..]);
+    vol_table.* = .{
+        .filename = "VOLUME TABLE            ".*,
+        .creation_date = @splat(0),
+        .modification_date = @splat(0),
+        .read_only = 0x01,
+        .ref_count = 0,
+        .status = 0x01,
+        .npages = 3,
+        .eof_byte = 0x00,
+        .ngroups = 1,
+        .last_group = 0x00,
+        .allocations = @splat(0xffff),
+    };
+    vol_table.allocations[0] = 0x000;
+    const sectors_per_alloc = image_type.block_size / image_type.sector_size_data;
+    // TODO: -1 because can;t work out right value to use.. sigh.
+    const ngroups = image_type.directories / 2 / sectors_per_alloc;
+    const dir_alloc = DiskImageType_HD_BASIC.directory_page / sectors_per_alloc;
+    dir_table.* = .{
+        .filename = "DIRECTORY TABLE         ".*,
+        .creation_date = @splat(0),
+        .modification_date = @splat(0),
+        .read_only = 0x01,
+        .ref_count = 0,
+        .status = 0x01,
+        .npages = image_type.directories / 2,
+        .eof_byte = 0,
+        .ngroups = ngroups,
+        .last_group = dir_alloc + ngroups - 1,
+        .allocations = undefined,
+    };
+    // TODO: -1 because we can't work out whether 56 or 57 allocs. The directory starts at 57, but only 56 allocs are marked as unused???
+    for (&dir_table.allocations, dir_alloc..image_type.directory_allocs - 1) |*alloc, idx| {
+        alloc.* = @intCast(idx);
+    }
 }
 
 // Cast as slice and byte-swap from little endian on big endian machines
@@ -344,3 +692,65 @@ const LoadOption = DirectoryTable.LoadOption;
 const hd_basic = @import("hd_basic.zig");
 const DiskImage = @import("disk_image.zig").DiskImage;
 const PhysicalAddress = disk_types.PhysicalAddress;
+const DiskLabel = disk_types.DiskLabel;
+
+//     std.debug.print("large file\n", .{});
+//     free_entry.status = 0x03;
+//     // TODO: This is a bad name. this is the allocation used to
+//     var sub_alloc = try allocationGetFree(&image.directory);
+//     var sub_location = toPhysicalAddress(image.image_type, sub_alloc * sectors_per_alloc);
+//     var sub_sector: DiskSector = .initFormatted(image.image_type, sub_location);
+//     @memset(sub_sector.dataBytes(), 0xff);
+//     var sub_allocs: []align(1) u16 align(1) = @ptrCast(sub_sector.dataBytes());
+//     // TODO:
+//     @memcpy(sub_allocs[0..free_entry.allocations.len], &free_entry.allocations);
+//     @memset(&free_entry.allocations, 0xffff);
+//     free_entry.allocations[0] = sub_alloc;
+//     alloc_idx = 1;
+//     var start_idx = free_entry.allocations.len;
+//     while (nbytes != 0) {
+//         const result: anyerror!void = write_large: for (start_idx..sub_allocs.len) |sub_alloc_idx| {
+//             std.debug.print("write large\n", .{});
+//             const file_alloc = try allocationGetFree(&image.directory);
+//             // TODO: Can we just use alloc instead of creating another var?
+//             alloc = file_alloc;
+//             sub_allocs[sub_alloc_idx] = file_alloc;
+//             ngroups += 1;
+//             for (0..sectors_per_alloc) |file_sector| {
+//                 std.debug.print("file sector {}\n", .{file_sector});
+//                 const file_loc = toPhysicalAddress(image.image_type, @intCast(file_alloc * sectors_per_alloc + file_sector));
+//                 var write_sector: DiskSector = .initFormatted(image.image_type, file_loc);
+//                 if (nbytes == read_buffer.len) {
+//                     @memcpy(write_sector.dataBytes(), &read_buffer);
+//                 } else {
+//                     @memcpy(write_sector.dataBytes()[0..nbytes], read_buffer[0..nbytes]);
+//                     eof_byte = @intCast(nbytes);
+//                 }
+//                 try image.writeSector(file_loc, &write_sector);
+//                 npages += 1;
+//                 nbytes = try file_reader.readSliceShort(&read_buffer);
+//                 if (nbytes == 0) {
+//                     eof_byte = 256;
+//                     break :write_large;
+//                 }
+//             }
+//         };
+//         std.debug.print("write sub_loc {}", .{sub_location});
+//         try image.writeSector(sub_location, &sub_sector);
+//         sub_alloc = try allocationGetFree(&image.directory);
+//         free_entry.allocations[alloc_idx] = sub_alloc;
+//         alloc_idx += 1; // Not posible to overrflow this with any known disk.
+//         sub_location = toPhysicalAddress(image.image_type, sub_alloc * sectors_per_alloc);
+//         sub_sector = .initFormatted(image.image_type, sub_location);
+//         start_idx = 0;
+//         // If we are at EOF then don;t read again.
+//         if (nbytes != read_buffer.len) break :copy;
+//         // Stopped reading on an exact 2556 byte boundary.
+//         nbytes = try file_reader.readSliceShort(&read_buffer);
+//         if (nbytes == 0) {
+//             eof_byte = 256;
+//             break :copy;
+//         }
+//         try result;
+//     }
+// }

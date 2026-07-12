@@ -4,6 +4,7 @@
 // Add some generic erase tests.
 // aDD SOME COPY SAME FILE TWICE TESTS.
 // test Extract random access files from disk basic
+// TODO: Support big and small files on hd_basic.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -153,6 +154,7 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -734,7 +736,12 @@ fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const Dis
             try disk_image.labelDisk(label);
         },
         .hd_basic => {
-            // TODO: Handle the labelling here as well
+            var label: DiskLabel = .{ .hd_basic = undefined };
+            @memset(&label.hd_basic.user_label, ' ');
+            @memcpy(label.hd_basic.user_label[0..9], "FORMATTED");
+            label.hd_basic.created_yymmdd = .{ 77, 5, 6 };
+            label.hd_basic.modified_yymmdd = .{ 77, 5, 6 };
+            try disk_image.labelDisk(label);
         },
     }
     return disk_image;

@@ -2,6 +2,8 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
+// TODO: Get rid of the logical read and just have a function to do the conversion to track sector like everywher eelse
+
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;
@@ -173,10 +175,11 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyFromImage(self, entry, out_writer, text_mode),
             .ados => ADOS.copyFromImage(self, entry, out_writer, text_mode),
-            .hd_basic => @panic("TODO"),
+            .hd_basic => hd_basic.copyFromImage(self, entry, out_writer, text_mode),
         };
     }
 
+    // TODO: Is this function actually needed? Doesn;t everyone just have their own?
     pub fn rawEntryWrite(self: *DiskImage, raw_entry_nr: u16) !void {
         try switch (self.image_type.OS) {
             .cpm, .cdos => self.cpm.rawEntryWrite(raw_entry_nr),
@@ -243,7 +246,8 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => CPM.copyToImage(self, file_reader, to_filename, user, force),
             .ados => ADOS.copyToImage(self, file_reader, to_filename, force, text_mode),
-            .hd_basic => @panic("TODO"),
+            // TODO: TextMode not actuially required for hd basic?
+            .hd_basic => hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode),
         };
     }
 
@@ -304,6 +308,8 @@ pub const DiskImage = struct {
         }
 
         try self.writer.seekTo(0);
+
+        // TODO: hd_basic needs to copy the volume label from the imported disk to the last sector.
     }
 
     pub fn formatImage(self: *DiskImage) !void {
@@ -338,8 +344,8 @@ pub const DiskImage = struct {
 
     pub fn labelDisk(self: *DiskImage, label: DiskLabel) !void {
         switch (self.image_type.OS) {
-            .cdos => {},
-            else => return error.LabelingNotSupported,
+            .cdos, .hd_basic => {},
+            .ados, .cpm => return error.LabelingNotSupported,
         }
         switch (label) {
             .cdos => |lbl| {
@@ -379,7 +385,11 @@ pub const DiskImage = struct {
                 };
                 try self.cpm.rawEntryWrite(0);
             },
-            else => return error.LabelingNotSupported,
+            .hd_basic => {
+                // TODO: Pass it as the hd_)_)basic version instead?
+                try hd_basic.setVolumeLabel(self, label);
+            },
+            .cpm, .ados => return error.LabelingNotSupported,
         }
     }
 
@@ -480,7 +490,7 @@ pub const DiskImage = struct {
         try sector.dump(physical_location, sector_offset);
     }
 
-    const WriteSectorError = Io.Writer.Error || File.SeekError || PhysicalAddress.ValidateError;
+    pub const WriteSectorError = Io.Writer.Error || File.SeekError || PhysicalAddress.ValidateError;
     /// Write a single sector.
     pub fn writeSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) WriteSectorError!void {
         try location.validate(self.image_type);
@@ -976,3 +986,4 @@ const RawDirError = @import("directory_table.zig").RawDirError;
 const OperatingSystem = disk_types.OperatingSystem;
 const File = std.Io.File;
 const Io = std.Io;
+const hd_basic = @import("hd_basic.zig");

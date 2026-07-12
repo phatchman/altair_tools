@@ -34,7 +34,12 @@ pub const DiskLabel = union(OperatingSystem) {
         date_mmddyy: [3]u8,
     },
     ados: void,
-    hd_basic: void, // TODO: Add label support here.
+    hd_basic: struct {
+        pub const user_label_len: u8 = 20;
+        user_label: [user_label_len]u8,
+        created_yymmdd: [3]u8,
+        modified_yymmdd: [3]u8,
+    },
 
     pub fn format(self: *const DiskLabel, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.*) {
@@ -222,8 +227,28 @@ pub const DiskSector = union(enum) {
             .hd_basic => {
                 if (location.track < image_type.reserved_tracks) {
                     @memset(result.rawBytes(), 0x00);
+                    if (location.track == 0 and location.sector == 0) {
+                        hd_basic.initVolumeLabel(image_type, &result);
+                    } else if (location.track == 0 and location.sector == 1) {
+                        hd_basic.initAllocationMap(&result, .first);
+                    } else if (location.track == 0 and location.sector == 2) {
+                        std.debug.print("initting alloc map\n", .{});
+                        hd_basic.initAllocationMap(&result, .second);
+                    }
+                } else if (location.track == image_type.reserved_tracks and location.sector == 0) {
+                    std.debug.print("initting dir entries\n", .{});
+                    hd_basic.initDirectoryEntries(image_type, &result);
+                } else if (location.track == image_type.tracks - 1 and location.sector == image_type.sectors_per_track - 1) {
+                    // Last sector contains a copy of the volume descriptor
+                    hd_basic.initVolumeLabel(image_type, &result);
                 } else {
-                    @memset(result.rawBytes(), 0xE5);
+                    const page = location.track * image_type.sectors_per_track + location.sector;
+                    // TODO: fix hard-coded stuff
+                    if (page >= 193 and page < 448) {
+                        @memset(result.rawBytes(), 0xff);
+                    } else {
+                        @memset(result.rawBytes(), 0x00);
+                    }
                 }
             },
         }
@@ -466,6 +491,9 @@ pub const DiskImageType = struct {
     /// Return total number of sectors used to store data.
     pub fn largestFileBytes(self: *const DiskImageType) u32 {
         // ADOS Mini can't use track 0, but still counts it as an allocation.
+        if (self.type_id == .HD_BASIC) {
+            return 4800512; // There is no real way to calc this. it just is.
+        }
         const adjustment: u32 = if (self.type_id == .ADOS_MINI) 2 else 0;
         return (self.total_allocs - self.directory_allocs - adjustment) * self.block_size;
     }

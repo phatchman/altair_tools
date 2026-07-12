@@ -370,7 +370,11 @@ pub const CookedDirEntry = struct {
         var result: CookedDirEntry = .{
             .user = 0,
             .filename = @splat(' '),
-            .attribs = if (raw_dir.read_only != 0x00) "R ".* else "W ".*,
+            // 0x01 == RO and 0x03 == RW.
+            .attribs = .{
+                if (raw_dir.read_only == 0x01) 'R' else 'W',
+                if (raw_dir.status == 0x01) 'S' else 'L',
+            }, // Small vs Large file allocations
             .block_size = image_type.block_size,
             .allocations = .empty,
             .os = .{
@@ -388,14 +392,11 @@ pub const CookedDirEntry = struct {
             .has_extension = false,
         };
         try result.allocations.ensureTotalCapacity(arena, raw_dir.allocations.len);
-        // TODO: Future support additional hd_basic fields, like creation and modification date.
         for (raw_dir.allocations) |alloc| {
             if (alloc == 0xffff) break;
             result.allocations.appendAssumeCapacity(alloc);
         }
         @memcpy(&result.filename, raw_dir.filename[0..12]); // TODO: Support larger filenames
-        //        result.used_in_kbytes = @intCast(result.allocations.items.len * image_type.block_size);
-        // TODO: size in bytes
         return result;
     }
 
