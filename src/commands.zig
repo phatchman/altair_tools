@@ -165,7 +165,20 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         try Console.stdout().print("{f}\n", .{label});
     }
 
-    try Console.stdout().print("Name     Ext   Length Used U At\n", .{});
+    switch (disk_image.image_type.OS) {
+        inline else => |_, tag| {
+            const padding: [CookedDirEntry.filenameOnlyMaxLen(tag) -| 4]u8 = @splat(' ');
+            try Console.stdout().print("Name{s}{s}   Length Used U At", .{ padding, switch (tag) {
+                .cpm, .cdos => " Ext",
+                .hd_basic, .ados => "",
+            } });
+        },
+    }
+    if (disk_image.image_type.OS == .hd_basic) {
+        try Console.stdout().print(" Created  Modified\n", .{});
+    } else {
+        try Console.stdout().writeByte('\n');
+    }
 
     for (disk_image.directory.cooked_directories.items) |entry| {
         if (options.cpm_user) |user| {
@@ -173,14 +186,38 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         }
         const this_kb = entry.used_in_kbytes;
         kb_used += this_kb;
-        try Console.stdout().print("{s:<8} {s:<3} {:>7}B {:>3}K {} {s}\n", .{
-            entry.filenameOnly(),
-            entry.extensionOnly(),
-            entry.size_in_bytes,
-            this_kb,
-            entry.user,
-            entry.attribs,
-        });
+        switch (disk_image.image_type.OS) {
+            inline else => |_, tag| {
+                // TODO: We need display capabilities like has extension, etc.
+                const max_len = std.fmt.comptimePrint("{}", .{comptime CookedDirEntry.filenameOnlyMaxLen(tag)});
+                switch (tag) {
+                    .cpm, .cdos => try Console.stdout().print("{s:<" ++ max_len ++ "} {s:<3} {:>7}B {:>3}K {} {s}", .{
+                        entry.filenameOnly(),
+                        entry.extensionOnly(),
+                        entry.size_in_bytes,
+                        this_kb,
+                        entry.user,
+                        entry.attribs,
+                    }),
+                    .ados, .hd_basic => try Console.stdout().print("{s:<" ++ max_len ++ "} {:>7}B {:>3}K {} {s}", .{
+                        entry.filenameOnly(),
+                        entry.size_in_bytes,
+                        this_kb,
+                        entry.user,
+                        entry.attribs,
+                    }),
+                }
+            },
+        }
+
+        if (disk_image.image_type.OS == .hd_basic) {
+            try Console.stdout().print(" {f} {f}\n", .{
+                hd_basic.fmtDate(entry.createdDate().?),
+                hd_basic.fmtDate(entry.modifiedDate().?),
+            });
+        } else {
+            try Console.stdout().writeByte('\n');
+        }
         file_count += 1;
     }
     const kb_free = disk_image.capacityFreeInKB();
@@ -289,12 +326,12 @@ pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOp
 }
 
 pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOptions) CommandError!void {
-    try Console.stdout().print("IDX:FILENAME                :CREATE:MODIFY:R:S:EPG:EBY:NGP:LGP:[ALLOCATIONS ... ]\n", .{});
+    try Console.stdout().print("IDX:FILENAME                :CREATE:MODIFY:R:S:NRPGS:LPEOF:NRGPS:LSTGP:[ALLOCATIONS]\n", .{});
 
     for (disk_image.directory.raw_directories.hd_basic.items, 1..) |entry, file_nr| {
         if (entry.isLastEntry()) break;
         if (!entry.isDeleted()) {
-            try Console.stdout().print("{d:03}:{s}:{x}:{x}:{x}:{x}:{d:03}:{d:03}:{d:03}:{d:03}:[", .{
+            try Console.stdout().print("{d:03}:{s}:{x}:{x}:{x}:{x}:{d:05}:{d:05}:{d:05}:{d:05}:[", .{
                 file_nr,
                 entry.filename,
                 entry.creation_date,
@@ -306,10 +343,10 @@ pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOpt
                 entry.ngroups,
                 entry.last_group,
             });
-            try Console.stdout().print("{d:03}", .{entry.allocations[0]});
+            try Console.stdout().print("{d:04}", .{entry.allocations[0]});
             for (entry.allocations[1..]) |alloc| {
                 if (alloc == 0xffff) break;
-                try Console.stdout().print(", {d:03}", .{alloc});
+                try Console.stdout().print(", {d:04}", .{alloc});
             }
             try Console.stdout().print("]\n", .{});
         }
@@ -607,10 +644,17 @@ pub fn formatImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOpt
 }
 
 pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
+    // TODO: make the label length come from disk image type
+    const label_len: u32 = switch (disk_image.image_type.OS) {
+        .cdos => 8,
+        .hd_basic => 20,
+        else => 0,
+    };
+
     log.info("Setting disk label to: {s}", .{options.disk_label});
     doLabelSet(disk_image, options) catch |err| {
         switch (err) {
-            error.InvalidLabelFormat => printErrorMessage(current_command, .label_invalid, .{options.disk_label}, err),
+            error.InvalidLabelFormat => printErrorMessage(current_command, .label_invalid, .{ options.disk_label, label_len }, err),
             error.LabelingNotSupported => printErrorMessage(current_command, .labeling_not_supported, .{}, err),
             error.LabelNotFound => printErrorMessage(current_command, .label_not_found, .{}, err),
             else => printErrorMessage(current_command, .unexpected, .{}, err),
@@ -620,15 +664,26 @@ pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions)
 }
 
 fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
+    // TODO: make the label length come from disk image type
+    const label_len: u32 = switch (disk_image.image_type.OS) {
+        .cdos => 8,
+        .hd_basic => 20,
+        else => 0,
+    };
+
+    std.debug.print("1\n", .{});
     switch (disk_image.image_type.OS) {
-        .cdos => {
+        .cdos, .hd_basic => {
             // Format for CDOS label is llllllll:mm/dd/yy
-            // where l can be 1-8 chars long
+            // where l can be 1-8 chars long and 20 chars long for hd_basic
             const colon_pos = std.mem.indexOfScalarPos(u8, options.disk_label, 0, ':') orelse
                 return error.InvalidLabelFormat;
+
             // make sure both the label is at most 8 chars and the date is exactly 8 chars
-            if (colon_pos > 8 or colon_pos + 9 != options.disk_label.len)
+            if (colon_pos > label_len or colon_pos + 9 != options.disk_label.len)
                 return error.InvalidLabelFormat;
+            std.debug.print("2\n", .{});
+
             // Make sure it is valid date in mm/dd/yy format.
             if (options.disk_label[colon_pos + 3] != '/' or
                 options.disk_label[colon_pos + 6] != '/')
@@ -651,29 +706,55 @@ fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
             if (options.disk_label[colon_pos + 8] < '0' or
                 options.disk_label[colon_pos + 8] > '9')
                 return error.InvalidLabelFormat;
+            std.debug.print("3\n", .{});
 
-            var disk_label: DiskLabel = .{ .cdos = undefined };
-            @memset(&disk_label.cdos.user_label, ' ');
-            @memcpy(disk_label.cdos.user_label[0..colon_pos], options.disk_label[0..colon_pos]);
             const mm: u8 = (options.disk_label[colon_pos + 1] - '0') * 10 + options.disk_label[colon_pos + 2] - '0';
             const dd: u8 = (options.disk_label[colon_pos + 4] - '0') * 10 + options.disk_label[colon_pos + 5] - '0';
             const yy: u8 = (options.disk_label[colon_pos + 7] - '0') * 10 + options.disk_label[colon_pos + 8] - '0';
             if (dd < 1 or dd > 31 or mm < 1 or mm > 12)
                 return error.InvalidLabelFormat;
+            std.debug.print("4\n", .{});
 
-            disk_label.cdos.date_mmddyy[0] = mm;
-            disk_label.cdos.date_mmddyy[1] = dd;
-            disk_label.cdos.date_mmddyy[2] = yy;
-            try disk_image.labelDisk(disk_label);
+            switch (disk_image.image_type.OS) {
+                .cdos => {
+                    var disk_label: DiskLabel = .{ .cdos = undefined };
+                    const copy_size = @min(disk_label.cdos.user_label.len, colon_pos);
+                    @memset(&disk_label.cdos.user_label, ' ');
+                    @memcpy(disk_label.cdos.user_label[0..copy_size], options.disk_label[0..copy_size]);
+
+                    disk_label.cdos.date_mmddyy[0] = mm;
+                    disk_label.cdos.date_mmddyy[1] = dd;
+                    disk_label.cdos.date_mmddyy[2] = yy;
+
+                    try disk_image.labelDisk(disk_label);
+                },
+                .hd_basic => {
+                    var disk_label: DiskLabel = .{ .hd_basic = undefined };
+
+                    const copy_size = @min(disk_label.hd_basic.user_label.len, colon_pos);
+                    @memset(&disk_label.hd_basic.user_label, ' ');
+                    @memcpy(disk_label.hd_basic.user_label[0..copy_size], options.disk_label[0..copy_size]);
+                    disk_label.hd_basic.created_yymmdd[0] = yy;
+                    disk_label.hd_basic.created_yymmdd[1] = mm;
+                    disk_label.hd_basic.created_yymmdd[2] = dd;
+
+                    disk_label.hd_basic.modified_yymmdd[0] = yy;
+                    disk_label.hd_basic.modified_yymmdd[1] = mm;
+                    disk_label.hd_basic.modified_yymmdd[2] = dd;
+
+                    try disk_image.labelDisk(disk_label);
+                },
+                else => unreachable,
+            }
         },
-        else => return error.LabelingNotSupported,
+        .cpm, .ados => return error.LabelingNotSupported,
     }
 }
 
 pub fn labelShow(_: Context, disk_image: *DiskImage, _: CommandLineOptions) CommandError!void {
     switch (disk_image.image_type.OS) {
-        .cdos => {},
-        else => {
+        .cdos, .hd_basic => {},
+        .cpm, .ados => {
             printErrorMessage(current_command, .labeling_not_supported, .{}, error.LabelingNotSupported);
             return error.CommandFailed;
         },
@@ -692,12 +773,30 @@ pub fn labelShow(_: Context, disk_image: *DiskImage, _: CommandLineOptions) Comm
         }
     };
 
-    try Console.stdout().print("Label: {s}\nDate:  {d:02}/{d:02}/{d:02} (mm/dd/yy)\n", .{
-        label.cdos.user_label,
-        label.cdos.date_mmddyy[0],
-        label.cdos.date_mmddyy[1],
-        label.cdos.date_mmddyy[2],
-    });
+    switch (label) {
+        .cdos => try Console.stdout().print(
+            "Label: {s}\nDate:  {d:02}/{d:02}/{d:02} (mm/dd/yy)\n",
+            .{
+                label.cdos.user_label,
+                label.cdos.date_mmddyy[0],
+                label.cdos.date_mmddyy[1],
+                label.cdos.date_mmddyy[2],
+            },
+        ),
+        .hd_basic => try Console.stdout().print(
+            "Label:    {s}\nCreated:  {d:02}/{d:02}/{d:02} (mm/dd/yy)\nModified: {d:02}/{d:02}/{d:02} (mm/dd/yy)\n",
+            .{
+                label.hd_basic.user_label,
+                label.hd_basic.created_yymmdd[1],
+                label.hd_basic.created_yymmdd[2],
+                label.hd_basic.created_yymmdd[0],
+                label.hd_basic.modified_yymmdd[1],
+                label.hd_basic.modified_yymmdd[2],
+                label.hd_basic.modified_yymmdd[0],
+            },
+        ),
+        .cpm, .ados => unreachable,
+    }
 }
 
 /// Try and recover an image with corrupted directory entries.
@@ -860,7 +959,7 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
         .format = "Error formatting {s}",
         .recover = "Error recovering image {s}",
         .labeling_not_supported = "Labels are not supported for this image type",
-        .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy whhere <label> is up to 8 characters",
+        .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy where <label> is up to {d} characters",
         .label_not_found = "The first directory entry is not a disk label",
         .directory_list = "Error listing directory",
     },
@@ -878,3 +977,4 @@ const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const CommandLineOptions = @import("main.zig").CommandLineOptions;
 const Console = @import("console.zig");
+const hd_basic = @import("hd_basic.zig");

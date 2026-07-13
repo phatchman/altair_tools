@@ -98,8 +98,6 @@ pub const SeekableWriter = union(enum) {
 
 /// Interface for opening and maniplating various Altair CPM disk images.
 pub const DiskImage = struct {
-    const filename_len = 12;
-
     reader: SeekableReader,
     writer: SeekableWriter,
     image_type: *const DiskImageType,
@@ -179,7 +177,6 @@ pub const DiskImage = struct {
         };
     }
 
-    // TODO: Is this function actually needed? Doesn;t everyone just have their own?
     pub fn rawEntryWrite(self: *DiskImage, raw_entry_nr: u16) !void {
         try switch (self.image_type.OS) {
             .cpm, .cdos => self.cpm.rawEntryWrite(raw_entry_nr),
@@ -390,15 +387,15 @@ pub const DiskImage = struct {
                 try self.cpm.rawEntryWrite(0);
             },
             .hd_basic => {
-                // TODO: Pass it as the hd_)_)basic version instead?
-                try hd_basic.setVolumeLabel(self, label);
+                // TODO: Pass it as the hd_basic version instead?
+                try hd_basic.volumeLabelSet(self, label);
             },
             .cpm, .ados => return error.LabelingNotSupported,
         }
     }
 
     /// Return any disk label in `label`
-    pub fn labelGet(self: *const DiskImage, label: *DiskLabel) !void {
+    pub fn labelGet(self: *DiskImage, label: *DiskLabel) !void {
         switch (self.image_type.OS) {
             .cdos => {
                 label.* = .{ .cdos = undefined };
@@ -410,7 +407,8 @@ pub const DiskImage = struct {
                 label.cdos.date_mmddyy[1] = raw_item.filetype[1];
                 label.cdos.date_mmddyy[2] = raw_item.filetype[2];
             },
-            else => return error.LabelingNotSupported,
+            .hd_basic => try hd_basic.volumeLabelGet(self, label),
+            .cpm, .ados => return error.LabelingNotSupported,
         }
     }
 
@@ -573,7 +571,7 @@ pub const DiskImage = struct {
         pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
             const cpm_user = user orelse 0;
             const basename = std.fs.path.basename(to_filename);
-            var conversion_buf: [filename_len]u8 = undefined;
+            var conversion_buf: [CookedDirEntry.filename_max]u8 = undefined;
             const cpm_filename = try DirectoryTable.translateToCPMFilename(basename, &conversion_buf);
             if (self.directory.findByFilename(cpm_filename, user)) |existing_entry| {
                 if (force) {

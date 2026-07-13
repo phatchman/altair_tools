@@ -266,6 +266,7 @@ pub const RawAdosDirEntry = struct {
 
 /// An easier to use version of the raw entry.
 pub const CookedDirEntry = struct {
+    pub const filename_max = 24;
     user: u8,
     attribs: [2]u8,
     allocations: std.ArrayListUnmanaged(u16),
@@ -294,12 +295,20 @@ pub const CookedDirEntry = struct {
     used_in_kbytes: u32,
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
-    filename: [12]u8,
+    filename: [filename_max]u8,
     block_size: u16,
     has_extension: bool,
 
+    pub fn filenameOnlyMaxLen(os: OperatingSystem) u8 {
+        return switch (os) {
+            .cdos, .cpm => 8,
+            .ados => 8,
+            .hd_basic => 24,
+        };
+    }
+
     pub fn initCPM(arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
-        var filename: [12]u8 = @splat(' '); // space terminated string
+        var filename: [filename_max]u8 = @splat(' '); // space terminated string
 
         var filename_len = rawStrlen(&raw_dir.raw.filename);
         @memcpy(filename[0..filename_len], raw_dir.raw.filename[0..filename_len]);
@@ -387,6 +396,34 @@ pub const CookedDirEntry = struct {
         if (!self.has_extension) return "";
         const pos = std.mem.indexOfScalar(u8, &self.filename, '.') orelse return "";
         return rawSlice(self.filename[pos + 1 ..]);
+    }
+
+    // pub fn hasDates(self: *const CookedDirEntry) bool {
+    //     return switch (self.os) {
+    //         inline else => |os| @hasField(os, "creation_date") or @hasField(os, "modification_date"),
+    //     };
+    // }
+
+    pub fn createdDate(self: *const CookedDirEntry) ?[3]u8 {
+        switch (self.os) {
+            inline else => |os| {
+                if (@hasField(@TypeOf(os), "creation_date")) {
+                    return os.creation_date;
+                }
+            },
+        }
+        return null;
+    }
+
+    pub fn modifiedDate(self: *const CookedDirEntry) ?[3]u8 {
+        switch (self.os) {
+            inline else => |os| {
+                if (@hasField(@TypeOf(os), "modification_date")) {
+                    return os.modification_date;
+                }
+            },
+        }
+        return null;
     }
 
     /// Add any new allocations to the list of used allocations.

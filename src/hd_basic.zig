@@ -3,10 +3,12 @@
 // or at least validate it against the files allocations?
 // TODO: Chwcek of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
 // TODO: Think about with this new structure how to group things e.g. raw dir operations
+// RAW directory listing sohuld prob spit out hte volume label as well.
+// TODO: Show file write / modification times.
 
 const log = std.log.scoped(.altair_disk_lib);
 
-pub const VolumeDecriptor = extern struct {
+pub const VolumeDescriptor = extern struct {
     label: [20]u8,
     dates_encoded: [6]u8,
     backup_set: u16 align(1),
@@ -29,7 +31,7 @@ pub const VolumeDecriptor = extern struct {
     swap_area2: [2]u16 align(1),
     unused3: [164]u8,
 
-    pub fn format(self: *const VolumeDecriptor, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(self: *const VolumeDescriptor, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Label             : {s}\n", .{self.label});
         try writer.print("Date              : {x}\n", .{self.dates_encoded});
         try writer.print("Backup Set        : {}\n", .{self.backup_set});
@@ -164,13 +166,13 @@ pub const DirEntry = extern struct {
             if (alloc == 0xffff) break;
             result.allocations.appendAssumeCapacity(alloc);
         }
-        @memcpy(&result.filename, self.filename[0..12]); // TODO: Support larger filenames
+        @memcpy(result.filename[0..24], &self.filename); // TODO: Support larger filenames
         return result;
     }
 };
 
 comptime {
-    std.debug.assert(@sizeOf(VolumeDecriptor) == 256);
+    std.debug.assert(@sizeOf(VolumeDescriptor) == 256);
     std.debug.assert(@sizeOf(DirEntry) == 128);
 }
 
@@ -232,7 +234,7 @@ pub const DiskImageType_HD_BASIC = struct {
     }
 };
 
-fn unsupported(label: *VolumeDecriptor) void {
+fn unsupported(label: *VolumeDescriptor) void {
     // TODO:
     std.debug.print("Unsupported: {f}\n", .{label});
     @panic("TODO: unsupported");
@@ -396,7 +398,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         indirect_alloc_idx: u8,
         indirect_groups: [128]u16 align(1),
 
-        pub fn init(img: *DiskImage, _: *VolumeDecriptor, entry: *DirEntry) CopyToImage {
+        pub fn init(img: *DiskImage, _: *VolumeDescriptor, entry: *DirEntry) CopyToImage {
             return .{
                 //.vol = vol,
                 .img = img,
@@ -534,11 +536,11 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     // TODO: end common.
 
     var label_sector: DiskSector = .initUnformatted(image.image_type, 0);
-    const label: *VolumeDecriptor = try loadVolumeLabel(image, &label_sector);
+    const label: *VolumeDescriptor = try loadVolumeLabel(image, &label_sector);
 
     var entry_nr: u16 = undefined;
     const free_entry = try rawEntryGetFree(&image.directory, &entry_nr);
-    _, const modification_date = decodeDates(label.dates_encoded);
+    _, const modification_date = decodeDates(label.dates_encoded) catch .{ .{ 0, 0, 0 }, .{ 0, 0, 0 } };
     free_entry.* = .init(filename, modification_date);
 
     var copy: CopyToImage = .init(image, label, free_entry);
@@ -567,7 +569,7 @@ pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
     return @intCast(free);
 }
 
-// TODO: Turn this into rawEmtyrGetFreeInitialized.
+// TODO: Remove initialized from the other ones and add an init to the Raw Entries
 fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtents}!*DirEntry {
     for (dir.raw_directories.hd_basic.items, 0..) |*entry, nr| {
         if (entry.isDeleted()) {
@@ -589,20 +591,17 @@ pub fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) Physica
 }
 
 // TODO: Support get / set volume label for user.
-fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDecriptor {
+fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDescriptor {
     const location: PhysicalAddress = .{ .track = 0, .sector = 0 };
     sector.* = .initUnformatted(image.image_type, location.track);
     try image.readSectorPhysical(location, sector);
-    const result = std.mem.bytesAsValue(VolumeDecriptor, sector.dataBytes());
-    // TODO: Make this a bytesAsValueLE function.
-    // if (@import("builtin").target.cpu.arch.endian() == .big)
-    //     byteSwapAllFields(VolumeDecriptor, result);
+    const result: *VolumeDescriptor = @ptrCast(sector.dataBytes());
     return result;
 }
 
 // TODO: Needs to pass disk image type here.
 pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) void {
-    const label: *VolumeDecriptor = std.mem.bytesAsValue(VolumeDecriptor, sector.dataBytes());
+    const label: *VolumeDescriptor = std.mem.bytesAsValue(VolumeDescriptor, sector.dataBytes());
     label.* = .{
         .label = @splat(' '),
         .dates_encoded = @splat(0),
@@ -614,25 +613,25 @@ pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) vo
         .mount_flag = 0,
         .unused = @splat(0),
         .allocation_page_current = DiskImageType_HD_BASIC.allocation_page,
-        .allocation_page_count = 305, // TODO: ?? What ??
+        .allocation_page_count = 305, // I don't know why this is 305. It doesn't use all 305.
         .directory_page_current = DiskImageType_HD_BASIC.directory_page,
         .directory_page_count = image_type.directories / 2, // 2 dirs per page
+        .unknown = @splat(0),
         .last_page = @intCast(image_type.tracks * image_type.sectors_per_track - 1),
         .reserved_groups = image_type.directory_allocs + 1,
         .unusable_groups = DiskImageType_HD_BASIC.unusable_groups,
-        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 32), // TODO: Sigh.
-        .unknown = @splat(0), // TODO: move these to right place.
-        .unused3 = @splat(0), // TODO: move these to right place
+        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 32),
         .swap_area = .{ 0xffff, 0xffff },
         .swap_area2 = .{ 0x0000, 0x0000 },
+        .unused3 = @splat(0),
     };
 }
 
 // TODO: error sets
-pub fn setVolumeLabel(image: *DiskImage, label: DiskLabel) !void {
+pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) !void {
     var sector: DiskSector = .initUnformatted(image.image_type, 0);
     try image.readSectorPhysical(.{ .track = 0, .sector = 0 }, &sector);
-    const vd: *VolumeDecriptor = std.mem.bytesAsValue(VolumeDecriptor, sector.dataBytes());
+    const vd: *VolumeDescriptor = std.mem.bytesAsValue(VolumeDescriptor, sector.dataBytes());
     vd.label = label.hd_basic.user_label;
     const encoded_date = encodeDates(label.hd_basic.created_yymmdd, label.hd_basic.modified_yymmdd);
     vd.dates_encoded = encoded_date;
@@ -649,6 +648,20 @@ pub fn setVolumeLabel(image: *DiskImage, label: DiskLabel) !void {
     vol_table.modification_date = encoded_date[3..].*;
     dir_table.modification_date = encoded_date[3..].*;
     try image.writeSector(dir_location, &sector);
+}
+
+pub fn volumeLabelGet(image: *DiskImage, label: *DiskLabel) !void {
+    label.* = .{ .hd_basic = undefined };
+    var sector: DiskSector = .initUnformatted(image.image_type, 0);
+    const vol = loadVolumeLabel(image, &sector) catch |err| {
+        log.err("Unabled to read volume label: {t}", .{err});
+        return error.LabelNotFound;
+    };
+    @memcpy(&label.hd_basic.user_label, &vol.label);
+    label.hd_basic.created_yymmdd, label.hd_basic.modified_yymmdd = decodeDates(vol.dates_encoded) catch |err| blk: {
+        log.err("Unable to decode dates in volume label: {t}", .{err});
+        break :blk .{ .{ 0, 0, 0 }, .{ 0, 0, 0 } };
+    };
 }
 
 // TODO: Be consistent about what namespace the errors live in.
@@ -713,7 +726,7 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
     const vol_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[0..128]);
     const dir_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[128..]);
     vol_table.* = .{
-        .filename = "VOLUME TABLE            ".*,
+        .filename = DirEntry.volume_table.*,
         .creation_date = @splat(0),
         .modification_date = @splat(0),
         .read_only = 0x01,
@@ -727,11 +740,10 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
     };
     vol_table.allocations[0] = 0x000;
     const sectors_per_alloc = image_type.sectors_per_alloc;
-    // TODO: -1 because can;t work out right value to use.. sigh.
     const ngroups = image_type.directories / 2 / sectors_per_alloc;
     const dir_alloc = DiskImageType_HD_BASIC.directory_page / sectors_per_alloc;
     dir_table.* = .{
-        .filename = "DIRECTORY TABLE         ".*,
+        .filename = DirEntry.directory_table.*,
         .creation_date = @splat(0),
         .modification_date = @splat(0),
         .read_only = 0x01,
@@ -743,7 +755,6 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
         .last_group = dir_alloc + ngroups - 1,
         .allocations = undefined,
     };
-    // TODO: -1 because we can't work out whether 56 or 57 allocs. The directory starts at 57, but only 56 allocs are marked as unused???
     for (&dir_table.allocations, dir_alloc..image_type.directory_allocs) |*alloc, idx| {
         alloc.* = @intCast(idx);
     }
@@ -764,25 +775,42 @@ fn formatDate(date: [3]u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
 // 5 - modified month, BCD
 fn encodeDates(created_yymmdd: [3]u8, modified_yymmdd: [3]u8) [6]u8 {
     var result: [6]u8 = undefined;
-    result[0] = ((created_yymmdd[1] / 10 << 4) | (created_yymmdd[1] % 10)) + 0x30;
+    result[0] = ((created_yymmdd[1] / 10 << 4) | (created_yymmdd[1] % 10)) +| 0x30;
     result[1] = (created_yymmdd[0] / 10 << 4) | (created_yymmdd[0] % 10);
-    result[2] = ((modified_yymmdd[0] / 10 << 4) | (modified_yymmdd[0] % 10)) + 0x30;
+    result[2] = ((modified_yymmdd[0] / 10 << 4) | (modified_yymmdd[0] % 10)) +| 0x30;
     result[3] = (created_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10);
-    result[4] = ((modified_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10)) + 0x30;
+    result[4] = ((modified_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10)) +| 0x30;
     result[5] = (modified_yymmdd[1] / 10 << 4) | (modified_yymmdd[1] % 10);
     return result;
 }
 
-fn decodeDates(encoded: [6]u8) struct { [3]u8, [3]u8 } {
+fn plausibleDate(date: [3]u8) bool {
+    return date[0] < 99 and date[1] <= 12 and date[2] <= 31;
+}
+
+fn decodeDates(encoded: [6]u8) !struct { [3]u8, [3]u8 } {
     var created_yymmdd: [3]u8 = undefined;
     var modified_yymmdd: [3]u8 = undefined;
-    created_yymmdd[0] = (encoded[1] >> 4) * 10 + (encoded[1] & 0x0f);
-    created_yymmdd[1] = ((encoded[0] - 0x30) >> 4) * 10 + ((encoded[0] - 0x30) & 0x0f);
-    created_yymmdd[2] = (encoded[3] >> 4) * 10 + (encoded[3] & 0x0f);
+    created_yymmdd[0] = encoded[0];
+    created_yymmdd[1] = encoded[1];
+    created_yymmdd[2] = encoded[2];
 
-    modified_yymmdd[0] = ((encoded[2] - 0x30) >> 4) * 10 + ((encoded[2] - 0x30) & 0x0f);
-    modified_yymmdd[1] = (encoded[5] >> 4) * 10 + (encoded[5] & 0x0f);
-    modified_yymmdd[2] = ((encoded[4] - 0x30) >> 4) * 10 + ((encoded[4] - 0x30) & 0x0f);
+    modified_yymmdd[0] = encoded[3];
+    modified_yymmdd[1] = encoded[4];
+    modified_yymmdd[2] = encoded[5];
+
+    if (!plausibleDate(created_yymmdd) or !plausibleDate(modified_yymmdd)) {
+        created_yymmdd[0] = (encoded[1] >> 4) * 10 + (encoded[1] & 0x0f);
+        created_yymmdd[1] = ((encoded[0] -% 0x30) >> 4) * 10 + ((encoded[0] -% 0x30) & 0x0f);
+        created_yymmdd[2] = (encoded[3] >> 4) * 10 + (encoded[3] & 0x0f);
+
+        modified_yymmdd[0] = ((encoded[2] -% 0x30) >> 4) * 10 + ((encoded[2] -% 0x30) & 0x0f);
+        modified_yymmdd[1] = (encoded[5] >> 4) * 10 + (encoded[5] & 0x0f);
+        modified_yymmdd[2] = ((encoded[4] -% 0x30) >> 4) * 10 + ((encoded[4] -% 0x30) & 0x0f);
+    }
+    if (!plausibleDate(created_yymmdd) or !plausibleDate(modified_yymmdd)) {
+        return error.InvalidDate;
+    }
     return .{ created_yymmdd, modified_yymmdd };
 }
 

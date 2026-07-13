@@ -5,6 +5,8 @@
 // aDD SOME COPY SAME FILE TWICE TESTS.
 // test Extract random access files from disk basic
 // TODO: Support big and small files on hd_basic.
+// Test zero length files for all formats.
+// Merge change to split out fuzz tests into individual tests.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -856,20 +858,20 @@ const CPM_MINI = all_disk_types.getPtrConst(.CPM_MINI);
 const HD_BASIC = all_disk_types.getPtrConst(.HD_BASIC);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
-const all_formats = .{HD_BASIC};
+//const all_formats = .{HD_BASIC};
 //const all_formats = .{FDD_8IN};
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
-// const all_formats = _: {
-//     const fields = std.meta.fields(DiskImageTypes);
-//     var result: [fields.len]*const DiskImageType = undefined;
-//     var idx: usize = 0;
-//     for (fields) |field| {
-//         result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
-//         idx += 1;
-//     }
-//     const result_c = result;
-//     break :_ &result_c;
-// };
+const all_formats = _: {
+    const fields = std.meta.fields(DiskImageTypes);
+    var result: [fields.len]*const DiskImageType = undefined;
+    var idx: usize = 0;
+    for (fields) |field| {
+        result[idx] = all_disk_types.getPtrConst(@field(DiskImageTypes, field.name));
+        idx += 1;
+    }
+    const result_c = result;
+    break :_ &result_c;
+};
 
 test {
     std.testing.refAllDecls(@This());
