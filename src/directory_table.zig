@@ -364,42 +364,6 @@ pub const CookedDirEntry = struct {
         return result;
     }
 
-    // TODO: Invert this so it lives in hd_basic instead?
-    // TODO: (error{OutOfMemory} || RawDirError)
-    pub fn initHDBasic(arena: std.mem.Allocator, raw_dir: *const hd_basic.DirEntry, image_type: *const DiskImageType) !CookedDirEntry {
-        var result: CookedDirEntry = .{
-            .user = 0,
-            .filename = @splat(' '),
-            // 0x01 == RO and 0x03 == RW.
-            .attribs = .{
-                if (raw_dir.read_only == 0x01) 'R' else 'W',
-                if (raw_dir.status == 0x01) 'S' else 'L',
-            }, // Small vs Large file allocations
-            .block_size = image_type.block_size,
-            .allocations = .empty,
-            .os = .{
-                .hd_basic = .{
-                    .creation_date = raw_dir.creation_date,
-                    .modification_date = raw_dir.modification_date,
-                    .nbytes_last_page = raw_dir.eof_byte,
-                    .ngroups = raw_dir.ngroups,
-                    .last_group = raw_dir.last_group,
-                    .npages = raw_dir.npages + 1, // raw dir only counts fully filled pages
-                },
-            },
-            .size_in_bytes = @as(u32, raw_dir.npages) * image_type.sector_size_data + raw_dir.eof_byte,
-            .used_in_kbytes = @as(u32, raw_dir.ngroups) * image_type.block_size / 1024,
-            .has_extension = false,
-        };
-        try result.allocations.ensureTotalCapacity(arena, raw_dir.allocations.len);
-        for (raw_dir.allocations) |alloc| {
-            if (alloc == 0xffff) break;
-            result.allocations.appendAssumeCapacity(alloc);
-        }
-        @memcpy(&result.filename, raw_dir.filename[0..12]); // TODO: Support larger filenames
-        return result;
-    }
-
     pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
         self.os.cpm.num_records += raw_dir.raw.num_records;
         const num_allocs = try self.copyAllocations(arena, raw_dir, image_type);
@@ -713,8 +677,7 @@ pub const DirectoryTable = struct {
         if (location.track < image_type.reserved_tracks) {
             return error.InvalidTrack;
         }
-        const sectors_per_alloc: u16 = image_type.block_size / image_type.sector_size_data;
-        return @as(u16, location.track - image_type.reserved_tracks) * (image_type.sectors_per_track / sectors_per_alloc) + @as(u16, location.sector / sectors_per_alloc);
+        return @as(u16, location.track - image_type.reserved_tracks) * (image_type.sectors_per_track / image_type.sectors_per_alloc) + @as(u16, location.sector / image_type.sectors_per_alloc);
     }
 
     /// Whenever a new extent is created, register it with the directory
@@ -747,7 +710,7 @@ pub const DirectoryTable = struct {
             var nbytes: u32 = 0;
             var used: u32 = 0;
             var nr_sectors: u32 = 0;
-            const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
+            const sectors_per_alloc = self.image_type.sectors_per_alloc;
 
             if (entry.raw.mode == 0x02) { // Sequential
                 while (track_nr != 0) {
@@ -836,6 +799,9 @@ pub const DirectoryTable = struct {
             self.free_allocations.set(alloc);
         }
         cooked_dir.allocations.clearAndFree(self.allocator());
+        // Make sure to always remove the deleted CookedDir.
+        defer _ = self.cooked_directories.orderedRemove(cooked_index);
+
         // Delete all the raw_entries and write to disk.
         switch (self.raw_directories) {
             inline else => |raw_dirs| {
@@ -867,9 +833,11 @@ pub const DirectoryTable = struct {
                                 sector.data.next_track = 0;
                                 try disk_image.writeSector(location, &sector);
                             }
+                        } else if (@TypeOf(raw_dirs) == @TypeOf(self.raw_directories.hd_basic)) {
+                            // TODO:
+                            try hd_basic.writeAllocationBitmap(disk_image);
                         }
-                        // Finally remove the deleted CookedDir.
-                        _ = self.cooked_directories.orderedRemove(cooked_index);
+
                         return;
                     }
                 }
@@ -1008,8 +976,7 @@ pub const DirectoryTable = struct {
     pub fn allocationGetFreeADOS(self: *DirectoryTable, for_random_access: bool) error{OutOfAllocs}!u16 {
         // Allocations are performed in the order track 71 to track 76
         // Then from track 69 down to 6
-        const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
-        const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
+        const allocs_per_track = self.image_type.sectors_per_track / self.image_type.sectors_per_alloc;
 
         if (!for_random_access) {
             for (self.image_type.OS.ados.directory_track + 1..self.image_type.tracks) |track_nr| {

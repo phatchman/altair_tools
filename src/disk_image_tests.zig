@@ -155,6 +155,7 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -557,6 +558,7 @@ test "erase" {
     defer disk_image.deinit();
 
     const initial_free_count = disk_image.directory.rawEntryFreeCount();
+    const initial_free_allocs = disk_image.directory.free_allocations.count();
 
     const to_erase = disk_image.directory.findByFilename("file.txt", null);
     try std.testing.expect(to_erase != null);
@@ -565,6 +567,7 @@ test "erase" {
     try std.testing.expect(erased == null);
 
     try std.testing.expectEqual(initial_free_count + 1, disk_image.directory.rawEntryFreeCount());
+    try std.testing.expect(initial_free_allocs < disk_image.directory.free_allocations.count());
 
     // Make sure it is really erased
     try reinitDiskImage(&disk_image);
@@ -618,7 +621,7 @@ test "autodetect image" {
             .ADOS_MINI => "src/test_disks/ados_mini_fmt.dsk",
             .ADOS_MINI_BOOT => "src/test_disks/ados_miniboot_fmt.dsk",
             .CPM_MINI => "src/test_disks/cpm_mini_fmt.dsk",
-            .HD_BASIC => "src/test_disks/hd_basic_fmt.dsk",
+            .HD_BASIC => "src/test_disks/hdbasic_fmt.dsk",
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -854,6 +857,7 @@ const HD_BASIC = all_disk_types.getPtrConst(.HD_BASIC);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
 const all_formats = .{HD_BASIC};
+//const all_formats = .{FDD_8IN};
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
 // const all_formats = _: {
 //     const fields = std.meta.fields(DiskImageTypes);

@@ -409,6 +409,7 @@ pub const DiskImageType = struct {
     dirs_per_alloc: u16 = undefined,
     dirs_per_sector: u16 = undefined,
     dir_entry_size: u8 = undefined,
+    sectors_per_alloc: u16 = undefined,
 
     pub fn init(self: *DiskImageType) void {
         comptime std.debug.assert(self.skew_table.len == self.sectors_per_track);
@@ -424,6 +425,7 @@ pub const DiskImageType = struct {
         };
         self.dirs_per_alloc = self.block_size / self.dir_entry_size;
         self.dirs_per_sector = self.sector_size_data / self.dir_entry_size;
+        self.sectors_per_alloc = self.block_size / self.sector_size_data;
     }
 
     pub fn dump(self: *const DiskImageType) void {
@@ -501,7 +503,7 @@ pub const DiskImageType = struct {
         return skew_table[logical_sector];
     }
 
-    fn defaultDetectFn(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+    pub fn defaultDetectFn(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
         const image_size = image_file.length(io) catch return false;
         return image_size == self.image_size or image_size == (self.image_size + 127) / 128 * 128;
     }

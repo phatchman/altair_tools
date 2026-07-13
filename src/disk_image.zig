@@ -184,7 +184,7 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => self.cpm.rawEntryWrite(raw_entry_nr),
             .ados => self.ados.rawEntryWrite(raw_entry_nr),
-            .hd_basic => @panic("TODO"),
+            .hd_basic => hd_basic.rawEntryWrite(self, raw_entry_nr),
         };
     }
 
@@ -216,8 +216,13 @@ pub const DiskImage = struct {
                         }
                     },
                     .HDD_5MB, .HDD_5MB_1024 => {
-                        is_unique.* = false;
-                        return dt;
+                        const hdb = all_disk_types.getPtrConst(.HD_BASIC);
+                        if (hdb.isCorrectFormat(io, image_file)) {
+                            return hdb;
+                        } else {
+                            is_unique.* = false;
+                            return dt;
+                        }
                     },
                     .FDD_TAR => {
                         const lgsssd = all_disk_types.getPtrConst(.CDOS_LGSSSD);
@@ -457,7 +462,7 @@ pub const DiskImage = struct {
     // Everything works 100% fine with sectors, so I'm not inclined to change it.
     // TODO: This now represents either the unskewed track / sector or the physical track / sector.
     fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAddress {
-        const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
+        const sectors_per_alloc = self.image_type.sectors_per_alloc;
 
         const absolute_sector = address.allocation * sectors_per_alloc + (address.record % sectors_per_alloc);
         const track: u16 = self.image_type.reserved_tracks + (absolute_sector / self.image_type.sectors_per_track);
@@ -844,7 +849,7 @@ pub const DiskImage = struct {
             }
 
             var alloc = try self.directory.allocationGetFreeADOS(text_mode == .Rand);
-            const sectors_per_alloc = self.image_type.block_size / self.image_type.sector_size_data;
+            const sectors_per_alloc = self.image_type.sectors_per_alloc;
             const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
             var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
             var sector_nr: u16 = (alloc % allocs_per_track) * sectors_per_alloc; // This is the first sector for this allocation of 8 sectors.
