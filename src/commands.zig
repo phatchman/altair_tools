@@ -168,7 +168,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
     switch (disk_image.image_type.OS) {
         inline else => |_, tag| {
             const padding: [CookedDirEntry.filenameOnlyMaxLen(tag) -| 4]u8 = @splat(' ');
-            try Console.stdout().print("Name{s}{s}   Length Used U At", .{ padding, switch (tag) {
+            try Console.stdout().print("Name{s}{s}   Length  Used U At", .{ padding, switch (tag) {
                 .cpm, .cdos => " Ext",
                 .hd_basic, .ados => "",
             } });
@@ -191,7 +191,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
                 // TODO: We need display capabilities like has extension, etc.
                 const max_len = std.fmt.comptimePrint("{}", .{comptime CookedDirEntry.filenameOnlyMaxLen(tag)});
                 switch (tag) {
-                    .cpm, .cdos => try Console.stdout().print("{s:<" ++ max_len ++ "} {s:<3} {:>7}B {:>3}K {} {s}", .{
+                    .cpm, .cdos => try Console.stdout().print("{s:<" ++ max_len ++ "} {s:<3} {:>7}B {:>4}K {} {s}", .{
                         entry.filenameOnly(),
                         entry.extensionOnly(),
                         entry.size_in_bytes,
@@ -199,7 +199,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
                         entry.user,
                         entry.attribs,
                     }),
-                    .ados, .hd_basic => try Console.stdout().print("{s:<" ++ max_len ++ "} {:>7}B {:>3}K {} {s}", .{
+                    .ados, .hd_basic => try Console.stdout().print("{s:<" ++ max_len ++ "} {:>7}B {:>4}K {} {s}", .{
                         entry.filenameOnly(),
                         entry.size_in_bytes,
                         this_kb,

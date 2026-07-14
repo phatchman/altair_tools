@@ -53,8 +53,11 @@ pub const DiskLabel = union(OperatingSystem) {
                 lbl.date_mmddyy[2] / 10 + '0',
                 lbl.date_mmddyy[2] % 10 + '0',
             }),
-            .hd_basic => {},
-            // TODO: hd_basic volume label support
+            .hd_basic => |lbl| try writer.print("Label: {s}  Created: {f}  Modified: {f}", .{
+                lbl.user_label,
+                hd_basic.fmtDate(lbl.created_yymmdd),
+                hd_basic.fmtDate(lbl.modified_yymmdd),
+            }),
         }
     }
 };
