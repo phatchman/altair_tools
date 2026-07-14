@@ -255,7 +255,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         var dir_sector: DiskSector = .initUnformatted(image.image_type, dir_location.track);
         var dir_count: u16 = 0;
         while (dir_count < image.image_type.directories) {
-            try image.readSectorPhysical(dir_location, &dir_sector);
+            try image.readSector(dir_location, &dir_sector);
             // Each 256B sector contains 2 x 128B diectory entries
             const entries = std.mem.bytesAsSlice(DirEntry, dir_sector.dataBytes());
             dir.raw_directories.hd_basic.appendSliceAssumeCapacity(entries);
@@ -281,7 +281,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                         sub_allocs: for (0..image.image_type.sectors_per_alloc) |offset| {
                             const alloc_location = toPhysicalAddress(image.image_type, @intCast(alloc * 8 + offset));
                             var alloc_sector: DiskSector = .initUnformatted(image.image_type, alloc_location.track);
-                            try image.readSectorPhysical(alloc_location, &alloc_sector);
+                            try image.readSector(alloc_location, &alloc_sector);
                             const allocations: []align(1) u16 align(1) = @ptrCast(alloc_sector.dataBytes());
                             for (allocations) |ind_alloc| {
                                 if (ind_alloc == 0xffff) break :sub_allocs;
@@ -298,11 +298,11 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         var allocation_bitmap: [512]u8 = undefined;
         var location: PhysicalAddress = toPhysicalAddress(image.image_type, 1);
         var sector: DiskSector = .initUnformatted(image.image_type, location.track);
-        try image.readSectorPhysical(location, &sector);
+        try image.readSector(location, &sector);
         @memcpy(allocation_bitmap[0..256], sector.dataBytes());
         location = toPhysicalAddress(image.image_type, 2);
         sector = .initUnformatted(image.image_type, location.track);
-        try image.readSectorPhysical(location, &sector);
+        try image.readSector(location, &sector);
         @memcpy(allocation_bitmap[256..], sector.dataBytes());
         var alloc_nr: u16 = 0;
         for (&allocation_bitmap) |byte| {
@@ -354,7 +354,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirE
         for (0..sectors_per_alloc) |offset| {
             const location = toPhysicalAddress(image.image_type, @intCast(start_page + offset));
             var sector: DiskSector = .initUnformatted(image.image_type, location.track);
-            try image.readSectorPhysical(location, &sector);
+            try image.readSector(location, &sector);
             if (entry.attribs[1] == 'S') { // Small
                 if (page_count + 1 == entry.os.hd_basic.npages) {
                     try out_writer.writeAll(sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
@@ -371,7 +371,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirE
                     for (0..sectors_per_alloc) |sub| {
                         const sub_location = toPhysicalAddress(image.image_type, @intCast(sub_alloc * sectors_per_alloc + sub));
                         var sub_sector: DiskSector = .initUnformatted(image.image_type, sub_location.track);
-                        try image.readSectorPhysical(sub_location, &sub_sector);
+                        try image.readSector(sub_location, &sub_sector);
                         if (page_count == entry.os.hd_basic.npages) {
                             try out_writer.writeAll(sub_sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
                             break :copy;
@@ -594,7 +594,7 @@ pub fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) Physica
 fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDescriptor {
     const location: PhysicalAddress = .{ .track = 0, .sector = 0 };
     sector.* = .initUnformatted(image.image_type, location.track);
-    try image.readSectorPhysical(location, sector);
+    try image.readSector(location, sector);
     const result: *VolumeDescriptor = @ptrCast(sector.dataBytes());
     return result;
 }
@@ -630,7 +630,7 @@ pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) vo
 // TODO: error sets
 pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) !void {
     var sector: DiskSector = .initUnformatted(image.image_type, 0);
-    try image.readSectorPhysical(.{ .track = 0, .sector = 0 }, &sector);
+    try image.readSector(.{ .track = 0, .sector = 0 }, &sector);
     const vd: *VolumeDescriptor = std.mem.bytesAsValue(VolumeDescriptor, sector.dataBytes());
     vd.label = label.hd_basic.user_label;
     const encoded_date = encodeDates(label.hd_basic.created_yymmdd, label.hd_basic.modified_yymmdd);
@@ -640,7 +640,7 @@ pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) !void {
     try image.writeSector(.{ .track = image.image_type.tracks - 1, .sector = image.image_type.sectors_per_track - 1 }, &sector);
     // Update the VOLUME_LABEL and DIRECTORY_LABEL dates
     const dir_location = toPhysicalAddress(image.image_type, DiskImageType_HD_BASIC.directory_page);
-    try image.readSectorPhysical(dir_location, &sector);
+    try image.readSector(dir_location, &sector);
     const vol_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[0..128]);
     const dir_table: *DirEntry = std.mem.bytesAsValue(DirEntry, sector.dataBytes()[128..]);
     vol_table.creation_date = encoded_date[0..3].*;

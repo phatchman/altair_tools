@@ -69,8 +69,8 @@ pub const CookedDirEntry = struct {
     // TODO: And do we still need block_size??
 
     // TODO: Move this into CPM.
-    pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const os_cpm.RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
-        self.os.cpm.num_records += raw_dir.raw.num_records;
+    pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const os_cpm.DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
+        self.os.cpm.num_records += raw_dir.num_records;
         const num_allocs = try os_cpm.copyAllocations(self, arena, raw_dir, image_type);
         self.os.cpm.num_allocs += num_allocs;
         if (image_type.recs_per_extent > 128 and num_allocs > 4) {
@@ -136,8 +136,8 @@ pub const CookedDirEntry = struct {
 /// Stores and populates the raw and cooked directory entries
 pub const DirectoryTable = struct {
     const RawDirEntry = union(enum) {
-        cpm: os_cpm.RawCpmDirEntry,
-        ados: os_ados.RawAdosDirEntry,
+        cpm: os_cpm.DirEntry,
+        ados: os_ados.DirEntry,
 
         pub fn isDeleted(self: *const RawDirEntry) bool {
             switch (self.*) {
@@ -165,8 +165,8 @@ pub const DirectoryTable = struct {
     /// The CPM directory entries in on-disk format.
     /// note there may be multiple raw entries per file.
     raw_directories: union(enum) {
-        cpm: std.ArrayList(os_cpm.RawCpmDirEntry),
-        ados: std.ArrayList(os_ados.RawAdosDirEntry),
+        cpm: std.ArrayList(os_cpm.DirEntry),
+        ados: std.ArrayList(os_ados.DirEntry),
         hd_basic: std.ArrayList(os_hd_basic.DirEntry),
     },
 
@@ -254,15 +254,15 @@ pub const DirectoryTable = struct {
                         // For altair dos, also need to go through and set all of the file numbers in each
                         // sector, the bytes_written, next_track and next_sector to 0
                         if (@TypeOf(raw_dirs) == @TypeOf(self.raw_directories.ados)) {
-                            var track_nr: u16 = raw_item.raw.track;
-                            var sector_nr: u16 = raw_item.raw.sector;
+                            var track_nr: u16 = raw_item.track;
+                            var sector_nr: u16 = raw_item.sector;
 
                             while (track_nr != 0) {
                                 var sector: DiskSector = .initUnformatted(self.image_type, track_nr);
                                 const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
-                                disk_image.readSectorPhysical(location, &sector) catch |err| switch (err) {
+                                disk_image.readSector(location, &sector) catch |err| switch (err) {
                                     error.InvalidTrack, error.InvalidSector => {
-                                        log.warn("{s} has invalid track or sector links. Erase still suceeded: {t}", .{ raw_item.raw.filename, err });
+                                        log.warn("{s} has invalid track or sector links. Erase still suceeded: {t}", .{ raw_item.filename, err });
                                         break;
                                     },
                                     else => return err,
@@ -308,35 +308,6 @@ pub const DirectoryTable = struct {
         }
         return null;
     }
-
-    /// Convert to valid Altair DOS / Basic filename
-    /// There are almost no restrictions on valid filename chars in Altair DOS
-    /// This program enforces printable and upper case.
-    pub fn translateToADOSFilename(from_filename: []const u8, to_filename: *[8]u8) error{InvalidFilename}![]u8 {
-        @memset(to_filename, ' ');
-        var index: usize = 0;
-        for (from_filename) |c| {
-            if (std.ascii.isPrint(c)) {
-                to_filename[index] = std.ascii.toUpper(c);
-                index += 1;
-            }
-            if (index == to_filename.len) break;
-        }
-        if (index == 0) return error.InvalidFilename;
-        log.info("Translated filename {s} to {s}", .{ from_filename, to_filename[0..index] });
-        return to_filename[0..index];
-    }
-
-    // /// Note this is used by the tests: // TODO: Then move it to the TESTS..
-    // /// Return a free allocation
-    // pub fn allocationGetFreeCPM(self: *DirectoryTable) error{OutOfAllocs}!u16 {
-    //     if (self.free_allocations.findFirstSet()) |free_alloc| {
-    //         self.free_allocations.unset(free_alloc);
-    //         return @intCast(free_alloc);
-    //     } else {
-    //         return error.OutOfAllocs;
-    //     }
-    // }
 
     /// Number of free CPM directory entries
     pub fn rawEntryFreeCount(self: *const DirectoryTable) usize {
@@ -455,7 +426,6 @@ const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskSector = @import("disk_types.zig").DiskSector;
 const OperatingSystem = @import("disk_types.zig").OperatingSystem;
-const LogicalAddress = @import("disk_image.zig").LogicalAddress;
 const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;
 const os_hd_basic = @import("os_hd_basic.zig");
 const os_cpm = @import("os_cpm.zig");

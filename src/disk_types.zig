@@ -33,7 +33,7 @@ pub const DiskLabel = union(OperatingSystem) {
         switch (self.*) {
             .cpm, .ados => {},
             .cdos => |lbl| try writer.print("Label: {s}  Date: {c}{c}/{c}{c}/{c}{c}", .{
-                lbl.user_label,
+                std.mem.trimEnd(u8, &lbl.user_label, " "),
                 lbl.date_mmddyy[0] / 10 + '0',
                 lbl.date_mmddyy[0] % 10 + '0',
                 lbl.date_mmddyy[1] / 10 + '0',
@@ -42,7 +42,7 @@ pub const DiskLabel = union(OperatingSystem) {
                 lbl.date_mmddyy[2] % 10 + '0',
             }),
             .hd_basic => |lbl| try writer.print("Label: {s}  Created: {f}  Modified: {f}", .{
-                lbl.user_label,
+                std.mem.trimEnd(u8, &lbl.user_label, " "),
                 hd_basic.fmtDate(lbl.created_yymmdd),
                 hd_basic.fmtDate(lbl.modified_yymmdd),
             }),

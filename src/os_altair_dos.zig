@@ -48,14 +48,14 @@ pub const DiskImageType_ADOS_8IN = struct {
         var sector: DiskSector = .initUnformatted(self, self.OS.ados.directory_track);
 
         reader.interface.readSliceAll(sector.rawBytes()) catch return false;
-        var entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
+        var entries: []DirEntry = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
 
         // It might be a new directory with no entries.
         // std.debug.print("checking empty\n", .{});
-        if (entries[0].raw.filename[0] == 0xff) {
+        if (entries[0].filename[0] == 0xff) {
             // All the other entry filenames need ot start with 0 as they either never existed, or were deleted.
             for (entries[1..]) |e| {
-                if (e.raw.filename[0] != 0x00) return false;
+                if (e.filename[0] != 0x00) return false;
             }
             return true;
         }
@@ -65,19 +65,19 @@ pub const DiskImageType_ADOS_8IN = struct {
         var start: usize = 1;
         for (0..self.sectors_per_track) |_| {
             for (entries, start..) |e, entry_nr| {
-                if (e.raw.filename[0] == 255) return false;
-                if (e.raw.filename[0] == 0x00) continue; // deleted
-                if (e.raw.track >= self.tracks or e.raw.sector >= self.sectors_per_track) return false;
+                if (e.filename[0] == 255) return false;
+                if (e.filename[0] == 0x00) continue; // deleted
+                if (e.track >= self.tracks or e.sector >= self.sectors_per_track) return false;
                 //                std.debug.print("not EOD or deleted\n", .{});
 
-                for (e.raw.filename) |ch| {
+                for (e.filename) |ch| {
                     // invalid filename chars
                     if (!std.ascii.isPrint(ch)) return false;
                 }
                 //              std.debug.print("valid filename {s}\n", .{e.filename});
 
                 // must be valid filename. so check that this entry had correct fileno.
-                reader.seekTo(@as(u32, e.raw.track) * self.track_size + 137 * @as(u32, e.raw.sector)) catch return false;
+                reader.seekTo(@as(u32, e.track) * self.track_size + 137 * @as(u32, e.sector)) catch return false;
                 //             std.debug.print("Seeked to : {x}, \n", .{reader.logicalPos()});
                 reader.interface.readSliceAll(sector.rawBytes()) catch return false;
                 //           std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
@@ -86,7 +86,7 @@ pub const DiskImageType_ADOS_8IN = struct {
             }
             start = 0;
             reader.interface.readSliceAll(sector.rawBytes()) catch return false;
-            entries = std.mem.bytesAsSlice(RawAdosDirEntry, sector.rawBytes());
+            entries = std.mem.bytesAsSlice(DirEntry, sector.rawBytes());
         }
 
         return false;
@@ -196,46 +196,39 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
     }
 };
 
-pub const RawAdosDirEntry = struct {
-    pub const Raw = extern struct {
-        filename: [8]u8,
-        track: u8,
-        sector: u8,
-        mode: u8,
-        unused: [5]u8,
-    };
-    raw: Raw,
+pub const DirEntry = extern struct {
+    filename: [8]u8,
+    track: u8,
+    sector: u8,
+    mode: u8,
+    unused: [5]u8,
 
-    const empty: RawAdosDirEntry = .{
-        .raw = .{
-            .filename = @splat(' '),
-            .track = 0,
-            .sector = 0,
-            .mode = 0x2, // Default to Seq
-            .unused = @splat(0),
-        },
+    const empty: DirEntry = .{
+        .filename = @splat(' '),
+        .track = 0,
+        .sector = 0,
+        .mode = 0x2, // Default to Seq
+        .unused = @splat(0),
     };
 
-    const last: RawAdosDirEntry = .{
-        .raw = .{
-            .filename = .{ 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-            .track = 0,
-            .sector = 0,
-            .mode = 0, // Default to Seq
-            .unused = @splat(0),
-        },
+    const last: DirEntry = .{
+        .filename = .{ 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+        .track = 0,
+        .sector = 0,
+        .mode = 0, // Default to Seq
+        .unused = @splat(0),
     };
 
     // TODO: FIx this.
     // TODO: We don;t need the directory param if we have the image.
-    pub fn cook(self: *RawAdosDirEntry, dir: *DirectoryTable, image: *DiskImage, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError || PhysicalAddress.ValidateError)!CookedDirEntry {
+    pub fn cook(self: *DirEntry, dir: *DirectoryTable, image: *DiskImage, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError || PhysicalAddress.ValidateError)!CookedDirEntry {
         const entry = &dir.raw_directories.ados.items[raw_entry_idx];
         try entry.validate(image.image_type, raw_entry_idx);
         var allocations: std.ArrayList(u16) = .empty;
         var result: CookedDirEntry = .{
             .user = 0,
             .filename = @splat(' '),
-            .attribs = if (self.raw.mode == 2) .{ 'S', ' ' } else .{ 'R', ' ' },
+            .attribs = if (self.mode == 2) .{ 'S', ' ' } else .{ 'R', ' ' },
             .block_size = image.image_type.block_size,
             .allocations = allocations,
             .size_in_bytes = undefined,
@@ -246,28 +239,28 @@ pub const RawAdosDirEntry = struct {
                     // Calculate File size and Allocations
                     // Walk the linked list of sectors and add up the bytes.
                     // At the same time, build the list of allocations used by the file.
-                    var track_nr = entry.raw.track;
-                    var sector_nr = entry.raw.sector;
+                    var track_nr = entry.track;
+                    var sector_nr = entry.sector;
                     var nbytes: u32 = 0;
                     var used: u32 = 0;
                     var nr_sectors: u32 = 0;
                     const sectors_per_alloc = image.image_type.sectors_per_alloc;
 
-                    if (entry.raw.mode == 0x02) { // Sequential
+                    if (entry.mode == 0x02) { // Sequential
                         while (track_nr != 0) {
-                            const allocation = try toAllocationADOS(image.image_type, .{ .track = track_nr, .sector = sector_nr });
+                            const allocation = try toAllocation(image.image_type, .{ .track = track_nr, .sector = sector_nr });
                             dir.free_allocations.unset(allocation);
                             if (sector_nr % sectors_per_alloc == 0) {
                                 try allocations.append(dir.allocator(), allocation);
                             }
 
                             var sector: DiskSector = .initUnformatted(image.image_type, image.image_type.OS.ados.directory_track);
-                            image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| switch (err) {
+                            image.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| switch (err) {
                                 error.InvalidTrack, error.InvalidSector => {
-                                    log.warn("{s} has invalid track or sector links. File will not be copied correctly: {t}", .{ entry.raw.filename, err });
+                                    log.warn("{s} has invalid track or sector links. File will not be copied correctly: {t}", .{ entry.filename, err });
                                     break :blk .{
-                                        .track = entry.raw.track,
-                                        .sector = entry.raw.sector,
+                                        .track = entry.track,
+                                        .sector = entry.sector,
                                         .size = nbytes,
                                         .used = used,
                                     };
@@ -283,10 +276,10 @@ pub const RawAdosDirEntry = struct {
                             sector_nr = sector.data.next_sector;
                         }
                         used = (nr_sectors + (sectors_per_alloc - 1)) / sectors_per_alloc;
-                    } else if (entry.raw.mode == 0x04) { // Random access
+                    } else if (entry.mode == 0x04) { // Random access
                         var group_map: [256]u8 = undefined;
                         var sector: DiskSector = .initUnformatted(image.image_type, track_nr);
-                        image.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
+                        image.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector) catch |err| {
                             logerr("Error reading from disk image: {t}\n", .{err});
                             return error.InvalidImageFile;
                         };
@@ -295,7 +288,7 @@ pub const RawAdosDirEntry = struct {
                         used = nr_groups;
                         @memcpy(group_map[0..128], sector.dataBytes());
 
-                        image.readSectorPhysical(.{ .track = sector.data.next_track, .sector = sector.data.next_sector }, &sector) catch |err| {
+                        image.readSector(.{ .track = sector.data.next_track, .sector = sector.data.next_sector }, &sector) catch |err| {
                             logerr("Error reading from disk image: {t}\n", .{err});
                             return error.InvalidImageFile;
                         };
@@ -304,15 +297,15 @@ pub const RawAdosDirEntry = struct {
                         //const allocs_per_track = (self.image_type.sector_size_data * self.image_type.sectors_per_track) / self.image_type.block_size;
                         for (0..nr_groups) |idx| {
                             const encoded_group: u8 = group_map[idx];
-                            const alloc = toAllocationADOS(image.image_type, .{
+                            const alloc = toAllocation(image.image_type, .{
                                 .track = (encoded_group & 0x3f) + if (image.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
                                 .sector = (encoded_group >> 6) * sectors_per_alloc,
                             }) catch |err| switch (err) {
                                 error.InvalidTrack, error.InvalidSector => {
-                                    logerr("Directory entry for {s} has invalid track of sector information and will not be copied correctly: {t}. Use --raw for more details.", .{ std.mem.trimEnd(u8, &entry.raw.filename, " "), err });
+                                    logerr("Directory entry for {s} has invalid track of sector information and will not be copied correctly: {t}. Use --raw for more details.", .{ std.mem.trimEnd(u8, &entry.filename, " "), err });
                                     break :blk .{
-                                        .track = entry.raw.track,
-                                        .sector = entry.raw.sector,
+                                        .track = entry.track,
+                                        .sector = entry.sector,
                                         .size = nbytes,
                                         .used = used,
                                     };
@@ -322,26 +315,26 @@ pub const RawAdosDirEntry = struct {
                         }
                     } else unreachable; // Should have already been validated before we get here.
                     break :blk .{
-                        .track = entry.raw.track,
-                        .sector = entry.raw.sector,
+                        .track = entry.track,
+                        .sector = entry.sector,
                         .size = nbytes,
                         .used = used,
                     };
                 },
             },
         };
-        @memcpy(result.filename[0..self.raw.filename.len], &self.raw.filename);
+        @memcpy(result.filename[0..self.filename.len], &self.filename);
         result.size_in_bytes = result.os.ados.size;
         result.used_in_kbytes = result.os.ados.used;
 
         return result;
     }
 
-    pub fn init(raw_dir: *const RawAdosDirEntry, ados: @FieldType(CookedDirEntry, "os").ADOS, allocations: std.ArrayList(u16), image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
+    pub fn init(raw_dir: *const DirEntry, ados: @FieldType(CookedDirEntry, "os").ADOS, allocations: std.ArrayList(u16), image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var result: CookedDirEntry = .{
             .user = 0,
             .filename = @splat(' '),
-            .attribs = if (raw_dir.raw.mode == 2) .{ 'S', ' ' } else .{ 'R', ' ' },
+            .attribs = if (raw_dir.mode == 2) .{ 'S', ' ' } else .{ 'R', ' ' },
             .block_size = image_type.block_size,
             .allocations = allocations,
             .os = .{ .ados = ados },
@@ -349,48 +342,47 @@ pub const RawAdosDirEntry = struct {
             .used_in_kbytes = ados.used,
             .has_extension = false,
         };
-        @memcpy(result.filename[0..raw_dir.raw.filename.len], &raw_dir.raw.filename);
+        @memcpy(result.filename[0..raw_dir.filename.len], &raw_dir.filename);
         return result;
     }
 
-    pub fn isDeleted(self: *const RawAdosDirEntry) bool {
-        return self.raw.filename[0] == 0x00 or self.raw.filename[0] == 0xff;
+    pub fn isDeleted(self: *const DirEntry) bool {
+        return self.filename[0] == 0x00 or self.filename[0] == 0xff;
     }
 
-    pub fn setDeleted(self: *RawAdosDirEntry) void {
-        self.raw.filename[0] = 0x00;
+    pub fn setDeleted(self: *DirEntry) void {
+        self.filename[0] = 0x00;
     }
 
-    pub fn isLastEntry(self: *const RawAdosDirEntry) bool {
-        return self.raw.filename[0] == 0xff;
+    pub fn isLastEntry(self: *const DirEntry) bool {
+        return self.filename[0] == 0xff;
     }
 
-    pub fn eql(self: *const RawAdosDirEntry, cooked: *const CookedDirEntry) bool {
-        return std.mem.eql(u8, std.mem.trimEnd(u8, &self.raw.filename, " "), cooked.filenameOnly());
+    pub fn eql(self: *const DirEntry, cooked: *const CookedDirEntry) bool {
+        return std.mem.eql(u8, std.mem.trimEnd(u8, &self.filename, " "), cooked.filenameOnly());
     }
 
-    pub fn validate(self: *const RawAdosDirEntry, image_type: *const DiskImageType, entry_nr: u16) error{InvalidDirectoryEntry}!void {
-        const raw = self.raw;
-        if (raw.track >= image_type.tracks) {
+    pub fn validate(self: *const DirEntry, image_type: *const DiskImageType, entry_nr: u16) error{InvalidDirectoryEntry}!void {
+        if (self.track >= image_type.tracks) {
             logerr(
                 "Invalid directory entry: {} [Invalid track: {}. Must be 0 - {}]",
-                .{ entry_nr, raw.track, image_type.tracks - 1 },
+                .{ entry_nr, self.track, image_type.tracks - 1 },
             );
             return error.InvalidDirectoryEntry;
         }
-        if (raw.sector >= image_type.sectors_per_track) {
+        if (self.sector >= image_type.sectors_per_track) {
             logerr(
                 "Invalid directory entry: {} [Invalid sector: {}. Must be 0 - {}]",
-                .{ entry_nr, raw.sector, image_type.sectors_per_track - 1 },
+                .{ entry_nr, self.sector, image_type.sectors_per_track - 1 },
             );
             return error.InvalidDirectoryEntry;
         }
-        if (!self.isDeleted()) switch (raw.mode) {
+        if (!self.isDeleted()) switch (self.mode) {
             0x02, 0x04 => {}, // TODO: enumify this?
             else => {
                 logerr(
                     "Invalid directory entry: {} [Invalid mode: {}. Must be 0x02 (sequential) or 0x04 (random access)]",
-                    .{ entry_nr, raw.mode },
+                    .{ entry_nr, self.mode },
                 );
                 return error.InvalidDirectoryEntry;
             },
@@ -403,7 +395,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     const directory_track = self.image_type.OS.ados.directory_track;
     for (0..self.image_type.directory_allocs) |i| {
         // 8 sectors per block (block_size / sector_size_data)
-        self.free_allocations.unset(try toAllocationADOS(self.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
+        self.free_allocations.unset(try toAllocation(self.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
     }
     if (self.image_type.type_id == .ADOS_MINI) {
         // Can't use track 0 to store data.
@@ -413,15 +405,15 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     var sector: DiskSector = .initUnformatted(self.image_type, directory_track);
     try self.raw_directories.ados.ensureTotalCapacity(self.allocator(), self.image_type.directories);
     for (0..self.image_type.sectors_per_track) |sector_nr| {
-        try image.readSectorPhysical(.{ .track = directory_track, .sector = @intCast(sector_nr) }, &sector);
-        const entries: []RawAdosDirEntry = std.mem.bytesAsSlice(RawAdosDirEntry, sector.dataBytes());
+        try image.readSector(.{ .track = directory_track, .sector = @intCast(sector_nr) }, &sector);
+        const entries: []DirEntry = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
         try self.raw_directories.ados.ensureUnusedCapacity(self.allocator(), entries.len);
         self.raw_directories.ados.appendSliceAssumeCapacity(entries);
     }
 
     try self.cooked_directories.ensureTotalCapacity(self.allocator(), self.raw_directories.ados.items.len);
     loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
-        switch (self.raw_directories.ados.items[raw_entry_idx].raw.filename[0]) {
+        switch (self.raw_directories.ados.items[raw_entry_idx].filename[0]) {
             0 => continue, // Deleted
             // TODO: Can we use isLast and isDelted here instead?
             255 => break :loop, // End of Directory
@@ -443,8 +435,26 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     }.lessThan);
 }
 
+/// Convert to valid Altair DOS / Basic filename
+/// There are almost no restrictions on valid filename chars in Altair DOS
+/// This program enforces printable and upper case.
+pub fn translateFilename(from_filename: []const u8, to_filename: *[8]u8) error{InvalidFilename}![]u8 {
+    @memset(to_filename, ' ');
+    var index: usize = 0;
+    for (from_filename) |c| {
+        if (std.ascii.isPrint(c)) {
+            to_filename[index] = std.ascii.toUpper(c);
+            index += 1;
+        }
+        if (index == to_filename.len) break;
+    }
+    if (index == 0) return error.InvalidFilename;
+    log.info("Translated filename {s} to {s}", .{ from_filename, to_filename[0..index] });
+    return to_filename[0..index];
+}
+
 // convert track and sector to allocation
-fn toAllocationADOS(image_type: *const DiskImageType, location: PhysicalAddress) PhysicalAddress.ValidateError!u16 {
+fn toAllocation(image_type: *const DiskImageType, location: PhysicalAddress) PhysicalAddress.ValidateError!u16 {
     try location.validate(image_type);
     if (location.track < image_type.reserved_tracks) {
         return error.InvalidTrack;
@@ -468,7 +478,7 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
             defer temp_file.deinit();
 
             while (track_nr != 0) {
-                try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+                try self.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector);
                 if (file_no == 255) file_no = sector.data.file_nr;
 
                 if (file_no == sector.data.file_nr) {
@@ -504,12 +514,12 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
             // 2 bits group and 6 bits track nr - 6. i.e. 0 = track 6.
             // The first sector's `nbytes` holds the number of groups.
             var group_map: [256]u8 = undefined;
-            try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+            try self.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector);
             const group_count = sector.data.nbytes;
             @memcpy(group_map[0..128], sector.dataBytes());
             track_nr = sector.data.next_track;
             sector_nr = sector.data.next_sector;
-            try self.readSectorPhysical(.{ .track = track_nr, .sector = sector_nr }, &sector);
+            try self.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector);
             @memcpy(group_map[128..], sector.dataBytes());
 
             const sectors_per_group = self.image_type.block_size / self.image_type.sector_size_data;
@@ -521,7 +531,7 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
                 sector_nr = @intCast(group_nr * sectors_per_group);
                 // The first 2 sectors of the first group are the group_index and group_map. So skip during file writing
                 for (if (idx == 0) 2 else 0..sectors_per_group) |offset| {
-                    try self.readSectorPhysical(.{ .track = track_nr, .sector = @intCast(sector_nr + offset) }, &sector);
+                    try self.readSector(.{ .track = track_nr, .sector = @intCast(sector_nr + offset) }, &sector);
                     try out_writer.writeAll(sector.dataBytes());
                 }
             }
@@ -532,7 +542,7 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
 
 pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
     var filename_buf: [8]u8 = undefined;
-    const ados_filename = try DirectoryTable.translateToADOSFilename(to_filename, &filename_buf);
+    const ados_filename = try translateFilename(to_filename, &filename_buf);
     if (self.directory.findByFilename(ados_filename, null)) |existing_entry| {
         if (force) {
             try self.erase(existing_entry);
@@ -570,9 +580,9 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
     var conversion_reader: std.Io.Reader = .fixed(conversion_buffer_out.written());
     const reader: *std.Io.Reader = if (text_mode == .Text) &conversion_reader else file_reader;
     var extent_nr: u16 = undefined;
-    const new_entry = try rawEntryGetFreeInitializedADOS(&self.directory, self, &extent_nr);
-    @memcpy(&new_entry.raw.filename, &filename_buf);
-    new_entry.raw.mode = if (text_mode == .Rand) 0x04 else 0x2; // tODO: enumify?
+    const new_entry = try rawEntryGetFreeInitialized(&self.directory, self, &extent_nr);
+    @memcpy(&new_entry.filename, &filename_buf);
+    new_entry.mode = if (text_mode == .Rand) 0x04 else 0x2; // tODO: enumify?
 
     var file_data: [128]u8 = undefined; // TODO: Hard coded
     var nbytes = try reader.readSliceShort(&file_data);
@@ -582,7 +592,7 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         return;
     }
 
-    var alloc = try allocationGetFreeADOS(&self.directory, text_mode == .Rand);
+    var alloc = try allocationGetFree(&self.directory, text_mode == .Rand);
     const sectors_per_alloc = self.image_type.sectors_per_alloc;
     const allocs_per_track = self.image_type.sectors_per_track / sectors_per_alloc;
     var track_nr: u16 = self.image_type.reserved_tracks + alloc / allocs_per_track;
@@ -593,8 +603,8 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         .sector = (alloc % allocs_per_track) * sectors_per_alloc,
     };
 
-    new_entry.raw.track = @intCast(track_nr);
-    new_entry.raw.sector = @intCast(sector_nr);
+    new_entry.track = @intCast(track_nr);
+    new_entry.sector = @intCast(sector_nr);
     try rawEntryWrite(self, extent_nr);
     // TODO: Change this to use buildcookedentry
     //    errdefer buildCookedEntryADOS(self, extent_nr) catch {}; // Try and build the cooked dir if we can with what we have.
@@ -646,7 +656,7 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
             if (nbytes == 0) break;
         }
         if (nbytes != 0) {
-            alloc = try allocationGetFreeADOS(&self.directory, text_mode == .Rand);
+            alloc = try allocationGetFree(&self.directory, text_mode == .Rand);
         }
         start_sector = 0;
     }
@@ -712,7 +722,7 @@ pub fn rawEntryWrite(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawD
 }
 
 /// Return a free allocation
-pub fn allocationGetFreeADOS(self: *DirectoryTable, for_random_access: bool) error{OutOfAllocs}!u16 {
+pub fn allocationGetFree(self: *DirectoryTable, for_random_access: bool) error{OutOfAllocs}!u16 {
     // Allocations are performed in the order track 71 to track 76
     // Then from track 69 down to 6
     const allocs_per_track = self.image_type.sectors_per_track / self.image_type.sectors_per_alloc;
@@ -757,7 +767,7 @@ pub fn allocationGetFreeADOS(self: *DirectoryTable, for_random_access: bool) err
     }
 }
 
-pub fn rawEntryGetFreeInitializedADOS(self: *const DirectoryTable, image: *DiskImage, extent_nr: *u16) error{OutOfExtents}!*RawAdosDirEntry {
+pub fn rawEntryGetFreeInitialized(self: *const DirectoryTable, image: *DiskImage, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
     for (self.raw_directories.ados.items[0..self.raw_directories.ados.items.len -| 1], 0..) |*dir, i| {
         if (dir.isLastEntry()) {
             extent_nr.* = @intCast(i);

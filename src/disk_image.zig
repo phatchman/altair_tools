@@ -12,14 +12,6 @@ pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
-/// Directory entries keep track of a logical address consisting of:
-/// 1) An allocation representing 1 block. Allocations start at 0.
-/// 2) A record representing a 128k segment within the block, starting at 1
-pub const LogicalAddress = struct {
-    allocation: u16,
-    record: u8,
-};
-
 /// Allows Files and memory images to be used interchangeably for reading
 pub const SeekableReader = union(enum) {
     on_disk: *std.Io.File.Reader,
@@ -103,10 +95,6 @@ pub const DiskImage = struct {
     image_type: *const DiskImageType,
     directory: DirectoryTable,
     allocator: std.mem.Allocator,
-    /// Zero-width field for namespacing.
-    cpm: CPM = .{},
-    /// Zero-width field for namespacing
-    ados: ADOS = .{},
 
     /// Initilize a DiskImage from an opened image file.
     /// Image file must at least have read permissions if the loadDirectories() is called.
@@ -238,17 +226,12 @@ pub const DiskImage = struct {
         return null;
     }
 
-    fn debug(comptime fmt: []const u8, args: anytype) void {
-        if (true) return;
-        std.debug.print(fmt, args);
-    }
-
     /// Copy a file from file_reader to the disk image.
     pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool, text_mode: TextMode) !void {
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyToImage(self, file_reader, to_filename, user, force),
             .ados => os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
-            // TODO: TextMode not actuially required for hd basic?
+            // TODO: TextMode not actuially required for hd basic? Yes it is for the basic decoder.
             .hd_basic => os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode),
         };
     }
@@ -353,33 +336,32 @@ pub const DiskImage = struct {
                 std.debug.assert(self.image_type.OS == .cdos);
 
                 const raw_entry = &self.directory.raw_directories.cpm.items[0];
-                const raw_item = &raw_entry.raw;
                 // Either user shuld be 0xe5 from a fresh format / deleted entry or should be 0x81 to indicate a label.
-                if (!raw_entry.isLabel() and raw_item.user != 0xe5) return error.LabelNotFound;
-                @memset(std.mem.asBytes(raw_item), 0x00);
-                raw_item.user = 0x81;
-                @memcpy(&raw_item.filename, &lbl.user_label);
-                raw_item.filetype[0] = lbl.date_mmddyy[0];
-                raw_item.filetype[1] = lbl.date_mmddyy[1];
-                raw_item.filetype[2] = lbl.date_mmddyy[2];
-                raw_item.extent_low = switch (self.image_type.type_id.toCDOS()) {
+                if (!raw_entry.isLabel() and raw_entry.user != 0xe5) return error.LabelNotFound;
+                @memset(std.mem.asBytes(raw_entry), 0x00);
+                raw_entry.user = 0x81;
+                @memcpy(&raw_entry.filename, &lbl.user_label);
+                raw_entry.filetype[0] = lbl.date_mmddyy[0];
+                raw_entry.filetype[1] = lbl.date_mmddyy[1];
+                raw_entry.filetype[2] = lbl.date_mmddyy[2];
+                raw_entry.extent_low = switch (self.image_type.type_id.toCDOS()) {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {
                     // This is the allocations taken up by the directory table.
                     // In this case 4 allocations (0, 1, 2 and 3).
-                    raw_item.reserved = 0x80;
-                    raw_item.allocations[2] = 0x01;
-                    raw_item.allocations[4] = 0x02;
-                    raw_item.allocations[6] = 0x03;
+                    raw_entry.reserved = 0x80;
+                    raw_entry.allocations[2] = 0x01;
+                    raw_entry.allocations[4] = 0x02;
+                    raw_entry.allocations[6] = 0x03;
                 } else {
-                    raw_item.allocations[1] = 1; // The other directories by default take up 2 allocations.
+                    raw_entry.allocations[1] = 1; // The other directories by default take up 2 allocations.
                 }
                 // This is indirectly the number of directories available.
                 // It's actually the number of records used by the directory table (4 32 bytes entires per 128 byte record.)
                 // 0x10 * 4 = 64, 0x20 * 4 = 128, 0x40 * 4 = 256
-                raw_item.num_records = switch (self.image_type.type_id.toCDOS()) {
+                raw_entry.num_records = switch (self.image_type.type_id.toCDOS()) {
                     .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
                     .CDOS_LGDSDD => 0x40,
@@ -400,12 +382,11 @@ pub const DiskImage = struct {
             .cdos => {
                 label.* = .{ .cdos = undefined };
                 const raw_entry = &self.directory.raw_directories.cpm.items[0];
-                const raw_item = &raw_entry.raw;
                 if (!raw_entry.isLabel()) return error.LabelNotFound;
-                @memcpy(&label.cdos.user_label, &raw_item.filename);
-                label.cdos.date_mmddyy[0] = raw_item.filetype[0];
-                label.cdos.date_mmddyy[1] = raw_item.filetype[1];
-                label.cdos.date_mmddyy[2] = raw_item.filetype[2];
+                @memcpy(&label.cdos.user_label, &raw_entry.filename);
+                label.cdos.date_mmddyy[0] = raw_entry.filetype[0];
+                label.cdos.date_mmddyy[1] = raw_entry.filetype[1];
+                label.cdos.date_mmddyy[2] = raw_entry.filetype[2];
             },
             .hd_basic => try os_hd_basic.volumeLabelGet(self, label),
             .cpm, .ados => return error.LabelingNotSupported,
@@ -456,6 +437,7 @@ pub const DiskImage = struct {
         }
     }
 
+    // TODO: Comment is out of date. fix fix
     /// Convert between logical (allocation, record) to physical (track, sector) address.
     // This really should take record number but uses sector number instead. i.e for 512k
     // sectors it passes 0, 1, 2. Not 0, 4, 8 when there are 4 records per sector.
@@ -463,7 +445,7 @@ pub const DiskImage = struct {
     // TODO: This now represents either the unskewed track / sector or the physical track / sector.
     // Read a single sector using unskewed track and sector
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError || PhysicalAddress.ValidateError;
-    pub fn readSectorPhysical(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
+    pub fn readSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
         try location.validate(self.image_type);
         const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
         const sector_offset = self.image_type.seekOffset(physical_location);
@@ -490,10 +472,6 @@ pub const DiskImage = struct {
 
         try sector.dump(physical_location, sector_offset);
     }
-
-    pub const CPM = struct {};
-
-    pub const ADOS = struct {};
 };
 
 const std = @import("std");

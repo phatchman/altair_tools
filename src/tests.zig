@@ -5,7 +5,7 @@ const Disk8IN = @import("disk_types.zig").all_disk_types.getPtrConst(.FDD_8IN);
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DirectoryTable = @import("directory_table.zig").DirectoryTable;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
-const RawCpmDirEntry = @import("os_cpm.zig").RawCpmDirEntry;
+const RawCpmDirEntry = @import("os_cpm.zig").DirEntry;
 
 comptime {
     _ = @import("disk_image_tests.zig");
@@ -16,8 +16,8 @@ test "simple filename" {
 
     var raw = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.raw.filename);
-    try std.testing.expectEqualStrings("COM", &raw.raw.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.filename);
+    try std.testing.expectEqualStrings("COM", &raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -32,8 +32,8 @@ test "filename no extension" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("FILENAME", &raw.raw.filename);
-    try std.testing.expectEqualStrings("   ", &raw.raw.filetype);
+    try std.testing.expectEqualStrings("FILENAME", &raw.filename);
+    try std.testing.expectEqualStrings("   ", &raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -49,8 +49,8 @@ test "extension no filename" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.raw.filename);
-    try std.testing.expectEqualStrings("COM", &raw.raw.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.filename);
+    try std.testing.expectEqualStrings("COM", &raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -65,8 +65,8 @@ test "short filename no extension" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("X       ", &raw.raw.filename);
-    try std.testing.expectEqualStrings("   ", &raw.raw.filetype);
+    try std.testing.expectEqualStrings("X       ", &raw.filename);
+    try std.testing.expectEqualStrings("   ", &raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -81,8 +81,8 @@ test "short extension no filename" {
 
     var raw: RawCpmDirEntry = std.mem.zeroes(RawCpmDirEntry);
     raw.filenameAndExtensionSet(filename);
-    try std.testing.expectEqualStrings("        ", &raw.raw.filename);
-    try std.testing.expectEqualStrings("X  ", &raw.raw.filetype);
+    try std.testing.expectEqualStrings("        ", &raw.filename);
+    try std.testing.expectEqualStrings("X  ", &raw.filetype);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

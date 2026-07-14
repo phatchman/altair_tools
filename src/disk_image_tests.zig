@@ -690,8 +690,8 @@ fn randomData(_: void, smith: *std.testing.Smith) !void {
 
 fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
     return switch (self.raw_directories) {
-        .cpm => @import("os_cpm.zig").allocationGetFreeCPM(self),
-        .ados => @import("os_altair_dos.zig").allocationGetFreeADOS(self, false),
+        .cpm => @import("os_cpm.zig").allocationGetFree(self),
+        .ados => @import("os_altair_dos.zig").allocationGetFree(self, false),
         .hd_basic => @import("os_hd_basic.zig").allocationGetFree(self),
     };
 }

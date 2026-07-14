@@ -271,53 +271,50 @@ pub const DiskImageType_CPM_MINI = struct {
 };
 
 /// Raw on-disk version of the CPM directory entry
-pub const RawCpmDirEntry = struct {
-    pub const Raw = extern struct {
-        user: u8,
-        filename: [8]u8,
-        filetype: [3]u8,
-        extent_low: u8,
-        reserved: u8,
-        extent_hi: u8,
-        num_records: u8,
-        /// Prefer to access via allocationGet and allocationSet.
-        /// Can be 8 or 16 bit depending on the image type.
-        allocations: [16]u8,
-    };
-    raw: Raw, // This must be the one and only field.
+pub const DirEntry = extern struct {
+    user: u8,
+    filename: [8]u8,
+    filetype: [3]u8,
+    extent_low: u8,
+    reserved: u8,
+    extent_hi: u8,
+    num_records: u8,
+    /// Prefer to access via allocationGet and allocationSet.
+    /// Can be 8 or 16 bit depending on the image type.
+    allocations: [16]u8,
 
-    pub const empty: RawCpmDirEntry = .{ .raw = std.mem.zeroes(Raw) };
+    pub const empty: DirEntry = std.mem.zeroes(DirEntry);
     pub const filename_len = 8;
     pub const filetype_len = 3;
 
-    pub fn cook(raw_dir: *const RawCpmDirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
+    pub fn cook(raw_dir: *const DirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!CookedDirEntry {
         var filename: [CookedDirEntry.filename_max]u8 = @splat(' '); // space terminated string
 
-        var len = CookedDirEntry.rawStrlen(&raw_dir.raw.filename);
-        @memcpy(filename[0..len], raw_dir.raw.filename[0..len]);
+        var len = CookedDirEntry.rawStrlen(&raw_dir.filename);
+        @memcpy(filename[0..len], raw_dir.filename[0..len]);
 
         // Remove status bits, encoded in bit 8 of first 2 chars
         for (filename[0..2], 0..) |c, i| {
             filename[i] = c & 0x7f;
         }
 
-        if (raw_dir.raw.filetype[0] != ' ') {
+        if (raw_dir.filetype[0] != ' ') {
             filename[len] = '.';
             len += 1;
-            @memcpy(filename[len .. len + 3], &raw_dir.raw.filetype);
+            @memcpy(filename[len .. len + 3], &raw_dir.filetype);
 
             if (len + 3 < 12)
                 filename[len + 3] = ' ';
         }
 
         var result = CookedDirEntry{
-            .user = raw_dir.raw.user,
+            .user = raw_dir.user,
             .attribs = [_]u8{
                 if (raw_dir.attribReadOnly()) 'R' else 'W',
                 if (raw_dir.attribSystem()) 'S' else ' ',
             },
             .os = .{ .cpm = .{
-                .num_records = raw_dir.raw.num_records,
+                .num_records = raw_dir.num_records,
                 .num_allocs = 0,
             } },
             .filename = filename,
@@ -337,11 +334,11 @@ pub const RawCpmDirEntry = struct {
         return result;
     }
 
-    pub fn validate(self: *const RawCpmDirEntry, image_type: *const DiskImageType, extent_nr: u16) RawDirError!void {
-        if (self.raw.user > DiskImageType.max_user and self.raw.user != 0xe5 and self.raw.user != 0x81) {
+    pub fn validate(self: *const DirEntry, image_type: *const DiskImageType, extent_nr: u16) RawDirError!void {
+        if (self.user > DiskImageType.max_user and self.user != 0xe5 and self.user != 0x81) {
             logerr(
                 "Invalid directory entry: {} [Invalid user: {}. Must be 0-{} or {}]",
-                .{ extent_nr, self.raw.user, DiskImageType.max_user, 0xe5 },
+                .{ extent_nr, self.user, DiskImageType.max_user, 0xe5 },
             );
             return RawDirError.InvalidUser;
         }
@@ -355,10 +352,10 @@ pub const RawCpmDirEntry = struct {
             return RawDirError.InvalidExtent;
         }
 
-        if (self.raw.num_records > 128) {
+        if (self.num_records > 128) {
             logerr(
                 "Invalid directory entry: {} [Invalid num_records: {}. Must be 0-{}]",
-                .{ extent_nr, self.raw.num_records, 128 },
+                .{ extent_nr, self.num_records, 128 },
             );
             return RawDirError.InvalidRecordNumber;
         }
@@ -374,123 +371,131 @@ pub const RawCpmDirEntry = struct {
         }
     }
 
-    pub fn isDeleted(self: *const RawCpmDirEntry) bool {
-        return self.raw.user > DiskImageType.max_user;
+    pub fn isDeleted(self: *const DirEntry) bool {
+        return self.user > DiskImageType.max_user;
     }
 
     /// is this a disk label, instead of a normal dir entry?
-    pub fn isLabel(self: *const RawCpmDirEntry) bool {
-        return self.raw.user == 0x81;
+    pub fn isLabel(self: *const DirEntry) bool {
+        return self.user == 0x81;
     }
 
-    pub fn setDeleted(self: *RawCpmDirEntry) void {
-        self.raw.user = 0xe5;
+    pub fn setDeleted(self: *DirEntry) void {
+        self.user = 0xe5;
     }
 
     /// Set num_records field.
-    pub fn numRecordsSet(self: *RawCpmDirEntry, record_nr: u16) void {
-        self.raw.num_records = @intCast((record_nr % 128) + 1);
+    pub fn numRecordsSet(self: *DirEntry, record_nr: u16) void {
+        self.num_records = @intCast((record_nr % 128) + 1);
     }
 
     /// Get extent as 16 bit value
-    pub fn extentGet(self: *const RawCpmDirEntry, image_type: *const DiskImageType) u16 {
+    pub fn extentGet(self: *const DirEntry, image_type: *const DiskImageType) u16 {
         if (image_type.OS == .cpm) {
-            return @as(u16, self.raw.extent_hi) * 32 + self.raw.extent_low;
+            return @as(u16, self.extent_hi) * 32 + self.extent_low;
         } else {
-            return @as(u16, self.raw.extent_hi) * 255 + self.raw.extent_low;
+            return @as(u16, self.extent_hi) * 255 + self.extent_low;
         }
     }
 
     /// Set extent from 16 bit value
-    pub fn extentCountSet(self: *RawCpmDirEntry, extent_count: u16, image_type: *const DiskImageType) void {
+    pub fn extentCountSet(self: *DirEntry, extent_count: u16, image_type: *const DiskImageType) void {
         if (image_type.OS == .cpm) {
-            self.raw.extent_low = @intCast(extent_count % 32);
-            self.raw.extent_hi = @intCast(extent_count / 32);
+            self.extent_low = @intCast(extent_count % 32);
+            self.extent_hi = @intCast(extent_count / 32);
         } else {
-            self.raw.extent_low = @intCast(extent_count % 256);
-            self.raw.extent_hi = @intCast(extent_count / 256);
+            self.extent_low = @intCast(extent_count % 256);
+            self.extent_hi = @intCast(extent_count / 256);
         }
     }
 
-    pub fn attribReadOnly(self: *const RawCpmDirEntry) bool {
-        return self.raw.filename[0] & 0x80 != 0;
+    pub fn attribReadOnly(self: *const DirEntry) bool {
+        return self.filename[0] & 0x80 != 0;
     }
 
-    pub fn attribSystem(self: *const RawCpmDirEntry) bool {
-        return self.raw.filename[1] & 0x80 != 0;
+    pub fn attribSystem(self: *const DirEntry) bool {
+        return self.filename[1] & 0x80 != 0;
     }
 
     /// Set allocation as controlled by this extent
-    pub fn allocationSet(self: *RawCpmDirEntry, entry_nr: usize, alloc_nr: u16, image_type: *const DiskImageType) RawDirError!void {
+    pub fn allocationSet(self: *DirEntry, entry_nr: usize, alloc_nr: u16, image_type: *const DiskImageType) RawDirError!void {
         if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
         if (!image_type.two_byte_allocs) {
             // 8 bit allocations
-            self.raw.allocations[entry_nr] = @intCast(alloc_nr & 0xff);
+            self.allocations[entry_nr] = @intCast(alloc_nr & 0xff);
         } else {
             // 16 bit allocations.
             var alloc: [2]u8 = undefined;
             std.mem.writeInt(u16, &alloc, alloc_nr, .little);
-            self.raw.allocations[entry_nr * 2] = alloc[0];
-            self.raw.allocations[entry_nr * 2 + 1] = alloc[1];
+            self.allocations[entry_nr * 2] = alloc[0];
+            self.allocations[entry_nr * 2 + 1] = alloc[1];
         }
     }
 
     /// Get the number of an allocation controlled by this extent
-    pub fn allocationGet(self: *const RawCpmDirEntry, entry_nr: usize, image_type: *const DiskImageType) RawDirError!u16 {
+    pub fn allocationGet(self: *const DirEntry, entry_nr: usize, image_type: *const DiskImageType) RawDirError!u16 {
         if (entry_nr >= self.allocationsCount(image_type)) {
             return RawDirError.InvalidEntryNumber;
         }
 
         if (!image_type.two_byte_allocs) {
-            return self.raw.allocations[entry_nr];
+            return self.allocations[entry_nr];
         } else {
-            const alloc: [2]u8 = .{ self.raw.allocations[entry_nr * 2], self.raw.allocations[entry_nr * 2 + 1] };
+            const alloc: [2]u8 = .{ self.allocations[entry_nr * 2], self.allocations[entry_nr * 2 + 1] };
             return std.mem.readInt(u16, &alloc, .little);
         }
     }
 
     /// How many allocations are controlled by this extent?
-    pub fn allocationsCount(_: *const RawCpmDirEntry, image_type: *const DiskImageType) u16 {
+    pub fn allocationsCount(_: *const DirEntry, image_type: *const DiskImageType) u16 {
         return if (image_type.two_byte_allocs)
             @min(8, image_type.allocs_per_extent)
         else
             @min(16, image_type.allocs_per_extent);
     }
 
-    pub fn filenameAndExtensionSet(self: *RawCpmDirEntry, filename: []const u8) void {
+    pub fn filenameAndExtensionSet(self: *DirEntry, filename: []const u8) void {
         const dot_pos = std.mem.indexOfScalar(u8, filename, '.') orelse filename.len;
-        self.raw.filename = @splat(' ');
-        self.raw.filetype = @splat(' ');
-        @memcpy(self.raw.filename[0..dot_pos], filename[0..dot_pos]);
+        self.filename = @splat(' ');
+        self.filetype = @splat(' ');
+        @memcpy(self.filename[0..dot_pos], filename[0..dot_pos]);
         if (dot_pos != filename.len) {
-            const type_len = @min(self.raw.filetype.len + 1, filename.len - dot_pos - 1);
-            @memcpy(self.raw.filetype[0..type_len], filename[dot_pos + 1 .. dot_pos + type_len + 1]);
+            const type_len = @min(self.filetype.len + 1, filename.len - dot_pos - 1);
+            @memcpy(self.filetype[0..type_len], filename[dot_pos + 1 .. dot_pos + type_len + 1]);
         }
     }
 
-    pub fn isFirstEntryForFile(self: *const RawCpmDirEntry, image_type: *const DiskImageType) bool {
+    pub fn isFirstEntryForFile(self: *const DirEntry, image_type: *const DiskImageType) bool {
         //std.debug.print("isFirstExtentforFile: recs_per_extent {}, allocations[4] {}. extent {} = ", .{ image_type.recs_per_extent, self.entry.allocations[4], self.extentGet() });
-        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.raw.allocations[4] != 0 and self.extentGet(image_type) == 1) {
+        if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.allocations[4] != 0 and self.extentGet(image_type) == 1) {
             return true;
         }
         return self.extentGet(image_type) == 0;
     }
 
-    pub fn eql(self: *const RawCpmDirEntry, cooked_dir: *const CookedDirEntry) bool {
-        return (self.raw.user == cooked_dir.user and
-            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.raw.filename), cooked_dir.filenameOnly()) and
-            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.raw.filetype), cooked_dir.extensionOnly()));
+    pub fn eql(self: *const DirEntry, cooked_dir: *const CookedDirEntry) bool {
+        return (self.user == cooked_dir.user and
+            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.filename), cooked_dir.filenameOnly()) and
+            std.mem.eql(u8, CookedDirEntry.rawSlice(&self.filetype), cooked_dir.extensionOnly()));
     }
+};
+
+/// Directory entries keep track of a logical address consisting of:
+/// 1) An allocation representing 1 block. Allocations start at 0.
+/// 2) A record representing a 128k segment within the block, starting at 1
+pub const LogicalAddress = struct {
+    allocation: u16,
+    record: u8,
 };
 
 /// Add any new allocations to the list of used allocations.
 // TODO: Prob doesn;t need to be pub whene we move extend.
-pub fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const RawCpmDirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
+pub fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
     var alloc_count: u8 = 0;
 
-    try cooked.allocations.ensureUnusedCapacity(arena, raw.raw.allocations.len);
+    try cooked.allocations.ensureUnusedCapacity(arena, raw.allocations.len);
     for (0..raw.allocationsCount(image_type)) |alloc_nr| {
         const allocation = try raw.allocationGet(alloc_nr, image_type);
         // zero means no more allocations.
@@ -523,7 +528,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
         };
         // Read the raw CPM directory entries and add them to the raw_directories array.
         try readSectorLogical(image, logical_address, &sector);
-        const entries: []RawCpmDirEntry = std.mem.bytesAsSlice(RawCpmDirEntry, sector.dataBytes());
+        const entries: []DirEntry = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
 
         self.raw_directories.cpm.appendSliceAssumeCapacity(entries);
     }
@@ -537,36 +542,36 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
             .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
             .CDOS_LGDSDD => 0x40,
         };
-        if (expected_num_records != raw_item.raw.num_records) {
+        if (expected_num_records != raw_item.num_records) {
             if (!@import("builtin").is_test) logerr(
                 "CDOS disks with a non-default number of directories are not currently supported. Expected {}, actual {}",
-                .{ @as(u16, expected_num_records) * 4, @as(u16, raw_item.raw.num_records) * 4 },
+                .{ @as(u16, expected_num_records) * 4, @as(u16, raw_item.num_records) * 4 },
             );
             return error.InvalidImageFile;
         }
     }
 
     // building the cooked dirs needs sorted raw_dirs.
-    var raw_dirs_sorted: std.ArrayList(*RawCpmDirEntry) = try .initCapacity(self.allocator(), self.raw_directories.cpm.items.len);
+    var raw_dirs_sorted: std.ArrayList(*DirEntry) = try .initCapacity(self.allocator(), self.raw_directories.cpm.items.len);
     defer raw_dirs_sorted.deinit(self.allocator());
     for (self.raw_directories.cpm.items) |*raw_dir| {
         raw_dirs_sorted.appendAssumeCapacity(raw_dir);
     }
 
-    std.mem.sort(*RawCpmDirEntry, raw_dirs_sorted.items, image_type, struct {
-        fn lessThan(img_type: *const DiskImageType, lhs: *RawCpmDirEntry, rhs: *RawCpmDirEntry) bool {
-            if (std.mem.eql(u8, &lhs.raw.filename, &rhs.raw.filename)) {
-                if (std.mem.eql(u8, &lhs.raw.filetype, &rhs.raw.filetype)) {
-                    if (lhs.raw.user == rhs.raw.user) {
+    std.mem.sort(*DirEntry, raw_dirs_sorted.items, image_type, struct {
+        fn lessThan(img_type: *const DiskImageType, lhs: *DirEntry, rhs: *DirEntry) bool {
+            if (std.mem.eql(u8, &lhs.filename, &rhs.filename)) {
+                if (std.mem.eql(u8, &lhs.filetype, &rhs.filetype)) {
+                    if (lhs.user == rhs.user) {
                         return lhs.extentGet(img_type) < rhs.extentGet(img_type);
                     } else {
-                        return lhs.raw.user < rhs.raw.user;
+                        return lhs.user < rhs.user;
                     }
                 } else {
-                    return std.mem.lessThan(u8, &lhs.raw.filetype, &rhs.raw.filetype);
+                    return std.mem.lessThan(u8, &lhs.filetype, &rhs.filetype);
                 }
             } else {
-                return std.mem.lessThan(u8, &lhs.raw.filename, &rhs.raw.filename);
+                return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
             }
         }
     }.lessThan);
@@ -574,9 +579,9 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     // Create the CookedDirEntries and remove any used allocations from the free alocations set.
     for (raw_dirs_sorted.items, 0..) |dir, i| {
         if (!dir.isDeleted()) {
-            const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.cpm.items[0])) / @sizeOf(RawCpmDirEntry);
+            const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.cpm.items[0])) / @sizeOf(DirEntry);
             if (option == .full) {
-                buildCookedEntryCPM(self, @intCast(entry_nr)) catch |err|
+                buildCookedEntry(self, @intCast(entry_nr)) catch |err|
                     switch (err) {
                         error.InvalidUser,
                         error.InvalidExtent,
@@ -587,7 +592,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
                         => {
                             logerr(
                                 "Directory entry {} for \"{s}\" has invalid directory entries and has been hidden. Use --recover to try and recover the image: {t}",
-                                .{ i, std.mem.trimEnd(u8, &dir.raw.filename, " "), err },
+                                .{ i, std.mem.trimEnd(u8, &dir.filename, " "), err },
                             );
                             continue;
                         },
@@ -630,14 +635,14 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
 
 /// Whenever a new extent is created, register it with the directory
 /// Builds up the associated CookedDirEntry as new RawDirEntries are registered.
-pub fn buildCookedEntryCPM(self: *DirectoryTable, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
+pub fn buildCookedEntry(self: *DirectoryTable, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
     const entry = &self.raw_directories.cpm.items[raw_entry_idx];
     try entry.validate(self.image_type, raw_entry_idx);
     if (entry.isFirstEntryForFile(self.image_type)) {
         try self.cooked_directories.append(self.allocator(), try entry.cook(self.allocator(), self.image_type));
     } else {
         if (self.cooked_directories.items.len == 0) {
-            logerr("Cannot detect first entry for file {s}.{s}: ", .{ entry.raw.filename, entry.raw.filetype });
+            logerr("Cannot detect first entry for file {s}.{s}: ", .{ entry.filename, entry.filetype });
             return error.InvalidImageFile;
         }
         var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
@@ -662,8 +667,8 @@ pub fn translateFilename(filename: []const u8, buffer: []u8) error{InvalidFilena
     const end_in = filename.ptr + filename.len;
     var in_char: [*]const u8 = filename.ptr; // Caution! Not bounds checked
     var out_char: [*]u8 = buffer.ptr; // Caution! Not bounds checked
-    const filename_len = RawCpmDirEntry.filename_len;
-    const ext_len = RawCpmDirEntry.filetype_len;
+    const filename_len = DirEntry.filename_len;
+    const ext_len = DirEntry.filetype_len;
     const full_len = filename_len + ext_len + 1; // + 1 for dot
     while (in_char != end_in) {
         const valid_char = switch (in_char[0]) {
@@ -817,32 +822,32 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
 
     // short circuit handling on zero-length files.
     if (nbytes == 0) {
-        var raw_entry = try rawEntryGetFreeInitializedCPM(&self.directory, &extent_nr);
+        var raw_entry = try rawEntryGetFreeInitialized(&self.directory, &extent_nr);
         raw_entry.filenameAndExtensionSet(cpm_filename);
-        raw_entry.raw.user = cpm_user;
+        raw_entry.user = cpm_user;
         try rawEntryWrite(self, extent_nr);
-        try buildCookedEntryCPM(&self.directory, extent_nr);
+        try buildCookedEntry(&self.directory, extent_nr);
         return;
     }
 
-    var dir_entry: *RawCpmDirEntry = undefined;
+    var dir_entry: *DirEntry = undefined;
     while (nbytes != 0) {
         num_records += @intCast((nbytes + 127) / 128);
         // Is this a new extent?
         if (record_nr % self.image_type.recs_per_extent == 0) {
             if (record_nr > 0) {
                 // TODO: should this still exists?
-                try buildCookedEntryCPM(&self.directory, extent_nr);
+                try buildCookedEntry(&self.directory, extent_nr);
                 extent_count += 1;
             }
-            dir_entry = try rawEntryGetFreeInitializedCPM(&self.directory, &extent_nr);
+            dir_entry = try rawEntryGetFreeInitialized(&self.directory, &extent_nr);
             dir_entry.filenameAndExtensionSet(cpm_filename);
-            dir_entry.raw.user = cpm_user;
+            dir_entry.user = cpm_user;
             alloc_count = 0;
         }
         // Is this a new allocation?
         if (record_nr % self.image_type.recs_per_alloc == 0) {
-            alloc_nr = try allocationGetFreeCPM(&self.directory);
+            alloc_nr = try allocationGetFree(&self.directory);
             const raw_entry = &self.directory.raw_directories.cpm.items[extent_nr];
             try raw_entry.allocationSet(alloc_count, alloc_nr, self.image_type);
             alloc_count += 1;
@@ -866,7 +871,7 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         @memcpy(sector.dataBytes(), file_data);
         try self.writeSector(location, &sector);
 
-        dir_entry.raw.num_records = @intCast((num_records - 1) % 128 + 1);
+        dir_entry.num_records = @intCast((num_records - 1) % 128 + 1);
         dir_entry.extentCountSet(extent_count, self.image_type);
         try rawEntryWrite(self, extent_nr);
         @memset(file_data, 0xe5);
@@ -880,7 +885,7 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         sector_count += 1;
     }
 
-    try buildCookedEntryCPM(&self.directory, extent_nr);
+    try buildCookedEntry(&self.directory, extent_nr);
 
     // How copying works:
     //
@@ -903,7 +908,7 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
 }
 
 /// Return a free CPM directory entry
-pub fn rawEntryGetFreeInitializedCPM(self: *const DirectoryTable, extent_nr: *u16) error{OutOfExtents}!*RawCpmDirEntry {
+pub fn rawEntryGetFreeInitialized(self: *const DirectoryTable, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
     for (self.raw_directories.cpm.items, 0..) |*dir, i| {
         if (dir.isDeleted() and !dir.isLabel()) {
             extent_nr.* = @intCast(i);
@@ -914,7 +919,7 @@ pub fn rawEntryGetFreeInitializedCPM(self: *const DirectoryTable, extent_nr: *u1
     return error.OutOfExtents;
 }
 
-pub fn allocationGetFreeCPM(self: *DirectoryTable) error{OutOfAllocs}!u16 {
+pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
     if (self.free_allocations.findFirstSet()) |free_alloc| {
         self.free_allocations.unset(free_alloc);
         return @intCast(free_alloc);
@@ -958,22 +963,23 @@ fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAd
 pub fn readSectorLogical(self: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
     const physical_location = toPhysicalAddress(self, location);
 
-    try self.readSectorPhysical(physical_location, sector);
+    try self.readSector(physical_location, sector);
 }
 
 const std = @import("std");
 const Io = std.Io;
+
 const disk_types = @import("disk_types.zig");
-const DiskImageType = disk_types.DiskImageType;
 const disk_image = @import("disk_image.zig");
-const DiskImage = disk_image.DiskImage;
 const directory_table = @import("directory_table.zig");
+
+const DiskImageType = disk_types.DiskImageType;
+const DiskImage = disk_image.DiskImage;
 const RawDirError = directory_table.RawDirError; // TODO: One way or the other in root namespace or in struct namespace.
 const WriteSectorError = DiskImage.WriteSectorError;
 const DiskSector = disk_types.DiskSector;
 const CookedDirEntry = directory_table.CookedDirEntry;
 const TextMode = DiskImage.TextMode;
 const DirectoryTable = directory_table.DirectoryTable;
-const LogicalAddress = disk_image.LogicalAddress;
 const PhysicalAddress = disk_types.PhysicalAddress;
 const ReadSectorError = DiskImage.ReadSectorError;
