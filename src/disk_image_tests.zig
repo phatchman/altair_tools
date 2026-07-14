@@ -111,7 +111,7 @@ fn clearVariableBytes(in: []u8, image_type: *const DiskImageType) []u8 {
     return in;
 }
 test "disk filled" {
-    //std.testing.log_level = .info;
+    //    std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         const compare_image: ?[]u8 = switch (fmt.type_id) {
@@ -157,7 +157,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -215,6 +214,7 @@ test "disk overfilled" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,
@@ -282,7 +282,6 @@ test "overfill directory" {
                 else => try std.testing.expectEqualSlices(u8, ci, image_file),
             }
         }
-        saveImage(image_file);
         // test the before and after reinit free count.
         try std.testing.expectEqual(0, disk_image.directory.rawEntryFreeCount());
         try reinitDiskImage(&disk_image);
@@ -691,9 +690,9 @@ fn randomData(_: void, smith: *std.testing.Smith) !void {
 
 fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
     return switch (self.raw_directories) {
-        .cpm => self.allocationGetFreeCPM(),
-        .ados => self.allocationGetFreeADOS(false),
-        .hd_basic => @import("hd_basic.zig").allocationGetFree(self),
+        .cpm => @import("os_cpm.zig").allocationGetFreeCPM(self),
+        .ados => @import("os_altair_dos.zig").allocationGetFreeADOS(self, false),
+        .hd_basic => @import("os_hd_basic.zig").allocationGetFree(self),
     };
 }
 

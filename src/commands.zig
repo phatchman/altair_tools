@@ -979,4 +979,4 @@ const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const CommandLineOptions = @import("main.zig").CommandLineOptions;
 const Console = @import("console.zig");
-const hd_basic = @import("hd_basic.zig");
+const hd_basic = @import("os_hd_basic.zig");
