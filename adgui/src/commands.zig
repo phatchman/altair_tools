@@ -1,6 +1,7 @@
 const std = @import("std");
 const ad = @import("altair_disk");
 const DiskImage = ad.DiskImage;
+const DiskImageType = ad.DiskImageType;
 const DiskImageTypes = ad.DiskImageTypes;
 const allocator = @import("main.zig").allocator;
 
@@ -35,9 +36,9 @@ pub const LocalDirEntry = struct {
     full_filename: []const u8,
     size: usize,
 
-    pub fn init(gpa: std.mem.Allocator, filename: []const u8, size: usize) !LocalDirEntry {
+    pub fn init(gpa: std.mem.Allocator, os: ad.OperatingSystem, filename: []const u8, size: usize) !LocalDirEntry {
         var filename_buf: [12]u8 = undefined;
-        const xlated_filename = try ad.DirectoryTable.translateToCPMFilename(filename, &filename_buf);
+        const xlated_filename = try ad.DirectoryTable.translateToFilename(os, filename, &filename_buf);
         const dotIndex = std.mem.indexOf(u8, xlated_filename, ".") orelse xlated_filename.len;
         const filename_only = xlated_filename[0..dotIndex];
         const extension = if (dotIndex < filename.len - 1) xlated_filename[dotIndex + 1 .. xlated_filename.len] else "";
@@ -108,14 +109,14 @@ pub const DirectoryEntry = struct {
 
     pub fn fileSizeInB(self: *const DirectoryEntry) usize {
         return switch (self.entry) {
-            .image => |*dir| dir.recordsUsedInB(),
+            .image => |*dir| dir.size_in_bytes,
             .local => |*dir| dir.size,
         };
     }
 
     pub fn fileUsedInKB(self: *const DirectoryEntry) usize {
         return switch (self.entry) {
-            .image => |*dir| dir.allocsUsedInKB(),
+            .image => |*dir| dir.used_in_kbytes,
             .local => |*dir| dir.size / 1024,
         };
     }
@@ -282,6 +283,7 @@ pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator, io: std.Io) ![
                     gpa,
                     DirectoryEntry.init(.{ .local = try LocalDirEntry.init(
                         gpa,
+                        if (self.disk_image) |disk_image| disk_image.image_type.OS else .cpm,
                         entry.name,
                         @truncate(size),
                     ) }),

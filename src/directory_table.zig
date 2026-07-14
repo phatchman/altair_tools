@@ -287,6 +287,16 @@ pub const DirectoryTable = struct {
         }
     }
 
+    pub fn translateToFilename(os: OperatingSystem, from_filename: []const u8, to_filename: []u8) error{InvalidFilename}![]u8 {
+        return switch (os) {
+            .cpm, .cdos => os_cpm.translateFilename(from_filename, to_filename),
+            // TODO: is this safe? Not really? FIX FIX FIX
+            .ados => os_ados.translateFilename(from_filename, @ptrCast(to_filename)),
+            // TODO: make consistent. either in DirEntry or root level..
+            .hd_basic => os_hd_basic.DirEntry.translateFilename(from_filename, to_filename),
+        };
+    }
+
     /// Performs a wildcard lookup of the directory. * and ? are supported wildcard characters.
     /// Use the returned FileNameIterator to walk through the directory entries
     pub fn findByFileNameWildcards(self: *const DirectoryTable, pattern: []const u8, user: ?u8) FileNameIterator {

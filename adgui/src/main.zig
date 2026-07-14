@@ -2351,6 +2351,7 @@ fn infoButtonHandler() !void {
                         )));
                     },
                     .cpm, .ados => {},
+                    .hd_basic => @panic("TODO"),
                 }
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks })));
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size })));

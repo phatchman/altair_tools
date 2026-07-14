@@ -12,6 +12,7 @@
 //         Date . . . . . . . . . . . . . . . . . . <12/12/12> -
 //         Number of directory entries (64-512) . . . .  <128> -
 //         ```
+// The issue is we currently expect the disk parameters (like number of directories) to be compile time constants.
 
 // CDOS "Small"
 pub const DiskImageType_CDOS_SMSSSD = struct {
