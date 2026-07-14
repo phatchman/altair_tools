@@ -533,14 +533,16 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
     defer in_file.close(ctx.io);
 
     var file_reader = in_file.reader(ctx.io, &.{});
-    disk_image.copyToImage(&file_reader.interface, filename, cpm_user, options.force, text_mode) catch |err| {
+    // TODO: So everywhere can now assume basename
+    const basename = std.fs.path.basename(filename);
+    disk_image.copyToImage(&file_reader.interface, basename, cpm_user, options.force, text_mode) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
-                printErrorMessage(current_command, .file_exists, .{filename}, err);
+                printErrorMessage(current_command, .file_exists, .{basename}, err);
                 return error.CommandFailedCanContinue;
             },
             error.CookedDirEntryNotFound => {
-                printErrorMessage(current_command, .file_copy, .{filename}, err);
+                printErrorMessage(current_command, .file_copy, .{basename}, err);
                 return error.CommandFailedCanContinue;
             },
             else => return error.CommandFailed,

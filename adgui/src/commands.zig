@@ -329,7 +329,8 @@ pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u
 
         var buf: [4096]u8 = undefined;
         var reader = in_file.reader(io, &buf);
-        try image.copyToImage(&reader.interface, filename, cpm_user, force, xlateCopyMode(copy_mode));
+        // TODO: So everywhere else can assume basename now??
+        try image.copyToImage(&reader.interface, std.fs.path.basename(filename), cpm_user, force, xlateCopyMode(copy_mode));
     }
 }
 
