@@ -157,7 +157,11 @@ pub const DiskImage = struct {
         }
     };
 
+    /// copy a file from the image
+    /// Expects a buffered out_writer.
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+        // TODO: Can't do this yet as some tests end up using zero-length fixed readers.
+        //std.debug.assert(out_writer.buffer.len > 0); // Buffered writer required.
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyFromImage(self, entry, out_writer, text_mode),
             .ados => os_ados.copyFromImage(self, entry, out_writer, text_mode),

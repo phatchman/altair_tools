@@ -7,6 +7,7 @@
 // TODO: Support big and small files on hd_basic.
 // Test zero length files for all formats.
 // Merge change to split out fuzz tests into individual tests.
+// TODO: Fuzz test the basic decoder.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -357,26 +358,42 @@ test "test force overwrite" {
     try std.testing.expectEqualSlices(u8, &test_file, &in_file);
 }
 
-test "8 in zero-length file" {
-    var test_file = "".*;
-    var test_stream: std.Io.Reader = .fixed(&test_file);
+test "zero-length file" {
+    //std.testing.log_level = .info;
+    inline for (all_formats) |fmt| {
+        std.log.info("Testing format: {t}", .{fmt.type_id});
+        var test_file = "".*;
+        var test_stream: std.Io.Reader = .fixed(&test_file);
 
-    var image_file: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&image_file);
+        const image_file = try std.testing.allocator.alloc(u8, fmt.image_size);
+        defer std.testing.allocator.free(image_file);
+        var test_image: InMemoryImage = undefined;
+        test_image.init(image_file);
 
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
 
-    // Get it back and compare it to the original
-    var in_file: [0]u8 = undefined;
-    var in_stream: std.Io.Writer = .fixed(&in_file);
+        try disk_image.copyToImage(&test_stream, "PINBALL", 0, false, .Auto);
 
-    const cooked_dir = disk_image.directory.findByFilename("PINBALL.TXT", null);
-    try std.testing.expect(cooked_dir != null);
-    // Will throw if it tries to write any bytes to the empty buffer;
-    try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Text);
+        // Get it back and compare it to the original
+        var in_file: [0]u8 = undefined;
+        var in_stream: std.Io.Writer = .fixed(&in_file);
+
+        var cooked_dir = disk_image.directory.findByFilename("PINBALL", null);
+        try std.testing.expect(cooked_dir != null);
+        try std.testing.expectEqual(0, cooked_dir.?.size_in_bytes);
+        try std.testing.expectEqual(0, cooked_dir.?.used_in_kbytes);
+        // Will throw if it tries to write any bytes to the empty buffer;
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Text);
+
+        try reinitDiskImage(&disk_image);
+        cooked_dir = disk_image.directory.findByFilename("PINBALL", null);
+        try std.testing.expect(cooked_dir != null);
+        try std.testing.expectEqual(0, cooked_dir.?.size_in_bytes);
+        try std.testing.expectEqual(0, cooked_dir.?.used_in_kbytes);
+        // Will throw if it tries to write any bytes to the empty buffer;
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Text);
+    }
 }
 
 test "8in Text file" {
@@ -857,8 +874,9 @@ const HD_BASIC = all_disk_types.getPtrConst(.HD_BASIC);
 // Can be set to a limited set of formats when wanting to test a subset.
 //const all_formats = .{ ADOS_MINI, ADOS_MINI_BOOT };
 //const all_formats = .{HD_BASIC};
-//const all_formats = .{FDD_8IN};
+//const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024 };
 //const all_formats = .{ FDD_8IN, HDD_5MB, HDD_5MB_1024, TAR, FDC_8MB, CDOS_SMSSSD, CDOS_SMSSDD, CDOS_SMDSSD, CDOS_SMDSDD, CDOS_LGSSSD, CDOS_LGSSDD, CDOS_LGDSSD, CDOS_LGDSDD, ADOS_8IN };
+
 const all_formats = _: {
     const fields = std.meta.fields(DiskImageTypes);
     var result: [fields.len]*const DiskImageType = undefined;

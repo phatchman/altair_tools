@@ -311,8 +311,13 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
             .image => |cooked_entry| {
                 var out_file = try dir.createFile(io, cooked_entry.filenameAndExtension(), .{ .exclusive = if (force) false else true });
                 defer out_file.close(io);
-                var writer = out_file.writer(io, &.{});
-                try image.copyFromImage(&cooked_entry, &writer.interface, xlateCopyMode(copy_mode));
+                var write_buffer: [4096]u8 = undefined;
+                var writer = out_file.writer(io, &write_buffer);
+                image.copyFromImage(&cooked_entry, &writer.interface, xlateCopyMode(copy_mode)) catch |err| {
+                    try writer.flush();
+                    return err;
+                };
+                try writer.flush();
             },
             else => {
                 std.debug.panic("{s} needs a {s}", .{ @src().fn_name, @typeName(@TypeOf(.image)) });

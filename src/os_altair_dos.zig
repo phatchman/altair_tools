@@ -598,8 +598,10 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     var file_data: [128]u8 = undefined; // TODO: Hard coded
     var nbytes = try reader.readSliceShort(&file_data);
     // Zero length files only get a directory entry and nothing else.
+    // TODO: The handlign of cooked dirs here is very fragile. move this into a fucntion and handled cooked dirs outside of it?
     if (nbytes == 0) {
         try rawEntryWrite(image, extent_nr);
+        image.directory.cooked_directories.appendAssumeCapacity(try new_entry.cook(image, extent_nr));
         return;
     }
 

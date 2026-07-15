@@ -836,6 +836,7 @@ pub fn translateFilename(basename: []const u8, to_filename: []u8) []u8 {
             idx += 1;
         }
     }
+    log.info("Translated filename {s} to {s}", .{ basename, to_filename[0..idx] });
     return to_filename[0..idx];
 }
 

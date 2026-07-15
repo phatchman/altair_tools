@@ -1,3 +1,5 @@
+// TODO: Add the trnalsated file info message to all of the translation routines.
+
 const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;

@@ -475,7 +475,11 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
         text_mode = .Rand;
     }
 
-    var file_writer = out_file.writer(ctx.io, &.{});
+    var write_buffer: [4096]u8 = undefined;
+    var file_writer = out_file.writer(ctx.io, &write_buffer);
+    defer file_writer.flush() catch |err| {
+        printErrorMessage(current_command, .file_copy, .{out_filename}, err);
+    };
     disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| {
         printErrorMessage(current_command, .file_copy, .{out_filename}, err);
         if (file_writer.pos == 0) {
