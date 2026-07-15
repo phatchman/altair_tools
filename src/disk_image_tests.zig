@@ -214,7 +214,6 @@ test "disk overfilled" {
         test_image.init(test_buffer);
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         try std.testing.expectError(
             error.OutOfAllocs,

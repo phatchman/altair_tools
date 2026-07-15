@@ -10,9 +10,15 @@
 // 4) Add a freshly formatted version of the image to src/test_images
 // 5) Add a format test and any other relevant tests to disk_image_tests.zig
 
-pub const OperatingSystem = enum { cpm, cdos, ados, hd_basic };
 const log = std.log.scoped(.altair_disk_lib);
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
+
+pub const OperatingSystem = enum {
+    cpm,
+    cdos,
+    ados,
+    hd_basic,
+};
 
 pub const DiskLabel = union(OperatingSystem) {
     cpm: void,
@@ -50,7 +56,6 @@ pub const DiskLabel = union(OperatingSystem) {
     }
 };
 
-/// The physical track and sector number after skew
 pub const PhysicalAddress = struct {
     track: u16,
     sector: u16,
@@ -78,7 +83,7 @@ pub const PhysicalAddress = struct {
 };
 
 /// Represents a single disk sector.
-/// For MITS hard-sectored disks, the raw on-disk sector length is different to the data length.
+/// For MITS hard-sectored disks, the raw on-disk sector length (137) is different to the data length (128).
 pub const DiskSector = union(enum) {
     // Hexdump raw sectors to debug output
     const DUMP = false;
@@ -138,6 +143,8 @@ pub const DiskSector = union(enum) {
         };
     }
 
+    // 2 TODO: think of a better way to split this out.
+    // Issue is that some htings change on OS, some on OS within format and some just on format.
     pub fn initFormatted(image_type: *const DiskImageType, location: PhysicalAddress) DiskSector {
         var result: DiskSector = .initUnformatted(image_type, location.track);
         @memset(result.rawBytes(), 0xe5);

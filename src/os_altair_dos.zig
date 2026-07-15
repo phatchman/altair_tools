@@ -197,7 +197,8 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
 };
 
 pub const DirEntry = extern struct {
-    filename: [8]u8,
+    pub const filename_len = 8;
+    filename: [filename_len]u8,
     track: u8,
     sector: u8,
     mode: u8,
@@ -229,7 +230,6 @@ pub const DirEntry = extern struct {
             .user = 0,
             .filename = @splat(' '),
             .attribs = if (self.mode == 2) .{ 'S', ' ' } else .{ 'R', ' ' },
-            .block_size = image.image_type.block_size,
             .allocations = allocations,
             .size_in_bytes = undefined,
             .used_in_kbytes = undefined,
@@ -362,6 +362,10 @@ pub const DirEntry = extern struct {
         return std.mem.eql(u8, std.mem.trimEnd(u8, &self.filename, " "), cooked.filenameOnly());
     }
 
+    pub fn lessThan(_: *const DiskImageType, lhs: *const DirEntry, rhs: *const DirEntry) bool {
+        return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
+    }
+
     pub fn validate(self: *const DirEntry, image_type: *const DiskImageType, entry_nr: u16) error{InvalidDirectoryEntry}!void {
         if (self.track >= image_type.tracks) {
             logerr(
@@ -411,19 +415,26 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
         self.raw_directories.ados.appendSliceAssumeCapacity(entries);
     }
 
+    var raw_dir_sorted: std.ArrayList(*DirEntry) = try .initCapacity(self.allocator(), self.raw_directories.ados.items.len);
+    defer raw_dir_sorted.deinit(self.allocator());
+    self.rawDirsSorted(DirEntry, self.raw_directories.ados.items[0..], &raw_dir_sorted);
+
     try self.cooked_directories.ensureTotalCapacity(self.allocator(), self.raw_directories.ados.items.len);
-    loop: for (0..self.raw_directories.ados.items.len) |raw_entry_idx| {
-        switch (self.raw_directories.ados.items[raw_entry_idx].filename[0]) {
+    loop: for (raw_dir_sorted.items) |dir| {
+        switch (dir.filename[0]) {
             0 => continue, // Deleted
             // TODO: Can we use isLast and isDelted here instead?
             255 => break :loop, // End of Directory
             else => {
                 // TODO: Put the catch back in .. work out the compile error.
-                self.cooked_directories.appendAssumeCapacity(try self.raw_directories.ados.items[raw_entry_idx].cook(self, image, @intCast(raw_entry_idx)));
-                _ = option;
-                // catch |err| {
-                //     if (option != .raw_only) return err;
-                // });
+                const raw_entry_idx = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.ados.items[0])) / @sizeOf(DirEntry);
+                self.cooked_directories.appendAssumeCapacity(dir.cook(self, image, @intCast(raw_entry_idx)) catch |err| {
+                    if (option != .raw_only) {
+                        return err;
+                    } else {
+                        continue;
+                    }
+                });
             },
         }
     }
@@ -438,7 +449,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
 /// Convert to valid Altair DOS / Basic filename
 /// There are almost no restrictions on valid filename chars in Altair DOS
 /// This program enforces printable and upper case.
-pub fn translateFilename(from_filename: []const u8, to_filename: *[8]u8) error{InvalidFilename}![]u8 {
+pub fn translateFilename(from_filename: []const u8, to_filename: []u8) error{InvalidFilename}![]u8 {
     @memset(to_filename, ' ');
     var index: usize = 0;
     for (from_filename) |c| {
@@ -719,6 +730,30 @@ pub fn rawEntryWrite(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawD
     // Copy 1 full sector worth of extents/raw entries
     @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.ados.items[start_index .. start_index + entries_per_sector]));
     try self.writeSector(location, &sector);
+}
+
+pub fn clearErasedSectors(image: *DiskImage, raw_item: *DirEntry) !void {
+    var track_nr: u16 = raw_item.track;
+    var sector_nr: u16 = raw_item.sector;
+
+    while (track_nr != 0) {
+        var sector: DiskSector = .initUnformatted(image.image_type, track_nr);
+        const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
+        image.readSector(location, &sector) catch |err| switch (err) {
+            error.InvalidTrack, error.InvalidSector => {
+                log.warn("{s} has invalid track or sector links. Erase still suceeded: {t}", .{ raw_item.filename, err });
+                break;
+            },
+            else => return err,
+        };
+        track_nr = sector.data.next_track;
+        sector_nr = sector.data.next_sector;
+        sector.data.file_nr = 0;
+        sector.data.nbytes = 0;
+        sector.data.next_sector = 0;
+        sector.data.next_track = 0;
+        try image.writeSector(location, &sector);
+    }
 }
 
 /// Return a free allocation

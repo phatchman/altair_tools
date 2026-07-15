@@ -256,9 +256,9 @@ pub fn directoryListRawCPM(_: Context, disk_image: *DiskImage, options: CommandL
             };
 
             try Console.stdout().print("{:0>3}:{}:{s:<8}:{s:<3}:{s}:{:0>3}:{:0>3}", .{
-                extent_nr,             entry.raw.user, entry.raw.filename,
-                entry.raw.filetype,    attribs,        entry.extentGet(disk_image.image_type),
-                entry.raw.num_records,
+                extent_nr,         entry.user, entry.filename,
+                entry.filetype,    attribs,    entry.extentGet(disk_image.image_type),
+                entry.num_records,
             });
 
             // The allocations are really little endian u16's
@@ -302,10 +302,10 @@ pub fn directoryListRawADOS(_: Context, disk_image: *DiskImage, _: CommandLineOp
         if (!entry.isDeleted()) {
             try Console.stdout().print("{d:03}:{s}:{x:02}:{x:02}:{x:02}\n", .{
                 file_nr,
-                entry.raw.filename,
-                entry.raw.mode,
-                entry.raw.track,
-                entry.raw.sector,
+                entry.filename,
+                entry.mode,
+                entry.track,
+                entry.sector,
             });
         }
     }
@@ -869,7 +869,7 @@ fn printErrorMessage(command: []const u8, comptime message: ErrorMessage, args: 
             Console.stderr().writeAll("\n") catch {};
         },
         error.CantDetectImage => {
-            Console.stderr().print(": Not a valid Altair disk image.\n", .{}) catch {};
+            Console.stderr().print(": Not a supported disk image.\n", .{}) catch {};
         },
         RawDirError.InvalidAllocation,
         RawDirError.InvalidEntryNumber,

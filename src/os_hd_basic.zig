@@ -53,6 +53,7 @@ pub const VolumeDescriptor = extern struct {
 };
 
 pub const DirEntry = extern struct {
+    pub const filename_len = 24;
     const volume_table = "VOLUME TABLE            ";
     const directory_table = "DIRECTORY TABLE         ";
     filename: [24]u8,
@@ -68,18 +69,6 @@ pub const DirEntry = extern struct {
     ngroups: u16 align(1),
     last_group: u16 align(1),
     allocations: [32]u16 align(1),
-
-    pub fn translateFilename(basename: []const u8, to_filename: []u8) []u8 {
-        var idx: usize = 0;
-        for (basename) |ch| {
-            if (idx == to_filename.len) break;
-            if (std.ascii.isPrint(ch)) {
-                to_filename[idx] = ch;
-                idx += 1;
-            }
-        }
-        return to_filename[0..idx];
-    }
 
     pub fn init(filename: []const u8, date: [3]u8) DirEntry {
         var result: DirEntry = .{
@@ -113,12 +102,16 @@ pub const DirEntry = extern struct {
         return self.status == 0xff;
     }
 
-    pub fn eql(self: *DirEntry, cooked: *CookedDirEntry) bool {
+    pub fn eql(self: *const DirEntry, cooked: *const CookedDirEntry) bool {
         return std.mem.eql(
             u8,
             std.mem.trimEnd(u8, &cooked.filename, " "),
             std.mem.trimEnd(u8, &self.filename, " "),
         );
+    }
+
+    pub fn lessThan(_: *const DiskImageType, lhs: *const DirEntry, rhs: *const DirEntry) bool {
+        return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
     }
 
     //TODO: Validate!
@@ -145,7 +138,6 @@ pub const DirEntry = extern struct {
                 if (self.read_only == 0x01) 'R' else 'W',
                 if (self.status == 0x01) 'S' else 'L',
             }, // Small vs Large file allocations
-            .block_size = image_type.block_size,
             .allocations = .empty,
             .os = .{
                 .hd_basic = .{
@@ -321,14 +313,18 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             }
         }
     }
-
-    // TODO: Get a sorted set of raw dirs before creating the cooked ones.
     if (option == .full) {
         if (dir.raw_directories.hd_basic.items.len <= 2) {
-            @panic("TODO");
-            //logerr("TODO", .{});
+            log.err("Directory table is missing mandatory 'VOLUME TABLE' and/or 'DIRECTORY TABLE' entries. Cannot load directory.", .{});
+            return error.InvalidDirectoryEntry;
         }
-        for (dir.raw_directories.hd_basic.items[2..]) |entry| {
+
+        var raw_dir_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.hd_basic.items.len);
+        defer raw_dir_sorted.deinit(dir.allocator());
+        // Don't show first 2 entries.
+        dir.rawDirsSorted(DirEntry, dir.raw_directories.hd_basic.items[2..], &raw_dir_sorted);
+        // TODO: Get a sorted set of raw dirs before creating the cooked ones.
+        for (raw_dir_sorted.items) |entry| {
             // TODO: Validate each entry. We need to do it in the non-full case as well to generate the error
             // messages even for raw extract.
             if (entry.isLastEntry()) break;
@@ -524,7 +520,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     // TODO: This is common to all copy routines.
     const basename = std.fs.path.basename(to_filename);
     var conversion_buf: [@typeInfo(@FieldType(DirEntry, "filename")).array.len]u8 = undefined;
-    const filename = DirEntry.translateFilename(basename, &conversion_buf);
+    const filename = translateFilename(basename, &conversion_buf);
 
     if (image.directory.findByFilename(filename, null)) |existing_entry| {
         if (force) {
@@ -758,6 +754,18 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
     for (&dir_table.allocations, dir_alloc..image_type.directory_allocs) |*alloc, idx| {
         alloc.* = @intCast(idx);
     }
+}
+
+pub fn translateFilename(basename: []const u8, to_filename: []u8) []u8 {
+    var idx: usize = 0;
+    for (basename) |ch| {
+        if (idx == to_filename.len) break;
+        if (std.ascii.isPrint(ch)) {
+            to_filename[idx] = ch;
+            idx += 1;
+        }
+    }
+    return to_filename[0..idx];
 }
 
 pub fn fmtDate(date: [3]u8) std.fmt.Alt([3]u8, formatDate) {

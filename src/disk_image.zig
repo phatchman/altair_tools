@@ -406,8 +406,8 @@ pub const DiskImage = struct {
                 raw_dir.validate(self.image_type, @intCast(i)) catch |err| {
                     switch (err) {
                         RawDirError.InvalidUser => {
-                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.raw.user });
-                            raw_dir.raw.user = 0;
+                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.user });
+                            raw_dir.user = 0;
                             continue;
                         },
                         else => {

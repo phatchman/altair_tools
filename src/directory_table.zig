@@ -1,13 +1,4 @@
-//!
-//! List of files / directory entries contained on the disk image.
-//! Contains:
-//! 1) RawDirEntrys that hold a copy of the directory entry structure on the disk image
-//! 2) CookedDirEntrys that provide a simpler interface for interacting with the
-//!    cpm directory table.
-//! 3) The free allocation table.
-//!
-
-const log = @import("disk_image.zig").log;
+const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
@@ -21,7 +12,7 @@ pub const RawDirError = error{
     InvalidDirectoryEntry,
 };
 
-/// An easier to use version of the raw entry.
+/// An abstracted view of the on-disk raw directory entry.
 pub const CookedDirEntry = struct {
     pub const filename_max = 24;
     user: u8,
@@ -53,29 +44,14 @@ pub const CookedDirEntry = struct {
     /// space padded filename and extension.
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [filename_max]u8,
-    block_size: u16,
     has_extension: bool,
 
     pub fn filenameOnlyMaxLen(os: OperatingSystem) u8 {
         return switch (os) {
-            .cdos, .cpm => 8,
-            .ados => 8,
-            .hd_basic => 24,
+            .cdos, .cpm => os_cpm.DirEntry.filename_len,
+            .ados => os_ados.DirEntry.filename_len,
+            .hd_basic => os_hd_basic.DirEntry.filename_len,
         };
-    }
-
-    // TODO: Do we even need to store the os-specific stuff? We could jsut pass it?
-    // Well at least with suize and used? We're storing it twice here.
-    // TODO: And do we still need block_size??
-
-    // TODO: Move this into CPM.
-    pub fn extend(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const os_cpm.DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
-        self.os.cpm.num_records += raw_dir.num_records;
-        const num_allocs = try os_cpm.copyAllocations(self, arena, raw_dir, image_type);
-        self.os.cpm.num_allocs += num_allocs;
-        if (image_type.recs_per_extent > 128 and num_allocs > 4) {
-            self.os.cpm.num_records += 128;
-        }
     }
 
     pub fn filenameAndExtension(self: *const CookedDirEntry) []const u8 {
@@ -93,12 +69,6 @@ pub const CookedDirEntry = struct {
         const pos = std.mem.indexOfScalar(u8, &self.filename, '.') orelse return "";
         return rawSlice(self.filename[pos + 1 ..]);
     }
-
-    // pub fn hasDates(self: *const CookedDirEntry) bool {
-    //     return switch (self.os) {
-    //         inline else => |os| @hasField(os, "creation_date") or @hasField(os, "modification_date"),
-    //     };
-    // }
 
     pub fn createdDate(self: *const CookedDirEntry) ?[3]u8 {
         switch (self.os) {
@@ -135,30 +105,6 @@ pub const CookedDirEntry = struct {
 
 /// Stores and populates the raw and cooked directory entries
 pub const DirectoryTable = struct {
-    const RawDirEntry = union(enum) {
-        cpm: os_cpm.DirEntry,
-        ados: os_ados.DirEntry,
-
-        pub fn isDeleted(self: *const RawDirEntry) bool {
-            switch (self.*) {
-                inline else => |s| return s.isDeleted(),
-            }
-        }
-
-        pub fn isLabel(self: *const RawDirEntry) bool {
-            switch (self.*) {
-                inline .ados => return false,
-                inline .cpm => |s| return s.isLabel(),
-            }
-        }
-
-        pub fn items(self: *const RawDirEntry) void {
-            switch (self.*) {
-                inline else => |s| return s.items,
-            }
-        }
-    };
-
     /// All dynamic allocations should use this allocator.
     arena: std.heap.ArenaAllocator,
 
@@ -246,40 +192,22 @@ pub const DirectoryTable = struct {
 
         // Delete all the raw_entries and write to disk.
         switch (self.raw_directories) {
-            inline else => |raw_dirs| {
+            inline else => |raw_dirs, os| {
                 for (raw_dirs.items, 0..) |*raw_item, idx| {
                     if (!raw_item.isDeleted() and raw_item.eql(cooked_dir)) {
                         raw_item.setDeleted();
                         try disk_image.rawEntryWrite(@intCast(idx));
                         // For altair dos, also need to go through and set all of the file numbers in each
                         // sector, the bytes_written, next_track and next_sector to 0
-                        if (@TypeOf(raw_dirs) == @TypeOf(self.raw_directories.ados)) {
-                            var track_nr: u16 = raw_item.track;
-                            var sector_nr: u16 = raw_item.sector;
-
-                            while (track_nr != 0) {
-                                var sector: DiskSector = .initUnformatted(self.image_type, track_nr);
-                                const location: PhysicalAddress = .{ .track = track_nr, .sector = sector_nr };
-                                disk_image.readSector(location, &sector) catch |err| switch (err) {
-                                    error.InvalidTrack, error.InvalidSector => {
-                                        log.warn("{s} has invalid track or sector links. Erase still suceeded: {t}", .{ raw_item.filename, err });
-                                        break;
-                                    },
-                                    else => return err,
-                                };
-                                track_nr = sector.data.next_track;
-                                sector_nr = sector.data.next_sector;
-                                sector.data.file_nr = 0;
-                                sector.data.nbytes = 0;
-                                sector.data.next_sector = 0;
-                                sector.data.next_track = 0;
-                                try disk_image.writeSector(location, &sector);
-                            }
-                        } else if (@TypeOf(raw_dirs) == @TypeOf(self.raw_directories.hd_basic)) {
-                            // TODO:
-                            try os_hd_basic.writeAllocationBitmap(disk_image);
+                        switch (os) {
+                            .ados => {
+                                try os_ados.clearErasedSectors(disk_image, raw_item);
+                            },
+                            .hd_basic => {
+                                try os_hd_basic.writeAllocationBitmap(disk_image);
+                            },
+                            else => {},
                         }
-
                         return;
                     }
                 }
@@ -290,10 +218,8 @@ pub const DirectoryTable = struct {
     pub fn translateToFilename(os: OperatingSystem, from_filename: []const u8, to_filename: []u8) error{InvalidFilename}![]u8 {
         return switch (os) {
             .cpm, .cdos => os_cpm.translateFilename(from_filename, to_filename),
-            // TODO: is this safe? Not really? FIX FIX FIX
-            .ados => os_ados.translateFilename(from_filename, @ptrCast(to_filename)),
-            // TODO: make consistent. either in DirEntry or root level..
-            .hd_basic => os_hd_basic.DirEntry.translateFilename(from_filename, to_filename),
+            .ados => os_ados.translateFilename(from_filename, to_filename),
+            .hd_basic => os_hd_basic.translateFilename(from_filename, to_filename),
         };
     }
 
@@ -341,6 +267,14 @@ pub const DirectoryTable = struct {
             },
         }
         return count;
+    }
+
+    pub fn rawDirsSorted(self: *const DirectoryTable, DirEntry: type, raw_dirs: []DirEntry, raw_dirs_sorted: *std.ArrayList(*DirEntry)) void {
+        for (raw_dirs) |*raw_dir| {
+            raw_dirs_sorted.appendAssumeCapacity(raw_dir);
+        }
+
+        std.mem.sort(*DirEntry, raw_dirs_sorted.items, self.image_type, DirEntry.lessThan);
     }
 
     pub const DirectoryError = error{
@@ -432,11 +366,13 @@ pub const FileNameIterator = struct {
 };
 
 const std = @import("std");
+
+const os_hd_basic = @import("os_hd_basic.zig");
+const os_cpm = @import("os_cpm.zig");
+const os_ados = @import("os_altair_dos.zig");
+
 const DiskImageType = @import("disk_types.zig").DiskImageType;
 const DiskImage = @import("disk_image.zig").DiskImage;
 const DiskSector = @import("disk_types.zig").DiskSector;
 const OperatingSystem = @import("disk_types.zig").OperatingSystem;
 const PhysicalAddress = @import("disk_types.zig").PhysicalAddress;
-const os_hd_basic = @import("os_hd_basic.zig");
-const os_cpm = @import("os_cpm.zig");
-const os_ados = @import("os_altair_dos.zig");

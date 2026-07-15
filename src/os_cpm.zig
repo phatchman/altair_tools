@@ -318,7 +318,6 @@ pub const DirEntry = extern struct {
                 .num_allocs = 0,
             } },
             .filename = filename,
-            .block_size = image_type.block_size,
             .allocations = .empty,
             .size_in_bytes = undefined,
             .used_in_kbytes = undefined,
@@ -480,6 +479,22 @@ pub const DirEntry = extern struct {
             std.mem.eql(u8, CookedDirEntry.rawSlice(&self.filename), cooked_dir.filenameOnly()) and
             std.mem.eql(u8, CookedDirEntry.rawSlice(&self.filetype), cooked_dir.extensionOnly()));
     }
+
+    pub fn lessThan(img_type: *const DiskImageType, lhs: *DirEntry, rhs: *DirEntry) bool {
+        if (std.mem.eql(u8, &lhs.filename, &rhs.filename)) {
+            if (std.mem.eql(u8, &lhs.filetype, &rhs.filetype)) {
+                if (lhs.user == rhs.user) {
+                    return lhs.extentGet(img_type) < rhs.extentGet(img_type);
+                } else {
+                    return lhs.user < rhs.user;
+                }
+            } else {
+                return std.mem.lessThan(u8, &lhs.filetype, &rhs.filetype);
+            }
+        } else {
+            return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
+        }
+    }
 };
 
 /// Directory entries keep track of a logical address consisting of:
@@ -554,27 +569,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     // building the cooked dirs needs sorted raw_dirs.
     var raw_dirs_sorted: std.ArrayList(*DirEntry) = try .initCapacity(self.allocator(), self.raw_directories.cpm.items.len);
     defer raw_dirs_sorted.deinit(self.allocator());
-    for (self.raw_directories.cpm.items) |*raw_dir| {
-        raw_dirs_sorted.appendAssumeCapacity(raw_dir);
-    }
-
-    std.mem.sort(*DirEntry, raw_dirs_sorted.items, image_type, struct {
-        fn lessThan(img_type: *const DiskImageType, lhs: *DirEntry, rhs: *DirEntry) bool {
-            if (std.mem.eql(u8, &lhs.filename, &rhs.filename)) {
-                if (std.mem.eql(u8, &lhs.filetype, &rhs.filetype)) {
-                    if (lhs.user == rhs.user) {
-                        return lhs.extentGet(img_type) < rhs.extentGet(img_type);
-                    } else {
-                        return lhs.user < rhs.user;
-                    }
-                } else {
-                    return std.mem.lessThan(u8, &lhs.filetype, &rhs.filetype);
-                }
-            } else {
-                return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
-            }
-        }
-    }.lessThan);
+    self.rawDirsSorted(DirEntry, self.raw_directories.cpm.items[0..], &raw_dirs_sorted);
 
     // Create the CookedDirEntries and remove any used allocations from the free alocations set.
     for (raw_dirs_sorted.items, 0..) |dir, i| {
@@ -645,8 +640,17 @@ pub fn buildCookedEntry(self: *DirectoryTable, raw_entry_idx: u16) (error{ OutOf
             logerr("Cannot detect first entry for file {s}.{s}: ", .{ entry.filename, entry.filetype });
             return error.InvalidImageFile;
         }
-        var prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
-        try prev.extend(self.allocator(), entry, self.image_type);
+        const prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
+        try extendCookedEntry(prev, self.allocator(), entry, self.image_type);
+    }
+}
+
+pub fn extendCookedEntry(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
+    self.os.cpm.num_records += raw_dir.num_records;
+    const num_allocs = try copyAllocations(self, arena, raw_dir, image_type);
+    self.os.cpm.num_allocs += num_allocs;
+    if (image_type.recs_per_extent > 128 and num_allocs > 4) {
+        self.os.cpm.num_records += 128;
     }
 }
 
