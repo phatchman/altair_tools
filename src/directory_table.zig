@@ -2,16 +2,6 @@ const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
-/// Validation errors
-pub const RawDirError = error{
-    InvalidUser,
-    InvalidExtent,
-    InvalidRecordNumber,
-    InvalidAllocation,
-    InvalidEntryNumber,
-    InvalidDirectoryEntry,
-};
-
 /// An abstracted view of the on-disk raw directory entry.
 pub const CookedDirEntry = struct {
     pub const filename_max = 24;
@@ -164,8 +154,8 @@ pub const DirectoryTable = struct {
     /// Load the directory table
     pub fn load(self: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryLoadError!void {
         try switch (image.image_type.OS) {
-            .cpm, .cdos => os_cpm.loadDirectory(self, image, option),
-            .ados => os_ados.loadDirectory(self, image, option),
+            .cpm, .cdos => os_cpm.loadDirectory(image, option),
+            .ados => os_ados.loadDirectory(image, option),
             .hd_basic => os_hd_basic.loadDirectory(self.arena.allocator(), self, image, option),
         };
     }
@@ -282,6 +272,16 @@ pub const DirectoryTable = struct {
         OutOfExtents,
         // No more allocations available.
         OutOfAllocs,
+    };
+
+    /// Validation errors
+    pub const RawDirError = error{
+        InvalidUser,
+        InvalidExtent,
+        InvalidRecordNumber,
+        InvalidAllocation,
+        InvalidEntryNumber,
+        InvalidDirectoryEntry,
     };
 };
 

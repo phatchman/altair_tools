@@ -523,15 +523,16 @@ pub fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *
     return alloc_count;
 }
 
-pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: DirectoryTable.LoadOption) DirectoryTable.DirectoryLoadError!void {
-    const image_type = self.image_type;
+pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) DirectoryTable.DirectoryLoadError!void {
+    const dir = &image.directory;
+    const image_type = image.image_type;
     var sector: DiskSector = undefined;
     const directory_sector_count = image_type.directories / image_type.dirs_per_sector;
     var sector_nr: u16 = 0;
 
     // Reserve allocations used for directories
     for (0..image_type.directory_allocs) |i| {
-        self.free_allocations.unset(i);
+        dir.free_allocations.unset(i);
     }
 
     while (sector_nr < directory_sector_count) : ({
@@ -545,13 +546,13 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
         try readSectorLogical(image, logical_address, &sector);
         const entries: []DirEntry = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
 
-        self.raw_directories.cpm.appendSliceAssumeCapacity(entries);
+        dir.raw_directories.cpm.appendSliceAssumeCapacity(entries);
     }
 
     // For CDOS, Check that the number of directories etc is the "default" value for that disk
     // Support for other directories counts is a TODO
-    if (self.image_type.OS == .cdos and self.raw_directories.cpm.items.len > 0 and self.raw_directories.cpm.items[0].isLabel()) {
-        const raw_item = self.raw_directories.cpm.items[0];
+    if (dir.image_type.OS == .cdos and dir.raw_directories.cpm.items.len > 0 and dir.raw_directories.cpm.items[0].isLabel()) {
+        const raw_item = dir.raw_directories.cpm.items[0];
         const expected_num_records: u8 = switch (image_type.type_id.toCDOS()) {
             .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x10,
             .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_SMDSDD => 0x20,
@@ -567,16 +568,16 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     }
 
     // building the cooked dirs needs sorted raw_dirs.
-    var raw_dirs_sorted: std.ArrayList(*DirEntry) = try .initCapacity(self.allocator(), self.raw_directories.cpm.items.len);
-    defer raw_dirs_sorted.deinit(self.allocator());
-    self.rawDirsSorted(DirEntry, self.raw_directories.cpm.items[0..], &raw_dirs_sorted);
+    var raw_dirs_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.cpm.items.len);
+    defer raw_dirs_sorted.deinit(dir.allocator());
+    dir.rawDirsSorted(DirEntry, dir.raw_directories.cpm.items[0..], &raw_dirs_sorted);
 
     // Create the CookedDirEntries and remove any used allocations from the free alocations set.
-    for (raw_dirs_sorted.items, 0..) |dir, i| {
-        if (!dir.isDeleted()) {
-            const entry_nr = (@intFromPtr(dir) - @intFromPtr(&self.raw_directories.cpm.items[0])) / @sizeOf(DirEntry);
+    for (raw_dirs_sorted.items, 0..) |entry, i| {
+        if (!entry.isDeleted()) {
+            const entry_nr = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.cpm.items[0])) / @sizeOf(DirEntry);
             if (option == .full) {
-                buildCookedEntry(self, @intCast(entry_nr)) catch |err|
+                buildCookedEntry(dir, @intCast(entry_nr)) catch |err|
                     switch (err) {
                         error.InvalidUser,
                         error.InvalidExtent,
@@ -587,7 +588,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
                         => {
                             logerr(
                                 "Directory entry {} for \"{s}\" has invalid directory entries and has been hidden. Use --recover to try and recover the image: {t}",
-                                .{ i, std.mem.trimEnd(u8, &dir.filename, " "), err },
+                                .{ i, std.mem.trimEnd(u8, &entry.filename, " "), err },
                             );
                             continue;
                         },
@@ -597,8 +598,8 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
                     };
             }
             // Mark off the used allocations
-            for (0..dir.allocationsCount(image_type)) |alloc_nr| {
-                const alloc = try dir.allocationGet(alloc_nr, image_type);
+            for (0..entry.allocationsCount(image_type)) |alloc_nr| {
+                const alloc = try entry.allocationGet(alloc_nr, image_type);
                 // 0 marks the end of the used allocations in this extent.
                 if (alloc == 0)
                     break;
@@ -608,7 +609,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
                         .{ i, alloc, image_type.total_allocs },
                     );
                 } else {
-                    self.free_allocations.unset(alloc);
+                    dir.free_allocations.unset(alloc);
                 }
             }
         }
@@ -618,7 +619,7 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
     // raw directory entries. Filename searches will need to traverse the whole list.
     // If this starts getting used alot, it would be worth making it a HashArray to give easy lookups, while still
     // keeping the contents stored in a sortable array.
-    std.mem.sort(CookedDirEntry, self.cooked_directories.items, {}, struct {
+    std.mem.sort(CookedDirEntry, dir.cooked_directories.items, {}, struct {
         fn lessThan(_: void, lhs: CookedDirEntry, rhs: CookedDirEntry) bool {
             if (!std.mem.eql(u8, lhs.filenameAndExtension(), rhs.filenameAndExtension())) {
                 return std.mem.lessThan(u8, lhs.filenameAndExtension(), rhs.filenameAndExtension());
@@ -630,27 +631,27 @@ pub fn loadDirectory(self: *DirectoryTable, image: *DiskImage, option: Directory
 
 /// Whenever a new extent is created, register it with the directory
 /// Builds up the associated CookedDirEntry as new RawDirEntries are registered.
-pub fn buildCookedEntry(self: *DirectoryTable, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
-    const entry = &self.raw_directories.cpm.items[raw_entry_idx];
-    try entry.validate(self.image_type, raw_entry_idx);
-    if (entry.isFirstEntryForFile(self.image_type)) {
-        try self.cooked_directories.append(self.allocator(), try entry.cook(self.allocator(), self.image_type));
+pub fn buildCookedEntry(dir: *DirectoryTable, raw_entry_idx: u16) (error{ OutOfMemory, InvalidImageFile } || RawDirError)!void {
+    const entry = &dir.raw_directories.cpm.items[raw_entry_idx];
+    try entry.validate(dir.image_type, raw_entry_idx);
+    if (entry.isFirstEntryForFile(dir.image_type)) {
+        try dir.cooked_directories.append(dir.allocator(), try entry.cook(dir.allocator(), dir.image_type));
     } else {
-        if (self.cooked_directories.items.len == 0) {
+        if (dir.cooked_directories.items.len == 0) {
             logerr("Cannot detect first entry for file {s}.{s}: ", .{ entry.filename, entry.filetype });
             return error.InvalidImageFile;
         }
-        const prev = &self.cooked_directories.items[self.cooked_directories.items.len - 1];
-        try extendCookedEntry(prev, self.allocator(), entry, self.image_type);
+        const prev = &dir.cooked_directories.items[dir.cooked_directories.items.len - 1];
+        try extendCookedEntry(prev, dir.allocator(), entry, dir.image_type);
     }
 }
 
-pub fn extendCookedEntry(self: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
-    self.os.cpm.num_records += raw_dir.num_records;
-    const num_allocs = try copyAllocations(self, arena, raw_dir, image_type);
-    self.os.cpm.num_allocs += num_allocs;
+pub fn extendCookedEntry(dir: *CookedDirEntry, arena: std.mem.Allocator, raw_dir: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!void {
+    dir.os.cpm.num_records += raw_dir.num_records;
+    const num_allocs = try copyAllocations(dir, arena, raw_dir, image_type);
+    dir.os.cpm.num_allocs += num_allocs;
     if (image_type.recs_per_extent > 128 and num_allocs > 4) {
-        self.os.cpm.num_records += 128;
+        dir.os.cpm.num_records += 128;
     }
 }
 
@@ -730,27 +731,27 @@ pub fn translateFilename(filename: []const u8, buffer: []u8) error{InvalidFilena
     }
 }
 
-pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
     const num_records = entry.os.cpm.num_records;
     // Check for empty file.
     if (entry.allocations.items.len == 0) {
         return;
     }
-    const recs_per_sector = (self.image_type.sector_size_data / 128); // Recs always represent 128 bytes
+    const recs_per_sector = (image.image_type.sector_size_data / 128); // Recs always represent 128 bytes
     const num_sectors = (num_records + recs_per_sector - 1) / recs_per_sector;
     var total_rec_nr: u16 = 0;
     for (0..num_sectors) |sec_nr| {
         // This protects against trying to copy files from CDOS.
-        const alloc_idx = total_rec_nr / self.image_type.recs_per_alloc;
+        const alloc_idx = total_rec_nr / image.image_type.recs_per_alloc;
         if (alloc_idx >= entry.allocations.items.len) {
             std.debug.print("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
                 num_records,
                 num_sectors,
                 total_rec_nr,
                 alloc_idx,
-                self.image_type.recs_per_alloc,
+                image.image_type.recs_per_alloc,
                 entry.allocations.items.len,
-                self.image_type.total_allocs,
+                image.image_type.total_allocs,
                 entry.os.cpm.num_records,
             });
             return error.InvalidRecordNumber;
@@ -759,7 +760,7 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
         if (alloc == 0)
             break;
         var sector: DiskSector = undefined;
-        try readSectorLogical(self, .{ .record = @intCast(sec_nr % self.image_type.recs_per_alloc), .allocation = alloc }, &sector);
+        try readSectorLogical(image, .{ .record = @intCast(sec_nr % image.image_type.recs_per_alloc), .allocation = alloc }, &sector);
         // If it is the last sector. then adjust the data length to the 128B record count, rather than just assuming a full sector
         var data_len: usize = if (sec_nr == num_sectors - 1)
             (((num_records - 1) % recs_per_sector) + 1) * 128
@@ -790,21 +791,21 @@ pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer:
     }
 }
 
-pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
+pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
     const cpm_user = user orelse 0;
     const basename = std.fs.path.basename(to_filename);
     var conversion_buf: [CookedDirEntry.filename_max]u8 = undefined;
     const cpm_filename = try translateFilename(basename, &conversion_buf);
-    if (self.directory.findByFilename(cpm_filename, user)) |existing_entry| {
+    if (image.directory.findByFilename(cpm_filename, user)) |existing_entry| {
         if (force) {
-            try self.erase(existing_entry);
+            try image.erase(existing_entry);
         } else {
             return std.Io.File.OpenError.PathAlreadyExists;
         }
     }
 
     var file_buffer: [DiskSector.sector_size_max]u8 = @splat(0xe5);
-    const file_data = file_buffer[0..self.image_type.sector_size_data];
+    const file_data = file_buffer[0..image.image_type.sector_size_data];
 
     var extent_nr: u16 = undefined;
     var alloc_nr: u16 = undefined;
@@ -826,11 +827,11 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
 
     // short circuit handling on zero-length files.
     if (nbytes == 0) {
-        var raw_entry = try rawEntryGetFreeInitialized(&self.directory, &extent_nr);
+        var raw_entry = try rawEntryGetFreeInitialized(&image.directory, &extent_nr);
         raw_entry.filenameAndExtensionSet(cpm_filename);
         raw_entry.user = cpm_user;
-        try rawEntryWrite(self, extent_nr);
-        try buildCookedEntry(&self.directory, extent_nr);
+        try rawEntryWrite(image, extent_nr);
+        try buildCookedEntry(&image.directory, extent_nr);
         return;
     }
 
@@ -838,29 +839,29 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
     while (nbytes != 0) {
         num_records += @intCast((nbytes + 127) / 128);
         // Is this a new extent?
-        if (record_nr % self.image_type.recs_per_extent == 0) {
+        if (record_nr % image.image_type.recs_per_extent == 0) {
             if (record_nr > 0) {
                 // TODO: should this still exists?
-                try buildCookedEntry(&self.directory, extent_nr);
+                try buildCookedEntry(&image.directory, extent_nr);
                 extent_count += 1;
             }
-            dir_entry = try rawEntryGetFreeInitialized(&self.directory, &extent_nr);
+            dir_entry = try rawEntryGetFreeInitialized(&image.directory, &extent_nr);
             dir_entry.filenameAndExtensionSet(cpm_filename);
             dir_entry.user = cpm_user;
             alloc_count = 0;
         }
         // Is this a new allocation?
-        if (record_nr % self.image_type.recs_per_alloc == 0) {
-            alloc_nr = try allocationGetFree(&self.directory);
-            const raw_entry = &self.directory.raw_directories.cpm.items[extent_nr];
-            try raw_entry.allocationSet(alloc_count, alloc_nr, self.image_type);
+        if (record_nr % image.image_type.recs_per_alloc == 0) {
+            alloc_nr = try allocationGetFree(&image.directory);
+            const raw_entry = &image.directory.raw_directories.cpm.items[extent_nr];
+            try raw_entry.allocationSet(alloc_count, alloc_nr, image.image_type);
             alloc_count += 1;
         }
 
         // For formats that support 256 records per extent (actually 255. 0 means no records)
         // The 128th record is represented as extent number + 1 with record_count reset to 0
         // This means odd extent numbers have > 127 records and even ones have <= 127 records.
-        if (self.image_type.recs_per_extent == 256 and
+        if (image.image_type.recs_per_extent == 256 and
             record_nr % 128 == 0 and
             record_nr % 256 != 0)
         {
@@ -870,14 +871,14 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         // Note technically this should take the record number within the allocation.
         // But instead it is being passed the sector number. It's easier to work this method
         // rather than the correct CPM way and gives the same results.
-        const location = toPhysicalAddress(self, .{ .allocation = alloc_nr, .record = @intCast(sector_count % self.image_type.recs_per_extent) });
-        var sector: DiskSector = .initFormatted(self.image_type, location);
+        const location = toPhysicalAddress(image, .{ .allocation = alloc_nr, .record = @intCast(sector_count % image.image_type.recs_per_extent) });
+        var sector: DiskSector = .initFormatted(image.image_type, location);
         @memcpy(sector.dataBytes(), file_data);
-        try self.writeSector(location, &sector);
+        try image.writeSector(location, &sector);
 
         dir_entry.num_records = @intCast((num_records - 1) % 128 + 1);
-        dir_entry.extentCountSet(extent_count, self.image_type);
-        try rawEntryWrite(self, extent_nr);
+        dir_entry.extentCountSet(extent_count, image.image_type);
+        try rawEntryWrite(image, extent_nr);
         @memset(file_data, 0xe5);
         nbytes = try file_reader.readSliceShort(file_data);
         @memset(file_data[nbytes .. (nbytes + 127) / 128 * 128], 0x1a);
@@ -885,11 +886,11 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
         // record_nr always advances by full records to ensure that
         // new directory entries are created and new allocs assigned for short-reads
         // on the last read of the file.
-        record_nr += self.image_type.sector_size_data / 128;
+        record_nr += image.image_type.sector_size_data / 128;
         sector_count += 1;
     }
 
-    try buildCookedEntry(&self.directory, extent_nr);
+    try buildCookedEntry(&image.directory, extent_nr);
 
     // How copying works:
     //
@@ -912,20 +913,20 @@ pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: [
 }
 
 /// Return a free CPM directory entry
-pub fn rawEntryGetFreeInitialized(self: *const DirectoryTable, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
-    for (self.raw_directories.cpm.items, 0..) |*dir, i| {
-        if (dir.isDeleted() and !dir.isLabel()) {
+pub fn rawEntryGetFreeInitialized(dir: *const DirectoryTable, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
+    for (dir.raw_directories.cpm.items, 0..) |*entry, i| {
+        if (entry.isDeleted() and !entry.isLabel()) {
             extent_nr.* = @intCast(i);
-            dir.* = .empty;
-            return dir;
+            entry.* = .empty;
+            return entry;
         }
     }
     return error.OutOfExtents;
 }
 
-pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
-    if (self.free_allocations.findFirstSet()) |free_alloc| {
-        self.free_allocations.unset(free_alloc);
+pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
+    if (dir.free_allocations.findFirstSet()) |free_alloc| {
+        dir.free_allocations.unset(free_alloc);
         return @intCast(free_alloc);
     } else {
         return error.OutOfAllocs;
@@ -933,41 +934,41 @@ pub fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
 }
 
 /// write a CPM diretory entry (RawDirEntry)
-pub fn rawEntryWrite(self: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
+pub fn rawEntryWrite(image: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
     // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.cpm.items[extent_nr].extentGet() });
     // Make sure entry is valid before written.
-    const this_entry = &self.directory.raw_directories.cpm.items[extent_nr];
+    const this_entry = &image.directory.raw_directories.cpm.items[extent_nr];
     if (!this_entry.isDeleted()) {
-        try this_entry.validate(self.image_type, extent_nr);
+        try this_entry.validate(image.image_type, extent_nr);
     }
 
-    const location = toPhysicalAddress(self, .{ .allocation = extent_nr / self.image_type.dirs_per_alloc, .record = @intCast(extent_nr / self.image_type.dirs_per_sector) });
-    var sector: DiskSector = .initFormatted(self.image_type, location);
+    const location = toPhysicalAddress(image, .{ .allocation = extent_nr / image.image_type.dirs_per_alloc, .record = @intCast(extent_nr / image.image_type.dirs_per_sector) });
+    var sector: DiskSector = .initFormatted(image.image_type, location);
 
     // start_index is the index of the directory entry that is at
     // the beginning of this sector
-    const start_index = extent_nr / self.image_type.dirs_per_sector * self.image_type.dirs_per_sector;
+    const start_index = extent_nr / image.image_type.dirs_per_sector * image.image_type.dirs_per_sector;
     // Copy 1 full sector worth of extents/raw entries
-    @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(self.directory.raw_directories.cpm.items[start_index .. start_index + self.image_type.dirs_per_sector]));
-    try self.writeSector(location, &sector);
+    @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(image.directory.raw_directories.cpm.items[start_index .. start_index + image.image_type.dirs_per_sector]));
+    try image.writeSector(location, &sector);
 }
 
-fn toPhysicalAddress(self: *const DiskImage, address: LogicalAddress) PhysicalAddress {
-    const sectors_per_alloc = self.image_type.sectors_per_alloc;
+fn toPhysicalAddress(image: *const DiskImage, address: LogicalAddress) PhysicalAddress {
+    const sectors_per_alloc = image.image_type.sectors_per_alloc;
 
     const absolute_sector = address.allocation * sectors_per_alloc + (address.record % sectors_per_alloc);
-    const track: u16 = self.image_type.reserved_tracks + (absolute_sector / self.image_type.sectors_per_track);
-    const logical_sector = absolute_sector % self.image_type.sectors_per_track;
+    const track: u16 = image.image_type.reserved_tracks + (absolute_sector / image.image_type.sectors_per_track);
+    const logical_sector = absolute_sector % image.image_type.sectors_per_track;
 
     log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
     return PhysicalAddress{ .track = track, .sector = logical_sector };
 }
 
 /// Read a single sector using record, allocation format
-pub fn readSectorLogical(self: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
-    const physical_location = toPhysicalAddress(self, location);
+pub fn readSectorLogical(image: *DiskImage, location: LogicalAddress, sector: *DiskSector) ReadSectorError!void {
+    const physical_location = toPhysicalAddress(image, location);
 
-    try self.readSector(physical_location, sector);
+    try image.readSector(physical_location, sector);
 }
 
 const std = @import("std");
@@ -979,7 +980,7 @@ const directory_table = @import("directory_table.zig");
 
 const DiskImageType = disk_types.DiskImageType;
 const DiskImage = disk_image.DiskImage;
-const RawDirError = directory_table.RawDirError; // TODO: One way or the other in root namespace or in struct namespace.
+const RawDirError = DirectoryTable.RawDirError;
 const WriteSectorError = DiskImage.WriteSectorError;
 const DiskSector = disk_types.DiskSector;
 const CookedDirEntry = directory_table.CookedDirEntry;

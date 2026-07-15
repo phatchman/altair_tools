@@ -1,12 +1,67 @@
-// TODO: There is a 12 group discrepancy between total and free.
-// We should also prob use the allocation map to set the free allocations
-// or at least validate it against the files allocations?
-// TODO: Chwcek of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
-// TODO: Think about with this new structure how to group things e.g. raw dir operations
-// RAW directory listing sohuld prob spit out hte volume label as well.
-// TODO: Show file write / modification times.
+// TODO: Check of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
 
-const log = std.log.scoped(.altair_disk_lib);
+pub const log = std.log.scoped(.altair_disk_lib);
+// Don't log errors during fuzz testing.
+const logerr = if (@import("builtin").fuzz) log.info else log.err;
+
+pub const DiskImageType_HD_BASIC = struct {
+    const skew_table = [48]u16{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    };
+    const directory_page = 192;
+    const allocation_page = 1;
+    const unusable_groups = 4;
+    // These groups at end of disk are never allocated to a file.
+    const never_allocated_groups = 29;
+
+    pub fn init() DiskImageType {
+        var result = DiskImageType{
+            .type_id = .HD_BASIC,
+            .type_name = "HD_BASIC",
+            .description = "MITS 5MB Hark Disk (Altair HD BASIC)",
+            .OS = .hd_basic,
+            .tracks = 406,
+            .reserved_tracks = 4,
+            .sectors_per_track = 48,
+            .sector_size_raw = 256,
+            .sector_size_data = 256,
+            .block_size = 2048,
+            .directories = 512,
+            // TODO: This isn't really the number of directory allocs. It's the number of reserved allocs.
+            .directory_allocs = 56,
+            .image_size = 4988928,
+            .varying_sector_format = true,
+            .skew_table = &skew_table,
+            .detect_fn = isCorrectFormat,
+        };
+        result.init();
+        // We can't really calc this. The disk has space for 33 more
+        // allocations. They are "free" in the bitmap but are never used.
+        result.total_allocs = 2403;
+        return result;
+    }
+
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, file: std.Io.File) bool {
+        // Look for the "VOLUME TABLE" and "DIRECTORY TABLE" directory entries.
+        if (DiskImageType.defaultDetectFn(self, io, file)) {
+            var buf: [1024]u8 = undefined;
+            var reader = file.reader(io, &buf);
+            reader.seekTo(49152) catch return false;
+            if (!std.mem.eql(u8, reader.interface.peek(DirEntry.volume_table.len) catch "", DirEntry.volume_table)) {
+                return false;
+            }
+            reader.seekTo(49280) catch return false;
+            if (!std.mem.eql(u8, reader.interface.peek(DirEntry.directory_table.len) catch "", DirEntry.directory_table)) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+};
 
 pub const VolumeDescriptor = extern struct {
     label: [20]u8,
@@ -89,6 +144,73 @@ pub const DirEntry = extern struct {
         return result;
     }
 
+    pub fn validate(self: *const DirEntry, image_type: *const DiskImageType, entry_nr: u16) DirectoryTable.RawDirError!void {
+        if (!plausibleDate(self.creation_date)) {
+            logerr(
+                "Invalid directory entry: {} [Invalid created date: {x}]",
+                .{ entry_nr, self.creation_date },
+            );
+            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+        }
+        if (!plausibleDate(self.modification_date)) {
+            logerr(
+                "Invalid directory entry: {} [Invalid modified date: {x}]",
+                .{ entry_nr, self.modification_date },
+            );
+            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+        }
+        switch (self.status) {
+            0x00, 0x01, 0x03, 0xff => {},
+            else => {
+                logerr(
+                    "Invalid directory entry: {} [Invalid status: {x}. Must be one of 0x00, 0x01, 0x03 or 0xff]",
+                    .{ entry_nr, self.status },
+                );
+                return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+            },
+        }
+        switch (self.read_only) {
+            0x01, 0x03 => {},
+            else => {
+                logerr(
+                    "Invalid directory entry: {} [Invalid readonly: {x}. Must be one of  0x01 or 0x03]",
+                    .{ entry_nr, self.read_only },
+                );
+                return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+            },
+        }
+        if (self.ngroups > image_type.total_allocs) {
+            logerr(
+                "Invalid directory entry: {} [Invalid number of groups: {d}. Must be between 0 and {d}]",
+                .{ entry_nr, self.ngroups, image_type.total_allocs },
+            );
+            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+        }
+        if (self.last_group > image_type.total_allocs) {
+            logerr(
+                "Invalid directory entry: {} [Invalid last group: {d}. Must be between 0 and {d}]",
+                .{ entry_nr, self.last_group, image_type.total_allocs },
+            );
+            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+        }
+        if (self.npages > image_type.total_allocs * image_type.sectors_per_alloc) {
+            logerr(
+                "Invalid directory entry: {} [Invalid number of pages: {d}. Must be between 0 and {d}]",
+                .{ entry_nr, self.npages, image_type.total_allocs * image_type.sectors_per_alloc },
+            );
+            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+        }
+        for (&self.allocations) |alloc| {
+            if (alloc != 0xffff and alloc > image_type.total_allocs) {
+                logerr(
+                    "Invalid directory entry: {} [Invalid allocation: {d}. Must be between 0 and {d} or {d}]",
+                    .{ entry_nr, alloc, image_type.total_allocs, 0xffff },
+                );
+                return DirectoryTable.RawDirError.InvalidDirectoryEntry;
+            }
+        }
+    }
+
     pub fn isDeleted(self: *const DirEntry) bool {
         return self.status != 0x01 and self.status != 0x3;
     }
@@ -129,7 +251,8 @@ pub const DirEntry = extern struct {
         try writer.print("Allocations      : {any}\n", .{self.allocations});
     }
 
-    pub fn cook(self: *const DirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType) !CookedDirEntry {
+    pub fn cook(self: *const DirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType, entry_nr: u16) !CookedDirEntry {
+        try self.validate(image_type, entry_nr);
         var result: CookedDirEntry = .{
             .user = 0,
             .filename = @splat(' '),
@@ -166,65 +289,9 @@ pub const DirEntry = extern struct {
 comptime {
     std.debug.assert(@sizeOf(VolumeDescriptor) == 256);
     std.debug.assert(@sizeOf(DirEntry) == 128);
+    std.debug.assert(@alignOf(VolumeDescriptor) == 1);
+    std.debug.assert(@alignOf(DirEntry) == 1);
 }
-
-pub const DiskImageType_HD_BASIC = struct {
-    const skew_table = [48]u16{
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-    };
-    const directory_page = 192;
-    const allocation_page = 1;
-    const unusable_groups = 4;
-    // These groups at end of disk are never allocated to a file.
-    const never_allocated_groups = 29;
-
-    pub fn init() DiskImageType {
-        var result = DiskImageType{
-            .type_id = .HD_BASIC,
-            .type_name = "HD_BASIC",
-            .description = "MITS 5MB Hark Disk (Altair HD BASIC)",
-            .OS = .hd_basic,
-            .tracks = 406,
-            .reserved_tracks = 4,
-            .sectors_per_track = 48,
-            .sector_size_raw = 256,
-            .sector_size_data = 256,
-            .block_size = 2048,
-            .directories = 512,
-            // TODO: This isn't really the number of directory allocs. It's the number of reserved allocs.
-            .directory_allocs = 56,
-            .image_size = 4988928,
-            .varying_sector_format = true,
-            .skew_table = &skew_table,
-            .detect_fn = isCorrectFormat,
-        };
-        result.init();
-        // We can't really calc this. The disk has space for 33 more
-        // allocations. They are "free" in the bitmap. They are just never used.
-        result.total_allocs = 2403;
-        return result;
-    }
-
-    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, file: std.Io.File) bool {
-        if (DiskImageType.defaultDetectFn(self, io, file)) {
-            var buf: [1024]u8 = undefined;
-            var reader = file.reader(io, &buf);
-            reader.seekTo(49152) catch return false;
-            if (!std.mem.eql(u8, reader.interface.peek(DirEntry.volume_table.len) catch "", DirEntry.volume_table)) {
-                return false;
-            }
-            reader.seekTo(49280) catch return false;
-            if (!std.mem.eql(u8, reader.interface.peek(DirEntry.directory_table.len) catch "", DirEntry.directory_table)) {
-                return false;
-            }
-            return true;
-        }
-        return false;
-    }
-};
 
 fn unsupported(label: *VolumeDescriptor) void {
     // TODO:
@@ -274,7 +341,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                             const alloc_location = toPhysicalAddress(image.image_type, @intCast(alloc * 8 + offset));
                             var alloc_sector: DiskSector = .initUnformatted(image.image_type, alloc_location.track);
                             try image.readSector(alloc_location, &alloc_sector);
-                            const allocations: []align(1) u16 align(1) = @ptrCast(alloc_sector.dataBytes());
+                            const allocations: []align(1) u16 = @ptrCast(alloc_sector.dataBytes());
                             for (allocations) |ind_alloc| {
                                 if (ind_alloc == 0xffff) break :sub_allocs;
                                 dir.free_allocations.unset(ind_alloc);
@@ -315,7 +382,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
     }
     if (option == .full) {
         if (dir.raw_directories.hd_basic.items.len <= 2) {
-            log.err("Directory table is missing mandatory 'VOLUME TABLE' and/or 'DIRECTORY TABLE' entries. Cannot load directory.", .{});
+            logerr("Directory table is missing mandatory 'VOLUME TABLE' and/or 'DIRECTORY TABLE' entries. Cannot load directory.", .{});
             return error.InvalidDirectoryEntry;
         }
 
@@ -325,13 +392,17 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         dir.rawDirsSorted(DirEntry, dir.raw_directories.hd_basic.items[2..], &raw_dir_sorted);
         // TODO: Get a sorted set of raw dirs before creating the cooked ones.
         for (raw_dir_sorted.items) |entry| {
-            // TODO: Validate each entry. We need to do it in the non-full case as well to generate the error
-            // messages even for raw extract.
             if (entry.isLastEntry()) break;
             if (!entry.isDeleted()) {
-                const cooked: directory_table.CookedDirEntry = try entry.cook(arena, image.image_type);
+                const entry_nr = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.hd_basic.items[0])) / @bitSizeOf(DirEntry);
+                try entry.validate(image.image_type, @intCast(entry_nr));
+                const cooked = try entry.cook(arena, image.image_type, @intCast(entry_nr));
                 dir.cooked_directories.appendAssumeCapacity(cooked);
             }
+        }
+    } else {
+        for (dir.raw_directories.hd_basic.items, 0..) |raw_dir, entry_nr| {
+            raw_dir.validate(image.image_type, @intCast(entry_nr)) catch {};
         }
     }
 }
@@ -360,7 +431,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirE
                 }
                 page_count += 1;
             } else if (entry.attribs[1] == 'L') { // Larger
-                const sub_allocations: []align(1) u16 align(1) = @ptrCast(sector.dataBytes());
+                const sub_allocations: []align(1) u16 = @ptrCast(sector.dataBytes());
                 // Large files use indirect allocations
                 for (sub_allocations) |sub_alloc| {
                     if (sub_alloc == 0xffff) break :copy;
@@ -550,6 +621,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     const cooked: CookedDirEntry = try free_entry.cook(
         image.directory.arena.allocator(),
         image.image_type,
+        entry_nr,
     );
     image.directory.cooked_directories.appendAssumeCapacity(cooked);
     // If everything else succeeds, return any copy error.
@@ -650,24 +722,23 @@ pub fn volumeLabelGet(image: *DiskImage, label: *DiskLabel) !void {
     label.* = .{ .hd_basic = undefined };
     var sector: DiskSector = .initUnformatted(image.image_type, 0);
     const vol = loadVolumeLabel(image, &sector) catch |err| {
-        log.err("Unabled to read volume label: {t}", .{err});
+        logerr("Unabled to read volume label: {t}", .{err});
         return error.LabelNotFound;
     };
     @memcpy(&label.hd_basic.user_label, &vol.label);
     label.hd_basic.created_yymmdd, label.hd_basic.modified_yymmdd = decodeDates(vol.dates_encoded) catch |err| blk: {
-        log.err("Unable to decode dates in volume label: {t}", .{err});
+        logerr("Unable to decode dates in volume label: {t}", .{err});
         break :blk .{ .{ 0, 0, 0 }, .{ 0, 0, 0 } };
     };
 }
 
 // TODO: Be consistent about what namespace the errors live in.
-pub fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || directory_table.RawDirError)!void {
+pub fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || DirectoryTable.RawDirError)!void {
     const image_type = img.image_type;
 
     const this_entry = &img.directory.raw_directories.hd_basic.items[entry_nr];
     if (!this_entry.isDeleted()) {
-        // TODO: Validation
-        //    try this_entry.validate(img.image_type, extent_nr);
+        try this_entry.validate(img.image_type, entry_nr);
     }
     const entry_page = DiskImageType_HD_BASIC.directory_page + entry_nr / image_type.dirs_per_sector;
     const location = toPhysicalAddress(image_type, entry_page);
@@ -796,6 +867,10 @@ fn plausibleDate(date: [3]u8) bool {
     return date[0] < 99 and date[1] <= 12 and date[2] <= 31;
 }
 
+// Some programs write the volume label with pseudo BCD encoding, which interleaves
+// the created and modified dates, while others use raw date formats.
+// Sometimes the date is all 0xff or all 0x00.
+// So just try and make some sensible date out of what we are given.
 fn decodeDates(encoded: [6]u8) !struct { [3]u8, [3]u8 } {
     var created_yymmdd: [3]u8 = undefined;
     var modified_yymmdd: [3]u8 = undefined;
