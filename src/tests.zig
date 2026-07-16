@@ -9,6 +9,7 @@ const RawCpmDirEntry = @import("os_cpm.zig").DirEntry;
 
 comptime {
     _ = @import("disk_image_tests.zig");
+    _ = @import("basic_file_decoder.zig");
 }
 
 test "simple filename" {
