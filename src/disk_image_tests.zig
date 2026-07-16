@@ -385,7 +385,7 @@ test "zero-length file" {
         try std.testing.expectEqual(0, cooked_dir.?.size_in_bytes);
         try std.testing.expectEqual(0, cooked_dir.?.used_in_kbytes);
         // Will throw if it tries to write any bytes to the empty buffer;
-        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Text);
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Auto);
 
         try reinitDiskImage(&disk_image);
         cooked_dir = disk_image.directory.findByFilename("PINBALL", null);
@@ -393,7 +393,7 @@ test "zero-length file" {
         try std.testing.expectEqual(0, cooked_dir.?.size_in_bytes);
         try std.testing.expectEqual(0, cooked_dir.?.used_in_kbytes);
         // Will throw if it tries to write any bytes to the empty buffer;
-        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Text);
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Auto);
     }
 }
 
