@@ -142,20 +142,6 @@ pub const DirEntry = extern struct {
     }
 
     pub fn validate(self: *const DirEntry, image_type: *const DiskImageType, entry_nr: u16) DirectoryTable.RawDirError!void {
-        if (!plausibleDate(self.creation_date)) {
-            logerr(
-                "Invalid directory entry: {} [Invalid created date: {x}]",
-                .{ entry_nr, self.creation_date },
-            );
-            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
-        }
-        if (!plausibleDate(self.modification_date)) {
-            logerr(
-                "Invalid directory entry: {} [Invalid modified date: {x}]",
-                .{ entry_nr, self.modification_date },
-            );
-            return DirectoryTable.RawDirError.InvalidDirectoryEntry;
-        }
         switch (self.status) {
             0x00, 0x01, 0x03, 0xff => {},
             else => {
@@ -321,10 +307,10 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         }
 
         for (dir.raw_directories.hd_basic.items, 0..) |entry, entry_nr| {
-            try entry.validate(image.image_type, entry_nr);
             for (entry.allocations) |alloc| {
                 if (alloc == 0xffff) break;
                 if (!entry.isDeleted()) {
+                    try entry.validate(image.image_type, @intCast(entry_nr));
                     dir.free_allocations.unset(alloc);
                     // Large files use an indirect allocation scheme.
                     if (entry.status == 0x03) { // Large file
@@ -505,7 +491,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
 
         fn initIndirectGroupPages(self: *CopyToImage) !void {
             const location = self.indirect_location.?;
-            for (0..self.img.image_type.sectors_per_track) |offset| {
+            for (0..self.img.image_type.sectors_per_alloc) |offset| {
                 var sector: DiskSector = .initUnformatted(self.img.image_type, location.track);
                 @memset(sector.dataBytes(), 0xff);
                 try self.img.writeSector(.{ .track = location.track, .sector = @intCast(location.sector + offset) }, &sector);
@@ -882,7 +868,12 @@ fn decodeDates(encoded: [6]u8) !struct { [3]u8, [3]u8 } {
         modified_yymmdd[2] = ((encoded[4] -% 0x30) >> 4) * 10 + ((encoded[4] -% 0x30) & 0x0f);
     }
     if (!plausibleDate(created_yymmdd) or !plausibleDate(modified_yymmdd)) {
-        return error.InvalidDate;
+        if (std.mem.allEqual(u8, &encoded, 0xff)) {
+            created_yymmdd = @splat(0);
+            modified_yymmdd = @splat(0);
+        } else {
+            return error.InvalidDate;
+        }
     }
     return .{ created_yymmdd, modified_yymmdd };
 }
