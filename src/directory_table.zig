@@ -1002,7 +1002,7 @@ pub const DirectoryTable = struct {
             return error.OutOfAllocs;
         } else { // Randomn access
             var track: u8 = self.image_type.OS.ados.directory_track - 1;
-            while (track >= self.image_type.reserved_tracks) : (track -= 1) {
+            while (track != 0 and track >= self.image_type.reserved_tracks) : (track -= 1) {
                 for (0..allocs_per_track) |offset| {
                     const alloc = (track - self.image_type.reserved_tracks) * allocs_per_track + offset;
                     if (self.free_allocations.isSet(alloc)) {
