@@ -4,6 +4,8 @@
 //! The file is then read character by character and processed until 0x00 which indicated end of line.
 
 const log = std.log.scoped(.altair_disk_lib);
+// Don't log errors during fuzz testing.
+const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
 pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
     const header = try reader.takeByte();
@@ -226,7 +228,7 @@ pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
 }
 
 fn unhandledToken(token: u8) error{InvalidToken}!void {
-    log.err("Unknown token encountered while decoding BASIC file: {x}", .{token});
+    logerr("Unknown token encountered while decoding BASIC file: {x}", .{token});
     return error.InvalidToken;
 }
 
@@ -326,6 +328,25 @@ test "decoder" {
 
     try decode(&in, &out);
     try std.testing.expectEqualStrings(&output_program, out.buffered());
+}
+
+const crash = @embedFile("crash");
+
+test "fuzz decoder" {
+    try std.testing.fuzz({}, randomData, .{});
+    //    try std.testing.fuzz({}, randomData, .{ .corpus = &.{crash} });
+}
+
+fn randomData(_: void, smith: *std.testing.Smith) !void {
+    var program: [512]u8 = undefined;
+    var out_buf: [512 * 4]u8 = undefined;
+    const len = smith.slice(&program);
+    var reader: std.Io.Reader = .fixed(program[0..len]);
+    var writer: std.Io.Writer = .fixed(&out_buf);
+    decode(&reader, &writer) catch |err| switch (err) {
+        error.WriteFailed, error.ReadFailed => return err,
+        error.EndOfStream, error.InvalidToken, error.InvalidFormat => {},
+    };
 }
 
 // Microsoft Binary Format (MBF) floating point
