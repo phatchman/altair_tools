@@ -140,7 +140,7 @@ pub const DiskImage = struct {
     /// Return disk total capacity
     pub fn capacityTotalInKB(self: *const DiskImage) usize {
         const image_type = self.image_type;
-        return @as(usize, (image_type.total_allocs - image_type.directory_allocs)) * image_type.block_size / 1024;
+        return @as(usize, (image_type.total_allocs - image_type.reserved_allocs)) * image_type.block_size / 1024;
     }
 
     pub const TextMode = enum {
@@ -271,7 +271,7 @@ pub const DiskImage = struct {
         const in_size = try in_file.length(io);
         if (self.image_type.reserved_tracks == 0) {
             logerr("Not a bootable disk", .{});
-            return error.InvalidImagefile;
+            return error.InvalidImageFile;
         }
         // This is safe as only track 0 can have a different sector count.
         const expected_size = self.sectorsForTrack(0) * self.image_type.sectorSizeRawForTrack(0) +

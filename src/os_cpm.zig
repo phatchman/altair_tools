@@ -36,7 +36,7 @@ pub const DiskImageType_MITS_8IN = struct {
             .sector_size_data = sector_data_size,
             .block_size = 2048,
             .directories = 64,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .image_size = 337568,
             .varying_sector_format = true,
             .skew_fn = skew,
@@ -79,7 +79,7 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .sector_size_data = 128,
             .block_size = 4096,
             .directories = 512,
-            .directory_allocs = 4,
+            .reserved_allocs = 4,
             .two_byte_allocs = true,
             .image_size = 8978432,
             .varying_sector_format = true,
@@ -125,7 +125,7 @@ pub const DiskImageType_MITS_5MB_HDD = struct {
             .sector_size_data = 128,
             .block_size = 4096,
             .directories = 256,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .two_byte_allocs = true,
             .image_size = 4988928,
             .varying_sector_format = false,
@@ -153,7 +153,7 @@ pub const DiskImageType_MITS_5MB_HDD_1024 = struct {
 
         result.recs_per_extent = 256;
         result.allocs_per_extent = 8;
-        result.directory_allocs = 8;
+        result.reserved_allocs = 8;
 
         return result;
     }
@@ -181,7 +181,7 @@ pub const DiskImageType_TARBELL_FDD = struct {
             .sector_size_data = 128,
             .block_size = 1024,
             .directories = 64,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .image_size = 256256,
             .varying_sector_format = false,
             .skew_table = &skew_table,
@@ -219,7 +219,7 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
             .sector_size_data = 128,
             .block_size = 4096,
             .directories = 256,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .two_byte_allocs = true,
             .image_size = 1525760,
             .varying_sector_format = false,
@@ -260,7 +260,7 @@ pub const DiskImageType_CPM_MINI = struct {
             .sector_size_data = sector_data_size,
             .block_size = 1024,
             .directories = 32,
-            .directory_allocs = 1,
+            .reserved_allocs = 1,
             .image_size = 76720,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -531,7 +531,7 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
     var sector_nr: u16 = 0;
 
     // Reserve allocations used for directories
-    for (0..image_type.directory_allocs) |i| {
+    for (0..image_type.reserved_allocs) |i| {
         dir.free_allocations.unset(i);
     }
 

@@ -355,8 +355,8 @@ pub const DiskImageType = struct {
     block_size: u16,
     // Maximum number of directory entries
     directories: u16,
-    // How many allocations are reserved for the directory table.
-    directory_allocs: u16,
+    // How many allocations are reserved e.g. for the directory table.
+    reserved_allocs: u16,
     // Are allocation numbers stored as 1 or two bytes in the directory table?
     two_byte_allocs: bool = false,
     // Size of a disk image
@@ -421,7 +421,7 @@ pub const DiskImageType = struct {
         std.debug.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
         std.debug.print("Dirs / Sect   {}\n", .{self.dirs_per_sector});
         std.debug.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
-        std.debug.print("Dir Allocs:   {}\n", .{self.directory_allocs});
+        std.debug.print("Dir Allocs:   {}\n", .{self.reserved_allocs});
         std.debug.print("Num Dirs:     {}\n", .{self.directories});
         std.debug.print("Num Allocs:   {}\n", .{self.total_allocs});
     }
@@ -474,7 +474,7 @@ pub const DiskImageType = struct {
             return 4800512; // There is no real way to calc this. it just is.
         }
         const adjustment: u32 = if (self.type_id == .ADOS_MINI) 2 else 0;
-        return (self.total_allocs - self.directory_allocs - adjustment) * self.block_size;
+        return (self.total_allocs - self.reserved_allocs - adjustment) * self.block_size;
     }
 
     // By default, use the provided skew table, with no other adjustment required.

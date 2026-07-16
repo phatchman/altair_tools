@@ -32,7 +32,7 @@ pub const DiskImageType_ADOS_8IN = struct {
             .sector_size_data = sector_data_size,
             .block_size = 1024,
             .directories = 255, // last entry is always "end of directory"
-            .directory_allocs = 4,
+            .reserved_allocs = 4,
             .image_size = 337568,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -120,7 +120,7 @@ pub const DiskImageType_ADOS_MINI = struct {
             .sector_size_data = sector_data_size,
             .block_size = 1024,
             .directories = 127,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .image_size = 76720,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -167,7 +167,7 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
             .sector_size_data = sector_data_size,
             .block_size = 1024,
             .directories = 127,
-            .directory_allocs = 2,
+            .reserved_allocs = 2,
             .image_size = 76720,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -399,7 +399,7 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
     // Directory is held on track 70 for 8IN and 34 for 5.25IN
     const dir = &image.directory;
     const directory_track = dir.image_type.OS.ados.directory_track;
-    for (0..dir.image_type.directory_allocs) |i| {
+    for (0..dir.image_type.reserved_allocs) |i| {
         // 8 sectors per block (block_size / sector_size_data)
         dir.free_allocations.unset(try toAllocation(dir.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
     }

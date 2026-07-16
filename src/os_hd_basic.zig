@@ -1,5 +1,3 @@
-// TODO: Check of making the arrays []align(1) u16 align(1) fixes the std byteswap issue.
-
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
@@ -30,8 +28,7 @@ pub const DiskImageType_HD_BASIC = struct {
             .sector_size_data = 256,
             .block_size = 2048,
             .directories = 512,
-            // TODO: This isn't really the number of directory allocs. It's the number of reserved allocs.
-            .directory_allocs = 56,
+            .reserved_allocs = 56,
             .image_size = 4988928,
             .varying_sector_format = true,
             .skew_table = &skew_table,
@@ -236,8 +233,6 @@ pub const DirEntry = extern struct {
         return std.mem.lessThan(u8, &lhs.filename, &rhs.filename);
     }
 
-    //TODO: Validate!
-
     pub fn format(self: *const DirEntry, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Filename         : {s}\n", .{self.filename});
         try writer.print("Creation         : {f}\n", .{fmtDate(self.creation_date)});
@@ -293,10 +288,9 @@ comptime {
     std.debug.assert(@alignOf(DirEntry) == 1);
 }
 
-fn unsupported(label: *VolumeDescriptor) void {
-    // TODO:
-    std.debug.print("Unsupported: {f}\n", .{label});
-    @panic("TODO: unsupported");
+fn unsupported(label: *VolumeDescriptor) error{InvalidImageFile}!void {
+    logerr("Unsupported volume label. [Allocation page is {d}, required is 1. Directory page is {d}, required is 192]", .{ label.allocation_pages[0], label.directory_pages[0] });
+    return error.InvalidImageFile;
 }
 
 pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *DiskImage, option: LoadOption) DirectoryTable.DirectoryLoadError!void {
@@ -322,15 +316,12 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             dir_page += 1;
             dir_location = toPhysicalAddress(image.image_type, dir_page);
         }
-        for (0..image.image_type.directory_allocs) |alloc| {
+        for (0..image.image_type.reserved_allocs) |alloc| {
             dir.free_allocations.unset(alloc);
         }
-        //dir.free_allocations.setRangeValue(dir.free_allocations.capacity() - DiskImageType_HD_BASIC.never_allocated_groups, dir.free_allocations.capacity() - 1);
-        // Last sector is used to store a duplicate volume label. TODO: So we assume that
-        // means the last allocation is also unusable? I think it is acutally the last track?
-        //dir.free_allocations.unset(image.image_type.total_allocs - 1);
-        for (dir.raw_directories.hd_basic.items) |entry| {
-            // TODO: validate external data
+
+        for (dir.raw_directories.hd_basic.items, 0..) |entry, entry_nr| {
+            try entry.validate(image.image_type, entry_nr);
             for (entry.allocations) |alloc| {
                 if (alloc == 0xffff) break;
                 if (!entry.isDeleted()) {
@@ -455,7 +446,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirE
 }
 
 pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) !void {
-    _ = text_mode; // Not required.
+    _ = text_mode; // TODO: Incorporate basic decoding.
     const CopyToImage = struct {
         const CopyToImage = @This();
         img: *DiskImage,
@@ -492,7 +483,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
                 return self.newAllocation();
             } else {
                 // groups are u16 = 128 per sector. 8 sectors per group
-                // = 1024 groups per indirect block. TODO: Calc this?
+                // = 1024 groups per indirect block.
                 if (self.indirect_group_idx % 128 == 0 and self.indirect_group_idx != 0) {
                     try self.writeIndirectGroupPage();
                     if (self.indirect_group_idx % 1024 == 0) {
@@ -513,9 +504,8 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         }
 
         fn initIndirectGroupPages(self: *CopyToImage) !void {
-            // TODO: Sectors per alloc
             const location = self.indirect_location.?;
-            for (0..8) |offset| {
+            for (0..self.img.image_type.sectors_per_track) |offset| {
                 var sector: DiskSector = .initUnformatted(self.img.image_type, location.track);
                 @memset(sector.dataBytes(), 0xff);
                 try self.img.writeSector(.{ .track = location.track, .sector = @intCast(location.sector + offset) }, &sector);
@@ -550,7 +540,6 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         // TODO: errorsets.
         pub fn writePage(self: *CopyToImage, data: []const u8) !void {
             if (data.len == 0) return;
-            // TODO: sectors_per_alloc is everythere. just move it to image type so it is a constant.
             const image_type = self.img.image_type;
             const sectors_per_alloc = image_type.sectors_per_alloc;
             const write_page = self.entry.last_group * sectors_per_alloc + (self.entry.npages % sectors_per_alloc);
@@ -686,9 +675,9 @@ pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) vo
         .directory_page_count = image_type.directories / 2, // 2 dirs per page
         .unknown = @splat(0),
         .last_page = @intCast(image_type.tracks * image_type.sectors_per_track - 1),
-        .reserved_groups = image_type.directory_allocs + 1,
+        .reserved_groups = image_type.reserved_allocs + 1,
         .unusable_groups = DiskImageType_HD_BASIC.unusable_groups,
-        .free_groups = @intCast(image_type.total_allocs - image_type.directory_allocs + 32),
+        .free_groups = @intCast(image_type.total_allocs - image_type.reserved_allocs + 32),
         .swap_area = .{ 0xffff, 0xffff },
         .swap_area2 = .{ 0x0000, 0x0000 },
         .unused3 = @splat(0),
@@ -822,7 +811,7 @@ pub fn initDirectoryEntries(image_type: *const DiskImageType, sector: *DiskSecto
         .last_group = dir_alloc + ngroups - 1,
         .allocations = undefined,
     };
-    for (&dir_table.allocations, dir_alloc..image_type.directory_allocs) |*alloc, idx| {
+    for (&dir_table.allocations, dir_alloc..image_type.reserved_allocs) |*alloc, idx| {
         alloc.* = @intCast(idx);
     }
 }
