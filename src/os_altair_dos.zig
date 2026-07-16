@@ -483,8 +483,9 @@ const AdosSequentialFileReader = struct {
     track: u8,
     sector_nr: u8,
     file_no: u8 = 255,
-    sector: *DiskSector, // caller-owned, stable address — also backs interface.buffer
-    err: ?ChainError = null,
+    // backs interface.buffer
+    sector: *DiskSector,
+    err: ?ChainError,
     interface: std.Io.Reader,
 
     pub fn init(image: *DiskImage, entry: *const CookedDirEntry, sector: *DiskSector) AdosSequentialFileReader {
@@ -494,17 +495,16 @@ const AdosSequentialFileReader = struct {
             .track = entry.os.ados.track,
             .sector_nr = entry.os.ados.sector,
             .sector = sector,
+            .err = null,
             .interface = .{
                 .vtable = &.{ .stream = stream },
-                .buffer = sector.dataBytes(), // aliases the caller's sector memory directly
+                .buffer = sector.dataBytes(),
                 .seek = 0,
-                .end = 0, // nothing valid until the first fill
+                .end = 0,
             },
         };
     }
 
-    /// Called only once whatever's currently in [seek, end) is fully drained —
-    /// safe to overwrite `self.sector`'s array in place.
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         _ = w;
         _ = limit;
@@ -515,6 +515,8 @@ const AdosSequentialFileReader = struct {
             self.err = e;
             return error.ReadFailed;
         };
+        //        std.debug.print("{t}: ", .{self.sector.*});
+        //        std.debug.dumpHex(self.sector.rawBytes());
         if (self.file_no == 255) self.file_no = self.sector.data.file_nr;
         if (self.file_no != self.sector.data.file_nr) {
             log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{
@@ -526,13 +528,11 @@ const AdosSequentialFileReader = struct {
         self.track = self.sector.data.next_track;
         self.sector_nr = self.sector.data.next_sector;
 
-        // readSector already wrote the new sector into the memory r.buffer aliases.
         r.seek = 0;
         r.end = self.sector.data.nbytes;
         return 0;
     }
 
-    /// Loads the first sector if needed; does not consume any bytes.
     pub fn isBasicFile(self: *AdosSequentialFileReader) error{ReadFailed}!bool {
         return 0xff == self.interface.peekByte() catch |e| switch (e) {
             error.EndOfStream => return false,
@@ -545,7 +545,7 @@ const AdosSequentialFileReader = struct {
 pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken } || ReadSectorError)!void {
     var track_nr: u8 = entry.os.ados.track;
     var sector_nr: u8 = entry.os.ados.sector;
-    var sector: DiskSector = .initUnformatted(image.image_type, 6); //  // TODO
+    var sector: DiskSector = .initUnformatted(image.image_type, image.image_type.reserved_tracks);
     errdefer out_writer.flush() catch {};
 
     switch (entry.attribs[0]) {
@@ -561,9 +561,21 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
                 }
             }
             if (decode_basic_file) {
-                try basic_file_decoder.decode(&reader.interface, out_writer);
+                basic_file_decoder.decode(&reader.interface, out_writer) catch |err| switch (err) {
+                    error.ReadFailed => return reader.err.?,
+                    error.WriteFailed => return err,
+                    error.EndOfStream => {
+                        logerr("Unexpected end of file while decoding basic file. File may be corrupted.", .{});
+                        return error.InvalidFormat;
+                    },
+                    error.InvalidToken => return err,
+                    error.InvalidFormat => unreachable, // We already check it was a basic file.
+                };
             } else {
-                _ = try reader.interface.streamRemaining(out_writer);
+                _ = reader.interface.streamRemaining(out_writer) catch |err| switch (err) {
+                    error.ReadFailed => return reader.err.?,
+                    error.WriteFailed => return err,
+                };
             }
 
             //     while (track_nr != 0) {

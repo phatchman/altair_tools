@@ -113,7 +113,7 @@ fn clearVariableBytes(in: []u8, image_type: *const DiskImageType) []u8 {
     return in;
 }
 test "disk filled" {
-    //    std.testing.log_level = .info;
+    // std.testing.log_level = .info;
     // Make a file to fill the disk.
     inline for (all_formats) |fmt| {
         const compare_image: ?[]u8 = switch (fmt.type_id) {
@@ -173,8 +173,12 @@ test "disk filled" {
         defer allocator.free(in_file);
         var in_stream: std.Io.Writer = .fixed(in_file);
 
+        // TODO: We should od the same tests before and after the reinit. to make sure both in memory and on-disk are in sync
         // Important to re-init to rebuild the in-memory directory entries from the image.
         try reinitDiskImage(&disk_image);
+        try std.testing.expectEqual(fmt, disk_image.image_type);
+        defer saveImage(test_buffer);
+        defer saveFile(in_file);
 
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqual(0, disk_image.capacityFreeInKB());
