@@ -1,3 +1,5 @@
+// Somehow do something to mark random access files, so that they will get loaded back correctly??
+
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
@@ -787,7 +789,7 @@ pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{Ou
         return error.OutOfAllocs;
     } else { // Randomn access
         var track: u8 = dir.image_type.OS.ados.directory_track - 1;
-        while (track >= dir.image_type.reserved_tracks) : (track -= 1) {
+        while (track != 0 and track >= dir.image_type.reserved_tracks) : (track -= 1) {
             for (0..allocs_per_track) |offset| {
                 const alloc = (track - dir.image_type.reserved_tracks) * allocs_per_track + offset;
                 if (dir.free_allocations.isSet(alloc)) {

@@ -8,6 +8,7 @@
 // Test zero length files for all formats.
 // Merge change to split out fuzz tests into individual tests.
 // TODO: Fuzz test the basic decoder.
+// TODO: Filled random access.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
