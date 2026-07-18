@@ -480,7 +480,7 @@ fn toAllocation(image_type: *const DiskImageType, location: PhysicalAddress) Phy
 /// Used to facilitate the basic_file_decoder taking an input and output stream
 /// without needing to first extra the entire file in memory.
 const SequentialFileReader = struct {
-    pub const SectorReadError = error{InvalidRecordNumber} || ReadSectorError;
+    pub const ReadError = error{InvalidRecordNumber} || ReadSectorError;
 
     image: *DiskImage,
     entry: *const CookedDirEntry,
@@ -489,7 +489,7 @@ const SequentialFileReader = struct {
     file_no: u8 = 255,
     sector: DiskSector,
     pending: []const u8 = &.{},
-    err: ?SectorReadError = null,
+    err: ?ReadError = null,
     interface: std.Io.Reader,
 
     /// Initialize the sequential file reader.
@@ -508,11 +508,9 @@ const SequentialFileReader = struct {
         return self;
     }
 
-    // TODO: This is ugh... fix it .. the while?? the not using dataBytes()
-    /// so so so horrible.
-    fn fillIfEmpty(self: *SequentialFileReader) SectorReadError!void {
+    fn fillIfEmpty(self: *SequentialFileReader) ReadError!void {
         self.err = null;
-        while (self.pending.len == 0 and self.track != 0) {
+        if (self.pending.len == 0 and self.track != 0) {
             try self.image.readSector(.{ .track = self.track, .sector = self.sector_nr }, &self.sector);
             if (self.file_no == 255) self.file_no = self.sector.data.file_nr;
             if (self.file_no != self.sector.data.file_nr) {

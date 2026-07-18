@@ -481,7 +481,6 @@ const ImageFileReader = struct {
         return self.pending.len > 0 and self.pending[0] == 0xff;
     }
 
-    // TODO: errorset
     fn fillIfEmpty(self: *ImageFileReader) ReadSectorError!void {
         self.err = null;
         const sectors_per_alloc = self.image.image_type.sectors_per_alloc;
