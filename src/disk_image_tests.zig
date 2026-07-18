@@ -159,6 +159,7 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
+        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";

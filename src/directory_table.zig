@@ -253,14 +253,6 @@ pub const DirectoryTable = struct {
         return count;
     }
 
-    pub fn rawDirsSorted(self: *const DirectoryTable, DirEntry: type, raw_dirs: []DirEntry, raw_dirs_sorted: *std.ArrayList(*DirEntry)) void {
-        for (raw_dirs) |*raw_dir| {
-            raw_dirs_sorted.appendAssumeCapacity(raw_dir);
-        }
-
-        std.mem.sort(*DirEntry, raw_dirs_sorted.items, self.image_type, DirEntry.lessThan);
-    }
-
     pub const DirectoryError = error{
         // No more directory entries available.
         OutOfExtents,

@@ -363,12 +363,8 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             return error.InvalidDirectoryEntry;
         }
 
-        var raw_dir_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.hd_basic.items.len);
-        defer raw_dir_sorted.deinit(dir.allocator());
-        // Don't show first 2 entries.
-        dir.rawDirsSorted(DirEntry, dir.raw_directories.hd_basic.items[2..], &raw_dir_sorted);
-        // TODO: Get a sorted set of raw dirs before creating the cooked ones.
-        for (raw_dir_sorted.items) |entry| {
+        // Don't show first 2 entries. "VOLUME TABLE" and "DIRECTORY TABLE"
+        for (dir.raw_directories.hd_basic.items[2..]) |*entry| {
             if (entry.isLastEntry()) break;
             if (!entry.isDeleted()) {
                 const entry_nr = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.hd_basic.items[0])) / @bitSizeOf(DirEntry);
@@ -377,6 +373,11 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                 dir.cooked_directories.appendAssumeCapacity(cooked);
             }
         }
+        std.mem.sort(CookedDirEntry, dir.cooked_directories.items, {}, struct {
+            fn lessThan(_: void, lhs: CookedDirEntry, rhs: CookedDirEntry) bool {
+                return std.mem.lessThan(u8, lhs.filenameAndExtension(), rhs.filenameAndExtension());
+            }
+        }.lessThan);
     } else {
         for (dir.raw_directories.hd_basic.items, 0..) |raw_dir, entry_nr| {
             if (!raw_dir.isDeleted())
@@ -386,8 +387,6 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
 }
 
 // TODO: Errorset
-// TODO: hd basic decoding. Maybe we should do that encoing / decoding as a seprate step
-// common  to both?
 const ImageFileReader = struct {
     interface: std.Io.Reader,
     dir_entry: *const CookedDirEntry,
@@ -476,22 +475,25 @@ const ImageFileReader = struct {
 
     /// Loads the first sector if needed; does not consume any bytes.
     pub fn isBasicFile(self: *ImageFileReader) error{ReadFailed}!bool {
-        self.fillIfEmpty() catch |e| {
-            self.err = e;
-            return error.ReadFailed;
-        };
+        try self.fillIfEmpty();
         return self.pending.len > 0 and self.pending[0] == 0xff;
     }
 
-    fn fillIfEmpty(self: *ImageFileReader) ReadSectorError!void {
+    fn fillIfEmpty(self: *ImageFileReader) error{ReadFailed}!void {
         self.err = null;
         const sectors_per_alloc = self.image.image_type.sectors_per_alloc;
         if (self.pending.len == 0 and self.npages < self.dir_entry.os.hd_basic.npages) {
             if (self.data_location.sector % sectors_per_alloc == 0) {
-                const alloc = try self.nextAllocation() orelse return;
+                const alloc = self.nextAllocation() catch |e| {
+                    self.err = e;
+                    return error.ReadFailed;
+                } orelse return;
                 self.data_location = toPhysicalAddress(self.image.image_type, alloc * sectors_per_alloc);
             }
-            try self.image.readSector(self.data_location, &self.data_sector);
+            self.image.readSector(self.data_location, &self.data_sector) catch |e| {
+                self.err = e;
+                return error.ReadFailed;
+            };
             self.npages += 1;
             if (self.npages == self.dir_entry.os.hd_basic.npages) {
                 self.pending = self.data_sector.dataBytes()[0..self.dir_entry.os.hd_basic.nbytes_last_page];
@@ -505,10 +507,7 @@ const ImageFileReader = struct {
 
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *ImageFileReader = @fieldParentPtr("interface", r);
-        self.fillIfEmpty() catch |e| {
-            self.err = e;
-            return error.ReadFailed;
-        };
+        try self.fillIfEmpty();
         if (self.pending.len == 0) return error.EndOfStream;
         const n = limit.minInt(self.pending.len);
         try w.writeAll(self.pending[0..n]);
@@ -550,7 +549,6 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
 }
 
 pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) !void {
-    _ = text_mode; // TODO: Incorporate basic decoding.
     const CopyToImage = struct {
         const CopyToImage = @This();
         img: *DiskImage,
@@ -562,7 +560,6 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
 
         pub fn init(img: *DiskImage, _: *VolumeDescriptor, entry: *DirEntry) CopyToImage {
             return .{
-                //.vol = vol,
                 .img = img,
                 .entry = entry,
                 .indirect_location = null,
@@ -704,13 +701,14 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     free_entry.* = .init(filename, modification_date);
 
     var copy: CopyToImage = .init(image, label, free_entry);
-    const copy_err = copy.copyFile(file_reader);
+    var basic_read_buf: [4096]u8 = undefined;
+    var basic_reader: basic_file_decoder.BasicTextFileReader = .init(file_reader, &basic_read_buf);
+
+    const reader: *std.Io.Reader = if (text_mode == .Text) &basic_reader.interface else file_reader;
+    const copy_err = copy.copyFile(reader);
     try copy.flush();
     try writeAllocationBitmap(image);
     try hd_basic.rawEntryWrite(image, entry_nr);
-    // TODO: Think about allocators.. And should we just pass them everywhere instead of storing them??
-    // well actualyl we should jsut pull the init of the cooked out of the cooked entry itself.
-    // Then this need to pass an allocator goes away.
     const cooked: CookedDirEntry = try free_entry.cook(
         image.directory.arena.allocator(),
         image.image_type,

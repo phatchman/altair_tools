@@ -570,7 +570,10 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
     // building the cooked dirs needs sorted raw_dirs.
     var raw_dirs_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.cpm.items.len);
     defer raw_dirs_sorted.deinit(dir.allocator());
-    dir.rawDirsSorted(DirEntry, dir.raw_directories.cpm.items[0..], &raw_dirs_sorted);
+    for (dir.raw_directories.cpm.items) |*raw_dir| {
+        raw_dirs_sorted.appendAssumeCapacity(raw_dir);
+    }
+    std.mem.sort(*DirEntry, raw_dirs_sorted.items, image.image_type, DirEntry.lessThan);
 
     // Create the CookedDirEntries and remove any used allocations from the free alocations set.
     for (raw_dirs_sorted.items, 0..) |entry, i| {

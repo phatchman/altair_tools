@@ -418,18 +418,16 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
         dir.raw_directories.ados.appendSliceAssumeCapacity(entries);
     }
 
-    var raw_dir_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.ados.items.len);
-    defer raw_dir_sorted.deinit(dir.allocator());
-    dir.rawDirsSorted(DirEntry, dir.raw_directories.ados.items[0..], &raw_dir_sorted);
+    // var raw_dir_sorted: std.ArrayList(*DirEntry) = try .initCapacity(dir.allocator(), dir.raw_directories.ados.items.len);
+    // defer raw_dir_sorted.deinit(dir.allocator());
+    // dir.rawDirsSorted(DirEntry, dir.raw_directories.ados.items[0..], &raw_dir_sorted);
 
     try dir.cooked_directories.ensureTotalCapacity(dir.allocator(), dir.raw_directories.ados.items.len);
-    loop: for (raw_dir_sorted.items) |entry| {
+    loop: for (dir.raw_directories.ados.items) |*entry| {
         switch (entry.filename[0]) {
             0 => continue, // Deleted
-            // TODO: Can we use isLast and isDelted here instead?
             255 => break :loop, // End of Directory
             else => {
-                // TODO: Put the catch back in .. work out the compile error.
                 const raw_entry_idx = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.ados.items[0])) / @sizeOf(DirEntry);
                 dir.cooked_directories.appendAssumeCapacity(entry.cook(image, @intCast(raw_entry_idx)) catch |err| {
                     if (option != .raw_only) {
@@ -508,16 +506,20 @@ const SequentialFileReader = struct {
         return self;
     }
 
-    fn fillIfEmpty(self: *SequentialFileReader) ReadError!void {
+    fn fillIfEmpty(self: *SequentialFileReader) error{ReadFailed}!void {
         self.err = null;
         if (self.pending.len == 0 and self.track != 0) {
-            try self.image.readSector(.{ .track = self.track, .sector = self.sector_nr }, &self.sector);
+            self.image.readSector(.{ .track = self.track, .sector = self.sector_nr }, &self.sector) catch |e| {
+                self.err = e;
+                return error.ReadFailed;
+            };
             if (self.file_no == 255) self.file_no = self.sector.data.file_nr;
             if (self.file_no != self.sector.data.file_nr) {
                 log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{
                     self.entry.filenameAndExtension(), self.track, self.sector_nr, self.file_no, self.sector.data.file_nr,
                 });
-                return error.InvalidRecordNumber;
+                self.err = error.InvalidRecordNumber;
+                return error.ReadFailed;
             }
             self.pending = self.sector.data.data[0..self.sector.data.nbytes];
             self.track = self.sector.data.next_track;
@@ -527,19 +529,14 @@ const SequentialFileReader = struct {
 
     /// Loads the first sector if needed; does not consume any bytes.
     pub fn isBasicFile(self: *SequentialFileReader) error{ReadFailed}!bool {
-        self.fillIfEmpty() catch |e| {
-            self.err = e;
-            return error.ReadFailed;
-        };
+        try self.fillIfEmpty();
         return self.pending.len > 0 and self.pending[0] == 0xff;
     }
 
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *SequentialFileReader = @fieldParentPtr("interface", r);
-        self.fillIfEmpty() catch |e| {
-            self.err = e;
-            return error.ReadFailed;
-        };
+        try self.fillIfEmpty();
+
         if (self.pending.len == 0) return error.EndOfStream;
         const n = limit.minInt(self.pending.len);
         //        std.debug.print("writing n bytes {},  {} remain\n", .{ n, self.pending[n..].len });
@@ -555,7 +552,6 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     var sector_nr: u8 = entry.os.ados.sector;
     errdefer out_writer.flush() catch {};
     var buffer: [max_sector_data_len]u8 = undefined;
-
     switch (entry.attribs[0]) {
         'S' => { // sequential
             var decode_basic_file: bool = false;
@@ -630,41 +626,19 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         }
     }
 
-    // These are used as temporary buffers for converting BASIC files.
-    var conversion_buffer_in: std.Io.Writer.Allocating = .init(image.allocator);
-    defer conversion_buffer_in.deinit();
-    var conversion_buffer_out: std.Io.Writer.Allocating = .init(image.allocator);
-    defer conversion_buffer_out.deinit();
+    var basic_read_buf: [4096]u8 = undefined;
+    var basic_reader: basic_file_decoder.BasicTextFileReader = .init(file_reader, &basic_read_buf);
 
-    if (text_mode == .Text) {
-        // Basic steals the first char from the file, if it is an unencoded ascii file!
-        // It also requires CR/NL line endings.
-        _ = try file_reader.streamRemaining(&conversion_buffer_in.writer);
-        var reader_in: std.Io.Reader = .fixed(conversion_buffer_in.written());
-
-        try conversion_buffer_out.writer.writeByte(' ');
-        while (reader_in.takeDelimiter('\n')) |maybe_slice| {
-            const slice = maybe_slice orelse break;
-            if (slice.len == 0) break;
-            try conversion_buffer_out.writer.writeAll(slice);
-            if (slice[slice.len - 1] == '\r') {
-                try conversion_buffer_out.writer.writeByte('\n');
-            } else {
-                try conversion_buffer_out.writer.writeAll("\r\n");
-            }
-        } else |err| {
-            return err;
-        }
-    }
-    var conversion_reader: std.Io.Reader = .fixed(conversion_buffer_out.written());
-    const reader: *std.Io.Reader = if (text_mode == .Text) &conversion_reader else file_reader;
+    const reader: *std.Io.Reader = if (text_mode == .Text) &basic_reader.interface else file_reader;
     var extent_nr: u16 = undefined;
     const new_entry = try rawEntryGetFreeInitialized(image, &extent_nr);
     @memcpy(&new_entry.filename, &filename_buf);
     new_entry.mode = if (text_mode == .Rand) 0x04 else 0x2; // tODO: enumify?
 
     var file_data: [128]u8 = undefined; // TODO: Hard coded
-    var nbytes = try reader.readSliceShort(&file_data);
+    var nbytes = reader.readSliceShort(&file_data) catch |err| switch (err) {
+        error.ReadFailed => return basic_reader.err orelse err,
+    };
     // Zero length files only get a directory entry and nothing else.
     // TODO: The handlign of cooked dirs here is very fragile. move this into a fucntion and handled cooked dirs outside of it?
     if (nbytes == 0) {
@@ -731,7 +705,9 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             prev_location = location;
             prev_sector = sector;
 
-            nbytes = try reader.readSliceShort(&file_data);
+            nbytes = reader.readSliceShort(&file_data) catch |err| switch (err) {
+                error.ReadFailed => return basic_reader.err orelse err,
+            };
             if (nbytes == 0) break;
         }
         if (nbytes != 0) {

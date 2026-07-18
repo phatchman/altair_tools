@@ -7,6 +7,77 @@ const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
+// Convert ascii basic files into a form that the basic interpreter can read.
+// does not encode into altair / ms basic format. it keeps the file as ascii.
+pub const BasicTextFileReader = struct {
+    const State = enum { start, line, end_line, done };
+    const ReadError = error{ ReadFailed, StreamTooLong };
+
+    source: *std.Io.Reader,
+    state: State = .start,
+    cr_ending: bool = false,
+    pending: []const u8 = &.{},
+    eol_buf: [2]u8 = .{ '\r', '\n' },
+    err: ?ReadError = null,
+    interface: std.Io.Reader,
+
+    pub fn init(source: *std.Io.Reader, buffer: []u8) BasicTextFileReader {
+        return .{
+            .source = source,
+            .interface = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
+        };
+    }
+
+    fn fillIfEmpty(self: *BasicTextFileReader) error{ReadFailed}!void {
+        self.err = null;
+        if (self.pending.len != 0 or self.state == .done) return;
+        switch (self.state) {
+            .start => {
+                // BASIC steals the first char of the file
+                self.pending = " ";
+                self.state = .line;
+            },
+            .line => {
+                const slice = self.source.takeDelimiter('\n') catch |e| {
+                    self.err = e;
+                    return error.ReadFailed;
+                } orelse {
+                    self.state = .done;
+                    return;
+                };
+                if (slice.len == 0) {
+                    self.state = .done;
+                    return;
+                }
+                self.cr_ending = slice[slice.len - 1] == '\r';
+                self.pending = slice;
+                self.state = .end_line;
+            },
+            .end_line => {
+                if (self.cr_ending) {
+                    // add the \n
+                    self.pending = self.eol_buf[1..2];
+                } else {
+                    // add the \r\n
+                    self.pending = self.eol_buf[0..2];
+                }
+                self.state = .line;
+            },
+            .done => unreachable,
+        }
+    }
+
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *BasicTextFileReader = @fieldParentPtr("interface", r);
+        try self.fillIfEmpty();
+        if (self.pending.len == 0) return error.EndOfStream;
+        const n = limit.minInt(self.pending.len);
+        try w.writeAll(self.pending[0..n]);
+        self.pending = self.pending[n..];
+        return n;
+    }
+};
+
 pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
     const header = try reader.takeByte();
     if (header != 0xff) {

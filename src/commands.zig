@@ -499,7 +499,6 @@ pub fn putFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions
 
 /// Copy multiple files to the image
 pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
-    std.debug.print("PFM\n", .{});
     var had_error = false;
     for (options.multiple_files) |filename| {
         _putFile(ctx, disk_image, filename, options) catch |err| {
@@ -517,7 +516,6 @@ pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
 }
 
 pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, options: CommandLineOptions) !void {
-    std.debug.print("PF\n", .{});
     const cpm_user = options.cpm_user orelse 0;
 
     var text_mode: DiskImage.TextMode = .Auto;
@@ -538,7 +536,8 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
     };
     defer in_file.close(ctx.io);
 
-    var file_reader = in_file.reader(ctx.io, &.{});
+    var read_buffer: [4096]u8 = undefined;
+    var file_reader = in_file.reader(ctx.io, &read_buffer);
     // TODO: So everywhere can now assume basename
     const basename = std.fs.path.basename(filename);
     disk_image.copyToImage(&file_reader.interface, basename, cpm_user, options.force, text_mode) catch |err| {
@@ -551,7 +550,10 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
                 printErrorMessage(current_command, .file_copy, .{basename}, err);
                 return error.CommandFailedCanContinue;
             },
-            else => return error.CommandFailed,
+            else => {
+                printErrorMessage(current_command, .file_copy, .{basename}, err);
+                return error.CommandFailed;
+            },
         }
     };
     log.info("Copied file {s}", .{filename});
@@ -559,7 +561,7 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
 
 /// Remove a file from the image
 pub fn eraseFile(_: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
-    const filename = options.multiple_files[0];
+    const filename = std.fs.path.basename(options.multiple_files[0]);
     if (disk_image.directory.findByFilename(filename, options.cpm_user)) |dir_entry| {
         disk_image.erase(dir_entry) catch |err| {
             printErrorMessage(current_command, .file_erase, .{filename}, err);
