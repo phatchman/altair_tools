@@ -4,6 +4,7 @@ pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
+pub const max_sector_data_len = 128;
 // Atair DOS
 pub const DiskImageType_ADOS_8IN = struct {
     // Note that mits skew algorithm requires first sector to be 1, not 0
@@ -475,69 +476,78 @@ fn toAllocation(image_type: *const DiskImageType, location: PhysicalAddress) Phy
     return @as(u16, location.track - image_type.reserved_tracks) * (image_type.sectors_per_track / image_type.sectors_per_alloc) + @as(u16, location.sector / image_type.sectors_per_alloc);
 }
 
-const AdosSequentialFileReader = struct {
-    pub const ChainError = error{InvalidRecordNumber} || ReadSectorError;
+/// Read sequential files via an IO interface.
+/// Used to facilitate the basic_file_decoder taking an input and output stream
+/// without needing to first extra the entire file in memory.
+const SequentialFileReader = struct {
+    pub const SectorReadError = error{InvalidRecordNumber} || ReadSectorError;
 
     image: *DiskImage,
     entry: *const CookedDirEntry,
     track: u8,
     sector_nr: u8,
     file_no: u8 = 255,
-    // backs interface.buffer
-    sector: *DiskSector,
-    err: ?ChainError,
+    sector: DiskSector,
+    pending: []const u8 = &.{},
+    err: ?SectorReadError = null,
     interface: std.Io.Reader,
 
-    pub fn init(image: *DiskImage, entry: *const CookedDirEntry, sector: *DiskSector) AdosSequentialFileReader {
-        return .{
+    /// Initialize the sequential file reader.
+    /// `buffer` must be at least one raw full sector in length.
+    /// Any part of the buffer larger than the sector size is not used.
+    pub fn init(image: *DiskImage, entry: *const CookedDirEntry, buffer: []u8) SequentialFileReader {
+        var self: SequentialFileReader = .{
             .image = image,
             .entry = entry,
             .track = entry.os.ados.track,
             .sector_nr = entry.os.ados.sector,
-            .sector = sector,
-            .err = null,
-            .interface = .{
-                .vtable = &.{ .stream = stream },
-                .buffer = sector.dataBytes(),
-                .seek = 0,
-                .end = 0,
-            },
+            .sector = .initUnformatted(image.image_type, image.image_type.reserved_tracks),
+            .interface = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
         };
+        std.debug.assert(buffer.len >= self.sector.dataBytes().len);
+        return self;
     }
 
-    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-        _ = w;
-        _ = limit;
-        const self: *AdosSequentialFileReader = @fieldParentPtr("interface", r);
-        if (self.track == 0) return error.EndOfStream;
+    // TODO: This is ugh... fix it .. the while?? the not using dataBytes()
+    /// so so so horrible.
+    fn fillIfEmpty(self: *SequentialFileReader) SectorReadError!void {
+        self.err = null;
+        while (self.pending.len == 0 and self.track != 0) {
+            try self.image.readSector(.{ .track = self.track, .sector = self.sector_nr }, &self.sector);
+            if (self.file_no == 255) self.file_no = self.sector.data.file_nr;
+            if (self.file_no != self.sector.data.file_nr) {
+                log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{
+                    self.entry.filenameAndExtension(), self.track, self.sector_nr, self.file_no, self.sector.data.file_nr,
+                });
+                return error.InvalidRecordNumber;
+            }
+            self.pending = self.sector.data.data[0..self.sector.data.nbytes];
+            self.track = self.sector.data.next_track;
+            self.sector_nr = self.sector.data.next_sector;
+        }
+    }
 
-        self.image.readSector(.{ .track = self.track, .sector = self.sector_nr }, self.sector) catch |e| {
+    /// Loads the first sector if needed; does not consume any bytes.
+    pub fn isBasicFile(self: *SequentialFileReader) error{ReadFailed}!bool {
+        self.fillIfEmpty() catch |e| {
             self.err = e;
             return error.ReadFailed;
         };
-        //        std.debug.print("{t}: ", .{self.sector.*});
-        //        std.debug.dumpHex(self.sector.rawBytes());
-        if (self.file_no == 255) self.file_no = self.sector.data.file_nr;
-        if (self.file_no != self.sector.data.file_nr) {
-            log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{
-                self.entry.filenameAndExtension(), self.track, self.sector_nr, self.file_no, self.sector.data.file_nr,
-            });
-            self.err = error.InvalidRecordNumber;
-            return error.ReadFailed;
-        }
-        self.track = self.sector.data.next_track;
-        self.sector_nr = self.sector.data.next_sector;
-
-        r.seek = 0;
-        r.end = self.sector.data.nbytes;
-        return 0;
+        return self.pending.len > 0 and self.pending[0] == 0xff;
     }
 
-    pub fn isBasicFile(self: *AdosSequentialFileReader) error{ReadFailed}!bool {
-        return 0xff == self.interface.peekByte() catch |e| switch (e) {
-            error.EndOfStream => return false,
-            error.ReadFailed => return error.ReadFailed,
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *SequentialFileReader = @fieldParentPtr("interface", r);
+        self.fillIfEmpty() catch |e| {
+            self.err = e;
+            return error.ReadFailed;
         };
+        if (self.pending.len == 0) return error.EndOfStream;
+        const n = limit.minInt(self.pending.len);
+        //        std.debug.print("writing n bytes {},  {} remain\n", .{ n, self.pending[n..].len });
+        try w.writeAll(self.pending[0..n]);
+        self.pending = self.pending[n..];
+        return n;
     }
 };
 
@@ -545,22 +555,23 @@ const AdosSequentialFileReader = struct {
 pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken } || ReadSectorError)!void {
     var track_nr: u8 = entry.os.ados.track;
     var sector_nr: u8 = entry.os.ados.sector;
-    var sector: DiskSector = .initUnformatted(image.image_type, image.image_type.reserved_tracks);
     errdefer out_writer.flush() catch {};
+    var buffer: [max_sector_data_len]u8 = undefined;
 
     switch (entry.attribs[0]) {
         'S' => { // sequential
             var decode_basic_file: bool = false;
-            var reader: AdosSequentialFileReader = .init(image, entry, &sector);
+            var reader: SequentialFileReader = .init(image, entry, &buffer);
             if (text_mode == .Text) {
                 if (try reader.isBasicFile()) {
                     decode_basic_file = true;
                 } else {
-                    log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.data.data[0]});
+                    log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{try reader.interface.peekByte()});
                     return error.InvalidFormat;
                 }
             }
             if (decode_basic_file) {
+                log.info("Converting encoded BASIC file to ASCII", .{});
                 basic_file_decoder.decode(&reader.interface, out_writer) catch |err| switch (err) {
                     error.ReadFailed => return reader.err.?,
                     error.WriteFailed => return err,
@@ -577,43 +588,12 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
                     error.WriteFailed => return err,
                 };
             }
-
-            //     while (track_nr != 0) {
-            //         try image.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector);
-            //         if (file_no == 255) file_no = sector.data.file_nr;
-
-            //         if (file_no == sector.data.file_nr) {
-            //             if (first_sector and text_mode == .Text) {
-            //                 if (sector.data.data[0] == 0xff) { // Indicates a BASIC file.
-            //                     decode_basic_file = true;
-            //                 } else {
-            //                     log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{sector.data.data[0]});
-            //                     return error.InvalidFormat;
-            //                 }
-            //             }
-            //             if (decode_basic_file) {
-            //                 try temp_file.writer.writeAll(sector.data.data[0..sector.data.nbytes]);
-            //             } else {
-            //                 try out_writer.writeAll(sector.data.data[0..sector.data.nbytes]);
-            //             }
-            //             first_sector = false;
-            //         } else {
-            //             log.err("File {s} has corruption in the sector chain on track {}, sector {}. Expected file number {} found {}", .{ entry.filenameAndExtension(), track_nr, sector_nr, file_no, sector.data.file_nr });
-            //             return error.InvalidRecordNumber;
-            //         }
-            //         track_nr = sector.data.next_track;
-            //         sector_nr = sector.data.next_sector;
-            //     }
-            //     if (decode_basic_file) {
-            //         var reader: std.Io.Reader = .fixed(temp_file.written());
-            //         try basic_file_decoder.decode(&reader, out_writer);
-            //     }
-            //     try out_writer.flush();
         },
         'R' => { // Random access file
             // The first 256 bytes are the group and track number encoded as
             // 2 bits group and 6 bits track nr - 6. i.e. 0 = track 6.
             // The first sector's `nbytes` holds the number of groups.
+            var sector: DiskSector = .initUnformatted(image.image_type, track_nr);
             var group_map: [256]u8 = undefined;
             try image.readSector(.{ .track = track_nr, .sector = sector_nr }, &sector);
             const group_count = sector.data.nbytes;
@@ -769,7 +749,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         sector.data.next_track = @intCast(group_map_location.track);
         sector.data.next_sector = @intCast(group_map_location.sector + 1);
         @memcpy(sector.dataBytes(), group_map[0..128]);
-        std.debug.print("writing to {} with nbytes = {}\n", .{ group_map_location, sector.data.nbytes });
+        //        std.debug.print("writing to {} with nbytes = {}\n", .{ group_map_location, sector.data.nbytes });
         try image.writeSector(group_map_location, &sector);
         group_map_location.sector += 1;
         sector = .initFormatted(image.image_type, group_map_location);

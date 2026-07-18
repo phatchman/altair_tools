@@ -379,7 +379,8 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         }
     } else {
         for (dir.raw_directories.hd_basic.items, 0..) |raw_dir, entry_nr| {
-            raw_dir.validate(image.image_type, @intCast(entry_nr)) catch {};
+            if (!raw_dir.isDeleted())
+                raw_dir.validate(image.image_type, @intCast(entry_nr)) catch {};
         }
     }
 }
@@ -387,47 +388,163 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
 // TODO: Errorset
 // TODO: hd basic decoding. Maybe we should do that encoing / decoding as a seprate step
 // common  to both?
+const ImageFileReader = struct {
+    interface: std.Io.Reader,
+    dir_entry: *const CookedDirEntry,
+    image: *DiskImage,
+    data_sector: DiskSector,
+    /// For Large files, hold the current sector holding indirect allocs
+    index_sector: DiskSector,
 
-pub fn copyFromImage(image: *DiskImage, entry: *const directory_table.CookedDirEntry, out_writer: *std.Io.Writer, _: DiskImage.TextMode) !void {
-    const sectors_per_alloc = image.image_type.sectors_per_alloc; // 8
-    var page_count: usize = 0;
-    copy: for (entry.allocations.items) |alloc| {
-        if (alloc == 0xffff) break :copy;
+    data_location: PhysicalAddress,
 
-        const start_page = alloc * sectors_per_alloc;
-        for (0..sectors_per_alloc) |offset| {
-            const location = toPhysicalAddress(image.image_type, @intCast(start_page + offset));
-            var sector: DiskSector = .initUnformatted(image.image_type, location.track);
-            try image.readSector(location, &sector);
-            if (entry.attribs[1] == 'S') { // Small
-                if (page_count + 1 == entry.os.hd_basic.npages) {
-                    try out_writer.writeAll(sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
-                    break :copy;
-                } else {
-                    try out_writer.writeAll(sector.dataBytes());
+    // Index into dir_entry.allocations.
+    // Holds block index for small files and indirect block index for large files
+    dir_alloc_idx: usize,
+    // Index into the indirect index block for sub-allocs.
+    sub_alloc_idx: usize,
+    // The current sector within the current indirect allocation block.
+    sub_alloc_sector_idx: usize,
+    // Number of data pages read
+    npages: u16,
+
+    pending: []const u8 = &.{},
+
+    err: ?ReadSectorError = null,
+
+    // Buffer must be 1 sector in size.
+    pub fn init(image: *DiskImage, dir_entry: *const CookedDirEntry, buffer: []u8) ImageFileReader {
+        std.debug.assert(buffer.len >= image.image_type.sector_size_data);
+        return .{
+            .dir_entry = dir_entry,
+            .image = image,
+            .index_sector = undefined,
+            .data_sector = .initUnformatted(image.image_type, image.image_type.reserved_tracks),
+            .data_location = .{ .track = 0, .sector = 0 },
+            .dir_alloc_idx = 0,
+            .sub_alloc_idx = 0,
+            .sub_alloc_sector_idx = 0,
+            .npages = 0,
+
+            .interface = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
+        };
+    }
+
+    // TODO: Error set
+    pub fn nextAllocation(self: *ImageFileReader) ReadSectorError!?u16 {
+        const image_type = self.image.image_type;
+        if (self.dir_alloc_idx == self.dir_entry.allocations.items.len) return null;
+
+        const dir_alloc = self.dir_entry.allocations.items[self.dir_alloc_idx];
+        switch (self.dir_entry.attribs[1]) {
+            'S' => {
+                self.dir_alloc_idx += 1;
+                return dir_alloc;
+            },
+            'L' => {
+                // groups are u16 = 128 per sector. 8 sectors per group
+                // = 1024 groups per indirect block.
+                if (self.sub_alloc_idx % 128 == 0) {
+                    // Load a new indirect block
+                    const indirect_location = toPhysicalAddress(image_type, @intCast(dir_alloc * image_type.sectors_per_alloc + self.sub_alloc_sector_idx));
+                    self.index_sector = .initUnformatted(image_type, indirect_location.track);
+                    try self.image.readSector(indirect_location, &self.index_sector);
                 }
-                page_count += 1;
-            } else if (entry.attribs[1] == 'L') { // Larger
-                const sub_allocations: []align(1) u16 = @ptrCast(sector.dataBytes());
+                const sub_allocations: []align(1) u16 = @ptrCast(self.index_sector.dataBytes());
                 // Large files use indirect allocations
-                for (sub_allocations) |sub_alloc| {
-                    if (sub_alloc == 0xffff) break :copy;
-                    for (0..sectors_per_alloc) |sub| {
-                        const sub_location = toPhysicalAddress(image.image_type, @intCast(sub_alloc * sectors_per_alloc + sub));
-                        var sub_sector: DiskSector = .initUnformatted(image.image_type, sub_location.track);
-                        try image.readSector(sub_location, &sub_sector);
-                        if (page_count == entry.os.hd_basic.npages) {
-                            try out_writer.writeAll(sub_sector.dataBytes()[0..entry.os.hd_basic.nbytes_last_page]);
-                            break :copy;
-                        } else {
-                            try out_writer.writeAll(sub_sector.dataBytes());
-                        }
-                        page_count += 1;
-                    }
+                const sub_alloc = sub_allocations[self.sub_alloc_idx % 128];
+                self.sub_alloc_idx += 1;
+
+                if (self.sub_alloc_idx == 1024) {
+                    self.sub_alloc_idx = 0;
+                    self.sub_alloc_sector_idx = 0;
+                    self.dir_alloc_idx += 1;
+                } else if (self.sub_alloc_idx % 128 == 0) {
+                    self.sub_alloc_sector_idx += 1;
                 }
-            }
+                if (sub_alloc == 0xffff) {
+                    return null;
+                } else {
+                    return sub_alloc;
+                }
+            },
+            else => unreachable,
         }
-        if (alloc == entry.os.hd_basic.last_group) break :copy;
+    }
+
+    /// Loads the first sector if needed; does not consume any bytes.
+    pub fn isBasicFile(self: *ImageFileReader) error{ReadFailed}!bool {
+        self.fillIfEmpty() catch |e| {
+            self.err = e;
+            return error.ReadFailed;
+        };
+        return self.pending.len > 0 and self.pending[0] == 0xff;
+    }
+
+    // TODO: errorset
+    fn fillIfEmpty(self: *ImageFileReader) ReadSectorError!void {
+        self.err = null;
+        const sectors_per_alloc = self.image.image_type.sectors_per_alloc;
+        if (self.pending.len == 0 and self.npages < self.dir_entry.os.hd_basic.npages) {
+            if (self.data_location.sector % sectors_per_alloc == 0) {
+                const alloc = try self.nextAllocation() orelse return;
+                self.data_location = toPhysicalAddress(self.image.image_type, alloc * sectors_per_alloc);
+            }
+            try self.image.readSector(self.data_location, &self.data_sector);
+            self.npages += 1;
+            if (self.npages == self.dir_entry.os.hd_basic.npages) {
+                self.pending = self.data_sector.dataBytes()[0..self.dir_entry.os.hd_basic.nbytes_last_page];
+            } else {
+                self.pending = self.data_sector.dataBytes();
+            }
+            // Sectors in a block are always consecutive
+            self.data_location.sector += 1;
+        }
+    }
+
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *ImageFileReader = @fieldParentPtr("interface", r);
+        self.fillIfEmpty() catch |e| {
+            self.err = e;
+            return error.ReadFailed;
+        };
+        if (self.pending.len == 0) return error.EndOfStream;
+        const n = limit.minInt(self.pending.len);
+        try w.writeAll(self.pending[0..n]);
+        self.pending = self.pending[n..];
+        return n;
+    }
+};
+
+pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: DiskImage.TextMode) !void {
+    var buffer: [256]u8 = undefined;
+    var decode_basic_file: bool = false;
+    var reader: ImageFileReader = .init(image, entry, &buffer);
+    if (text_mode == .Text) {
+        if (try reader.isBasicFile()) {
+            decode_basic_file = true;
+        } else {
+            log.err("Not an encoded Altair BASIC file. First byte should be 0xff, is 0x{x:02}.", .{try reader.interface.peekByte()});
+            return error.InvalidFormat;
+        }
+    }
+    if (decode_basic_file) {
+        log.info("Converting encoded BASIC file to ASCII", .{});
+        basic_file_decoder.decode(&reader.interface, out_writer) catch |err| switch (err) {
+            error.ReadFailed => return reader.err.?,
+            error.WriteFailed => return err,
+            error.EndOfStream => {
+                logerr("Unexpected end of file while decoding basic file. File may be corrupted.", .{});
+                return error.InvalidFormat;
+            },
+            error.InvalidToken => return err,
+            error.InvalidFormat => unreachable, // We already check it was a basic file.
+        };
+    } else {
+        _ = reader.interface.streamRemaining(out_writer) catch |err| switch (err) {
+            error.ReadFailed => return reader.err.?,
+            error.WriteFailed => return err,
+        };
     }
 }
 
@@ -912,3 +1029,5 @@ const DiskImage = @import("disk_image.zig").DiskImage;
 const PhysicalAddress = disk_types.PhysicalAddress;
 const DiskLabel = disk_types.DiskLabel;
 const CookedDirEntry = directory_table.CookedDirEntry;
+const ReadSectorError = DiskImage.ReadSectorError;
+const basic_file_decoder = @import("basic_file_decoder.zig");
