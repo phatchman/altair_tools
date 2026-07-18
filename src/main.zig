@@ -378,7 +378,7 @@ pub fn validateOptions() !bool {
     }
 
     var stderr = std.Io.File.stderr().writer(init.io, &.{});
-    var p: cli.Printer = .init(&stderr);
+    var p: Printer = .init(&stderr);
     defer p.flush();
 
     if (option_count > 1) {
@@ -504,3 +504,8 @@ const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const ImageType = @import("disk_types.zig").DiskImageTypes;
 const windows_globbing = @import("windows_globbing.zig");
+// Workaround for cli lib not exporting "Printer" as public.
+const Printer = blk: {
+    const ti = @typeInfo(@TypeOf(cli.printError));
+    break :blk @typeInfo(ti.@"fn".params[0].type.?).pointer.child;
+};
