@@ -1,5 +1,3 @@
-// TODO: Add the trnalsated file info message to all of the translation routines.
-
 const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
@@ -134,12 +132,6 @@ pub const DirectoryTable = struct {
             .image_type = image_type,
         };
     }
-
-    // TODO: Issue is that track 0 is not usable on mini disk data disks. so total allocs it 2 less,
-    // but really we want to pretend those are available because otherwise we'd have to do special
-    // indexing into the disk.
-    // So we can mark alloc 0 and 1 as used on directory load. but then we need to work out a
-    // fix for the max file size calc.
 
     pub fn deinit(self: *DirectoryTable) void {
         self.arena.deinit();

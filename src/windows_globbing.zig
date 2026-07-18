@@ -5,7 +5,6 @@
 // Note: Caller must free any strings added to `out_paths`
 pub fn glob(io: std.Io, gpa: std.mem.Allocator, pattern: []const u8, out_paths: *std.ArrayList([]const u8)) (std.Io.Dir.OpenError || error{OutOfMemory})!void {
     const basename = std.fs.path.basename(pattern);
-    std.debug.print("basename = {s}\n", .{basename});
     const dirname = std.fs.path.dirname(pattern) orelse "";
     // Check if any globbing is required.
     if (std.mem.findAny(u8, basename, "*?") == null) {

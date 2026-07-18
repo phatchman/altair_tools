@@ -2,8 +2,6 @@
 //! The DiskImage class is used to open and manipulate
 //! altair disk image formats.
 
-// TODO: Get rid of the logical read and just have a function to do the conversion to track sector like everywher eelse
-
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 // Display raw disk sectors in hex as they are read.
 const DUMP = false;
@@ -160,7 +158,6 @@ pub const DiskImage = struct {
     /// copy a file from the image
     /// Expects a buffered out_writer.
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
-        // TODO: Can't do this yet as some tests end up using zero-length fixed readers.
         //std.debug.assert(out_writer.buffer.len > 0); // Buffered writer required.
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyFromImage(self, entry, out_writer, text_mode),
@@ -235,7 +232,6 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyToImage(self, file_reader, to_filename, user, force),
             .ados => os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
-            // TODO: TextMode not actuially required for hd basic? Yes it is for the basic decoder.
             .hd_basic => os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode),
         };
     }
@@ -295,9 +291,12 @@ pub const DiskImage = struct {
             try self.writer.interface().writeAll(buf[0..nbytes]);
         }
 
+        if (self.image_type.OS == .hd_basic) {
+            var first_sector: DiskSector = .initUnformatted(self.image_type, 0);
+            try self.readSector(.{ .track = 0, .sector = 0 }, &first_sector);
+            try self.writeSector(.{ .track = self.image_type.tracks - 1, .sector = self.image_type.sectors_per_track - 1 }, &first_sector);
+        }
         try self.writer.seekTo(0);
-
-        // TODO: hd_basic needs to copy the volume label from the imported disk to the last sector.
     }
 
     pub fn formatImage(self: *DiskImage) !void {
@@ -373,7 +372,6 @@ pub const DiskImage = struct {
                 try os_cpm.rawEntryWrite(self, 0);
             },
             .hd_basic => {
-                // TODO: Pass it as the hd_basic version instead?
                 try os_hd_basic.volumeLabelSet(self, label);
             },
             .cpm, .ados => return error.LabelingNotSupported,
@@ -399,55 +397,52 @@ pub const DiskImage = struct {
 
     /// Try and recover an image with invalid directory entries
     pub fn tryRecovery(self: *DiskImage) !void {
-        // TODO: Recovery needs to be OS-specific. At least restricted just to CPM for now.
-        // Or some generic method like
         try self.loadDirectories(.raw_only);
-        for (self.directory.raw_directories.cpm.items, 0..) |*raw_dir, i| {
-            var saveable = true;
-            var valid = false;
-            var delete_related = false;
-            while (saveable and !valid) {
-                raw_dir.validate(self.image_type, @intCast(i)) catch |err| {
-                    switch (err) {
-                        RawDirError.InvalidUser => {
-                            log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.user });
-                            raw_dir.user = 0;
-                            continue;
-                        },
-                        else => {
-                            saveable = false;
-                            continue;
-                        },
+        switch (self.directory.raw_directories) {
+            inline else => |raw_direcories, os| {
+                for (raw_direcories.items, 0..) |*raw_dir, i| {
+                    var saveable = false;
+                    var valid = false;
+                    var delete_related = false;
+                    while (saveable and !valid) {
+                        raw_dir.validate(self.image_type, @intCast(i)) catch |err| {
+                            if (os == .cpm) switch (err) {
+                                error.InvalidUser => {
+                                    log.info("Error with directory entry {}: User was {}, setting to 0", .{ i, raw_dir.user });
+                                    raw_dir.user = 0;
+                                    saveable = true;
+                                    continue;
+                                },
+                                else => {
+                                    saveable = false;
+                                    continue;
+                                },
+                            };
+                        };
+                        valid = true;
                     }
-                };
-                valid = true;
-            }
-            if (valid and delete_related) {
-                if (raw_dir.isFirstEntryForFile(self.image_type)) {
-                    delete_related = false;
-                }
-            }
-            if (!valid or delete_related) {
-                if (!delete_related) {
-                    log.info("Error with directory entry {}: Deleting entry", .{i});
-                } else {
-                    log.info("Error with directory entry {}: Deleting related entry", .{i});
-                }
+                    if (os == .cpm and valid and delete_related) {
+                        if (raw_dir.isFirstEntryForFile(self.image_type)) {
+                            delete_related = false;
+                        }
+                    }
+                    if (!valid or delete_related) {
+                        if (!delete_related) {
+                            log.info("Error with directory entry {}: Deleting entry", .{i});
+                        } else {
+                            log.info("Error with directory entry {}: Deleting related entry", .{i});
+                        }
 
-                delete_related = true;
-                raw_dir.setDeleted();
-            }
-            try os_cpm.rawEntryWrite(self, @intCast(i));
+                        delete_related = true;
+                        raw_dir.setDeleted();
+                    }
+                    try self.rawEntryWrite(@intCast(i));
+                }
+            },
         }
     }
 
-    // TODO: Comment is out of date. fix fix
-    /// Convert between logical (allocation, record) to physical (track, sector) address.
-    // This really should take record number but uses sector number instead. i.e for 512k
-    // sectors it passes 0, 1, 2. Not 0, 4, 8 when there are 4 records per sector.
-    // Everything works 100% fine with sectors, so I'm not inclined to change it.
-    // TODO: This now represents either the unskewed track / sector or the physical track / sector.
-    // Read a single sector using unskewed track and sector
+    // Read a single sector using the unskewed track and sector
     pub const ReadSectorError = Io.Reader.Error || Io.File.Reader.SeekError || PhysicalAddress.ValidateError;
     pub fn readSector(self: *DiskImage, location: PhysicalAddress, sector: *DiskSector) ReadSectorError!void {
         try location.validate(self.image_type);

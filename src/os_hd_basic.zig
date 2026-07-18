@@ -352,7 +352,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                         .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
                     );
                 }
-                to_shift = to_shift >> 1;
+                to_shift >>= 1;
                 alloc_nr += 1;
             }
         }
@@ -396,6 +396,7 @@ const ImageFileReader = struct {
     /// For Large files, hold the current sector holding indirect allocs
     index_sector: DiskSector,
 
+    // The next data sector to be read.
     data_location: PhysicalAddress,
 
     // Index into dir_entry.allocations.
@@ -408,6 +409,7 @@ const ImageFileReader = struct {
     // Number of data pages read
     npages: u16,
 
+    // Number of read in bytes that have not yet been streamed out.
     pending: []const u8 = &.{},
 
     err: ?ReadSectorError = null,

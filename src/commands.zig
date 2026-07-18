@@ -499,6 +499,7 @@ pub fn putFile(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions
 
 /// Copy multiple files to the image
 pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
+    std.debug.print("PFM\n", .{});
     var had_error = false;
     for (options.multiple_files) |filename| {
         _putFile(ctx, disk_image, filename, options) catch |err| {
@@ -516,6 +517,7 @@ pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
 }
 
 pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, options: CommandLineOptions) !void {
+    std.debug.print("PF\n", .{});
     const cpm_user = options.cpm_user orelse 0;
 
     var text_mode: DiskImage.TextMode = .Auto;
