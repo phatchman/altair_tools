@@ -353,7 +353,7 @@ pub fn validateOptions() !bool {
             var new: std.ArrayList([]const u8) = .empty;
             errdefer new.deinit(init.gpa);
             for (current) |pattern| {
-                try windows_globbing.glob(init.io, init.gpa, pattern, &new);
+                try host_os.windows.glob(init.io, init.gpa, pattern, &new);
                 init.gpa.free(pattern);
             }
             init.gpa.free(options.multiple_files);
@@ -503,7 +503,7 @@ const Commands = @import("commands.zig");
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const ImageType = @import("disk_types.zig").DiskImageTypes;
-const windows_globbing = @import("windows_globbing.zig");
+const host_os = @import("host_os.zig");
 // Workaround for cli lib not exporting "Printer" as public.
 const Printer = blk: {
     const ti = @typeInfo(@TypeOf(cli.printError));

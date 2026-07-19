@@ -451,8 +451,9 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
         std.fmt.bufPrint(&filename_buf, "{s}_{d}", .{ dir_entry.filenameAndExtension(), dir_entry.user }) catch unreachable
     else
         std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()}) catch unreachable;
+    var safe_buf: [std.fs.max_name_bytes]u8 = undefined;
 
-    var out_file = cwd.createFile(ctx.io, out_filename, .{ .read = false, .exclusive = !options.force }) catch |err| {
+    var out_file = cwd.createFile(ctx.io, host_os.safeHostFilename(out_filename, &safe_buf) catch unreachable, .{ .read = false, .exclusive = !options.force }) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
                 printErrorMessage(current_command, .file_exists, .{out_filename}, err);
@@ -987,3 +988,4 @@ const DirectoryError = DirectoryTable.DirectoryError;
 const CommandLineOptions = @import("main.zig").CommandLineOptions;
 const Console = @import("console.zig");
 const hd_basic = @import("os_hd_basic.zig");
+const host_os = @import("host_os.zig");

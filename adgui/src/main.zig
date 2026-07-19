@@ -2351,7 +2351,21 @@ fn infoButtonHandler() !void {
                         )));
                     },
                     .cpm, .ados => {},
-                    .hd_basic => @panic("TODO"),
+                    .hd_basic => {
+                        var label: ad.DiskLabel = undefined;
+                        try commands.labelGet(&label);
+                        try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {s}", .{ "Label", label.hd_basic.user_label })));
+                        try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(
+                            arena,
+                            "{s:<12}: {d:02}/{d:02}/{d:02} (mm/dd/yy)",
+                            .{ "Created", label.hd_basic.created_yymmdd[1], label.hd_basic.created_yymmdd[2], label.hd_basic.created_yymmdd[0] },
+                        )));
+                        try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(
+                            arena,
+                            "{s:<12}: {d:02}/{d:02}/{d:02} (mm/dd/yy)",
+                            .{ "Modified", label.hd_basic.modified_yymmdd[1], label.hd_basic.modified_yymmdd[2], label.hd_basic.modified_yymmdd[0] },
+                        )));
+                    },
                 }
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Tracks", image_type.tracks })));
                 try CommandState.addProcessedFile(.init("", try std.fmt.allocPrint(arena, "{s:<12}: {d}", .{ "Track Len", image_type.track_size })));
