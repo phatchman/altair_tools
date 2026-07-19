@@ -41,7 +41,6 @@ var init: *const std.process.Init = undefined;
 fn do_main() error{ErrorExit}!void {
     Console.init(init.io);
     defer Console.deinit();
-    defer options.deinit(init.gpa);
 
     if (!(validateOptions() catch false)) {
         // validate options prints the error.
@@ -102,19 +101,6 @@ pub const CommandLineOptions = struct {
     force: bool = false,
     cpm_user: ?u8 = null,
     disk_image_type: ?ImageType = null,
-
-    pub fn deinit(self: *CommandLineOptions, gpa: std.mem.Allocator) void {
-        gpa.free(self.image_file);
-        for (self.multiple_files) |filename| {
-            gpa.free(filename);
-        }
-        gpa.free(self.multiple_files);
-        gpa.free(self.system_image_get);
-        gpa.free(self.system_image_put);
-        gpa.free(self.recovery_image_file);
-        gpa.free(self.get_out_dir);
-        gpa.free(self.disk_label);
-    }
 };
 
 var options: CommandLineOptions = .{};
@@ -123,6 +109,7 @@ pub fn main(init_args: std.process.Init) !void {
     init = &init_args;
 
     var r = cli.AppRunner.init(init);
+    defer r.deinit();
     app = cli.App{
         .command = cli.Command{
             .target = cli.CommandTarget{
@@ -354,10 +341,10 @@ pub fn validateOptions() !bool {
             errdefer new.deinit(init.gpa);
             for (current) |pattern| {
                 try host_os.windows.glob(init.io, init.gpa, pattern, &new);
-                init.gpa.free(pattern);
+                //                init.gpa.free(pattern);
             }
-            init.gpa.free(options.multiple_files);
-            options.multiple_files = try new.toOwnedSlice(init.gpa);
+            //            init.gpa.free(options.multiple_files);
+            options.multiple_files = try new.toOwnedSlice(init.arena.allocator());
         }
     }
 

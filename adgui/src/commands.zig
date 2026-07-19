@@ -1,5 +1,6 @@
 const std = @import("std");
 const ad = @import("altair_disk");
+const host_os = ad.host_os;
 const DiskImage = ad.DiskImage;
 const DiskImageType = ad.DiskImageType;
 const DiskImageTypes = ad.DiskImageTypes;
@@ -309,7 +310,9 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
         defer dir.close(io);
         switch (src.entry) {
             .image => |cooked_entry| {
-                var out_file = try dir.createFile(io, cooked_entry.filenameAndExtension(), .{ .exclusive = if (force) false else true });
+                var conv_buffer: [std.fs.max_name_bytes]u8 = undefined;
+                const out_filename = try host_os.toSafeHostFilename(cooked_entry.filenameAndExtension(), &conv_buffer);
+                var out_file = try dir.createFile(io, out_filename, .{ .exclusive = if (force) false else true });
                 defer out_file.close(io);
                 var write_buffer: [4096]u8 = undefined;
                 var writer = out_file.writer(io, &write_buffer);
@@ -336,8 +339,9 @@ pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u
 
         var buf: [4096]u8 = undefined;
         var reader = in_file.reader(io, &buf);
-        // TODO: So everywhere else can assume basename now??
-        try image.copyToImage(&reader.interface, std.fs.path.basename(filename), cpm_user, force, xlateCopyMode(copy_mode));
+        var conv_buf: [std.fs.max_name_bytes]u8 = undefined;
+        const basename = host_os.fromSafeHostFilename(std.fs.path.basename(filename), &conv_buf) catch unreachable;
+        try image.copyToImage(&reader.interface, basename, cpm_user, force, xlateCopyMode(copy_mode));
     }
 }
 

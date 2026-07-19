@@ -52,7 +52,11 @@ pub fn build(b: *std.Build) void {
             .strip = strip_debug_symbols,
         });
 
-        const exe = b.addExecutable(.{ .name = "altairdsk", .root_module = exe_mod, .use_llvm = true });
+        const exe = b.addExecutable(.{
+            .name = "altairdsk",
+            .root_module = exe_mod,
+            .use_llvm = true,
+        });
         const zigcli = b.dependency("cli", .{});
         exe.root_module.addImport("zig-cli", zigcli.module("cli"));
         if (targets.len > 1) {

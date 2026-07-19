@@ -453,7 +453,7 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
         std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()}) catch unreachable;
     var safe_buf: [std.fs.max_name_bytes]u8 = undefined;
 
-    var out_file = cwd.createFile(ctx.io, host_os.safeHostFilename(out_filename, &safe_buf) catch unreachable, .{ .read = false, .exclusive = !options.force }) catch |err| {
+    var out_file = cwd.createFile(ctx.io, host_os.toSafeHostFilename(out_filename, &safe_buf) catch unreachable, .{ .read = false, .exclusive = !options.force }) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
                 printErrorMessage(current_command, .file_exists, .{out_filename}, err);
@@ -540,7 +540,9 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
     var read_buffer: [4096]u8 = undefined;
     var file_reader = in_file.reader(ctx.io, &read_buffer);
     // TODO: So everywhere can now assume basename
-    const basename = std.fs.path.basename(filename);
+    var conv_buf: [std.fs.max_name_bytes]u8 = undefined;
+
+    const basename = host_os.fromSafeHostFilename(std.fs.path.basename(filename), &conv_buf) catch unreachable;
     disk_image.copyToImage(&file_reader.interface, basename, cpm_user, options.force, text_mode) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
@@ -557,7 +559,7 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
             },
         }
     };
-    log.info("Copied file {s}", .{filename});
+    log.info("Copied file {s} to {s}", .{ filename, basename });
 }
 
 /// Remove a file from the image
