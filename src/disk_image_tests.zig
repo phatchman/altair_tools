@@ -159,7 +159,6 @@ test "disk filled" {
 
         var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
         defer disk_image.deinit();
-        defer saveImage(test_buffer);
 
         // Copy to disk to fill it up.
         const filename = "BIG.TXT";
@@ -178,8 +177,6 @@ test "disk filled" {
         // Important to re-init to rebuild the in-memory directory entries from the image.
         try reinitDiskImage(&disk_image);
         try std.testing.expectEqual(fmt, disk_image.image_type);
-        defer saveImage(test_buffer);
-        defer saveFile(in_file);
 
         try std.testing.expectEqual(0, disk_image.directory.free_allocations.count());
         try std.testing.expectEqual(0, disk_image.capacityFreeInKB());

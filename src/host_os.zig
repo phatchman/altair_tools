@@ -181,12 +181,13 @@ test "test from safe host filename" {
     // unchanged when no escapes present
     try std.testing.expectEqualSlices(u8, "COP-HF", try fromSafeHostFilename("COP-HF", &filename_buf));
 
-    // illegal char round trip
+    // illegal char
     try std.testing.expectEqualSlices(u8, "*COPRND*", try fromSafeHostFilename("%2ACOPRND%2A", &filename_buf));
 
-    // literal '%' round trip
+    // literal '%'
     try std.testing.expectEqualSlices(u8, "100%DONE", try fromSafeHostFilename("100%25DONE", &filename_buf));
     try std.testing.expectEqualSlices(u8, "%2ACOPRND%2A", try fromSafeHostFilename("%252ACOPRND%252A", &filename_buf));
+    try std.testing.expectEqualSlices(u8, "%FILE%", try fromSafeHostFilename("%FILE%", &filename_buf));
 
     // reserved device names round trip
     try std.testing.expectEqualSlices(u8, "CON", try fromSafeHostFilename("%43ON", &filename_buf));
