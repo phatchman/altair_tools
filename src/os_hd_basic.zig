@@ -1,6 +1,7 @@
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
-const logerr = if (@import("builtin").fuzz) log.info else log.err;
+const builtin = @import("builtin");
+const logerr = if (builtin.fuzz or builtin.is_test) log.info else log.err;
 
 pub const DiskImageType_HD_BASIC = struct {
     const skew_table = [48]u16{

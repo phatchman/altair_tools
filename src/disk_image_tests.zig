@@ -706,44 +706,95 @@ test "non-standard CDOS" {
     try std.testing.expectError(error.InvalidImageFile, disk_image);
 }
 
-test "fuzz image data" {
-    try std.testing.fuzz({}, randomData, .{});
+test "fuzz image FDD_8IN" {
+    try std.testing.fuzz(FDD_8IN, randomData, .{});
+    // To recreate a crash. Embed the crash file and use:
     //    try std.testing.fuzz({}, randomData, .{ .corpus = &.{crash} });
+}
+
+// Only test a few representative images by default
+// test "fuzz image HDD_5MB" {
+//     try std.testing.fuzz(HDD_5MB, randomData, .{});
+// }
+
+test "fuzz image HDD_5MB_1024" {
+    try std.testing.fuzz(HDD_5MB_1024, randomData, .{});
+}
+
+test "fuzz image TAR" {
+    try std.testing.fuzz(TAR, randomData, .{});
+}
+
+// test "fuzz image FDC" {
+//     try std.testing.fuzz(FDC, randomData, .{});
+// }
+
+test "fuzz image FDC_8MB" {
+    try std.testing.fuzz(FDC_8MB, randomData, .{});
+}
+
+test "fuzz image CDOS" {
+    // We purposely only test some representative formats to
+    // fuzz more evently over all formats.
+    inline for (&.{
+        CDOS_SMSSSD,
+        CDOS_LGDSDD,
+    }) |fmt| {
+        try std.testing.fuzz(fmt, randomData, .{});
+    }
+}
+
+test "fuzz image ADOS_8IN" {
+    try std.testing.fuzz(ADOS_8IN, randomData, .{});
+}
+
+test "fuzz image ADOS_MINI" {
+    try std.testing.fuzz(ADOS_MINI, randomData, .{});
+}
+
+test "fuzz image ADOS_MIN_BOOT" {
+    try std.testing.fuzz(ADOS_MINI_BOOT, randomData, .{});
+}
+
+test "fuzz image CPM_MINI" {
+    try std.testing.fuzz(CPM_MINI, randomData, .{});
+}
+
+test "fuzz image HD_BASIC" {
+    try std.testing.fuzz(HD_BASIC, randomData, .{});
 }
 
 //const crash = @embedFile("crash");
 
-fn randomData(_: void, smith: *std.testing.Smith) !void {
-    inline for (all_formats) |fmt| {
-        const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
-        defer std.testing.allocator.free(image_buffer);
-        smith.bytes(image_buffer);
-        var mem_image: InMemoryImage = undefined;
-        mem_image.init(image_buffer);
+fn randomData(fmt: *const DiskImageType, smith: *std.testing.Smith) !void {
+    const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
+    defer std.testing.allocator.free(image_buffer);
+    smith.bytes(image_buffer);
+    var mem_image: InMemoryImage = undefined;
+    mem_image.init(image_buffer);
 
-        var disk_image: DiskImage = DiskImage.init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt) catch return;
-        defer disk_image.deinit();
+    var disk_image: DiskImage = DiskImage.init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt) catch return;
+    defer disk_image.deinit();
 
-        disk_image.loadDirectories(.full) catch return;
+    disk_image.loadDirectories(.full) catch return;
 
-        var test_file: []u8 = try std.testing.allocator.alloc(u8, 1024 * 1024);
-        defer std.testing.allocator.free(test_file);
+    var test_file: []u8 = try std.testing.allocator.alloc(u8, 1024 * 1024);
+    defer std.testing.allocator.free(test_file);
 
-        if (disk_image.directory.cooked_directories.items.len > 0) {
-            var file_writer: std.Io.Writer = .fixed(test_file);
-            disk_image.copyFromImage(&disk_image.directory.cooked_directories.items[smith.index(disk_image.directory.cooked_directories.items.len)], &file_writer, smith.value(DiskImage.TextMode)) catch {};
-        }
-        var len = smith.slice(test_file);
-        var file_reader: std.Io.Reader = .fixed(test_file[0..len]);
-        var filename: [32]u8 = undefined;
-        len = smith.slice(&filename);
-        disk_image.copyToImage(&file_reader, filename[0..len], null, true, smith.value(DiskImage.TextMode)) catch return;
+    if (disk_image.directory.cooked_directories.items.len > 0) {
+        var file_writer: std.Io.Writer = .fixed(test_file);
+        disk_image.copyFromImage(&disk_image.directory.cooked_directories.items[smith.index(disk_image.directory.cooked_directories.items.len)], &file_writer, smith.value(DiskImage.TextMode)) catch {};
+    }
+    var len = smith.slice(test_file);
+    var file_reader: std.Io.Reader = .fixed(test_file[0..len]);
+    var filename: [32]u8 = undefined;
+    len = smith.slice(&filename);
+    disk_image.copyToImage(&file_reader, filename[0..len], null, true, smith.value(DiskImage.TextMode)) catch return;
 
-        _ = disk_image.capacityFreeInKB();
-        _ = disk_image.capacityTotalInKB();
-        if (disk_image.directory.cooked_directories.items.len > 0) {
-            disk_image.erase(&disk_image.directory.cooked_directories.items[smith.index(disk_image.directory.cooked_directories.items.len)]) catch {};
-        }
+    _ = disk_image.capacityFreeInKB();
+    _ = disk_image.capacityTotalInKB();
+    if (disk_image.directory.cooked_directories.items.len > 0) {
+        disk_image.erase(&disk_image.directory.cooked_directories.items[smith.index(disk_image.directory.cooked_directories.items.len)]) catch {};
     }
 }
 
