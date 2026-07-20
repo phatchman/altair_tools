@@ -37,6 +37,7 @@ test "disk formatted" {
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_fmt.dsk")),
             .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_fmt.dsk")),
             .HD_BASIC => try allocator.dupe(u8, @embedFile("test_disks/hdbasic_fmt.dsk")),
+            .TIMESHARE_BASIC => continue,
         };
         defer allocator.free(compare_image);
 
@@ -133,6 +134,7 @@ test "disk filled" {
             .ADOS_MINI_BOOT => try allocator.dupe(u8, @embedFile("test_disks/ados_miniboot_full.dsk")),
             .CPM_MINI => try allocator.dupe(u8, @embedFile("test_disks/cpm_mini_full.dsk")),
             .HD_BASIC => try allocator.dupe(u8, @embedFile("test_disks/hdbasic_full.dsk")),
+            .TIMESHARE_BASIC => continue,
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -206,6 +208,7 @@ test "disk overfilled" {
     // Make file 1 byte too big. Should result in out of allocs.
 
     inline for (all_formats) |fmt| {
+        if (fmt.type_id == .TIMESHARE_BASIC) continue;
         std.log.info("Testing: {t} overfilled", .{fmt.type_id});
         const big_file = try allocator.alloc(u8, fmt.largestFileBytes() + 1);
         @memset(big_file, 'X');
@@ -244,6 +247,7 @@ test "overfill directory" {
             // TODO: Basic allocates sectors and tracks for files differently to how it does it within files.
             // Need to sus out what exactly is being done differently.
             //.ADOS_8IN => try allocator.dupe(u8, @embedFile("test_disks/ados_basic_dirs.dsk")),
+            .TIMESHARE_BASIC => continue,
             else => null,
         };
         defer if (compare_image) |ci| allocator.free(ci);
@@ -364,6 +368,7 @@ test "test force overwrite" {
 test "zero-length file" {
     //std.testing.log_level = .info;
     inline for (all_formats) |fmt| {
+        if (fmt.type_id == .TIMESHARE_BASIC) continue;
         std.log.info("Testing format: {t}", .{fmt.type_id});
         var test_file = "".*;
         var test_stream: std.Io.Reader = .fixed(&test_file);
@@ -642,6 +647,7 @@ test "autodetect image" {
             .ADOS_MINI_BOOT => "src/test_disks/ados_miniboot_fmt.dsk",
             .CPM_MINI => "src/test_disks/cpm_mini_fmt.dsk",
             .HD_BASIC => "src/test_disks/hdbasic_fmt.dsk",
+            .TIMESHARE_BASIC => continue,
         };
         const image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
         var is_unique: bool = false;
@@ -671,6 +677,7 @@ test "fuzz image data" {
     try std.testing.fuzz({}, randomData, .{});
     //    try std.testing.fuzz({}, randomData, .{ .corpus = &.{crash} });
 }
+
 //const crash = @embedFile("crash");
 
 fn randomData(_: void, smith: *std.testing.Smith) !void {
@@ -707,7 +714,7 @@ fn randomData(_: void, smith: *std.testing.Smith) !void {
     }
 }
 
-fn allocationGetFree(self: *DirectoryTable) error{OutOfAllocs}!u16 {
+fn allocationGetFree(self: *DirectoryTable) error{ OutOfAllocs, InvalidAllocation }!u16 {
     return switch (self.raw_directories) {
         .cpm => @import("os_cpm.zig").allocationGetFree(self),
         .ados => @import("os_altair_dos.zig").allocationGetFree(self, false),

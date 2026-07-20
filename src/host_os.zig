@@ -1,5 +1,5 @@
 //! The hole of various host operating system fuctions
-//! By host we mean the machine running altaidsk
+//! By host we mean the operating system running altairdsk
 
 pub const windows = struct {
     // This is non-backtracking implementation of globbing.
@@ -62,8 +62,7 @@ pub const windows = struct {
         return pat_idx == pattern.len and file_idx == filename.len;
     }
 
-    // TODO: Low priority to handle reserved names and non-printables on windows.
-    // As of Windows 11, only NUL is reserved.
+    // As of Windows 11, only NUL is reserved. But we encode them anyway.
     pub fn toSafeHostFilename(from_filename: []const u8, to_filename: []u8) error{NoSpaceLeft}![]u8 {
         const illegal_chars: []const u8 = "<>:\"/\\|?*+%"; // % is not illegal, but we need to escape it anyway
         const illegal_names: []const []const u8 = &[_][]const u8{
@@ -240,7 +239,7 @@ test "globbing" {
     try std.testing.expectEqual(false, globMatch("a??d?f", "abcxef"));
     try std.testing.expectEqual(false, globMatch("*.??", "abcdef.txt"));
 
-    // TODO: For future globbing improvements
+    // FUTURE TODO: For future globbing improvements
     //try std.testing.expectEqual(true, globMatch("*ab", "abb"));
     //try std.testing.expectEqual(true, globMatch("*.*.d", "a.b.c.d"));
     //try std.testing.expectEqual(true, globMatch("*ab", "aabb"));

@@ -170,12 +170,16 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.rawEntryWrite(self, raw_entry_nr),
             .ados => os_ados.rawEntryWrite(self, raw_entry_nr),
-            .hd_basic => os_hd_basic.rawEntryWrite(self, raw_entry_nr),
+            .hd_basic => {
+                if (self.image_type.type_id == .TIMESHARE_BASIC)
+                    return error.ReadOnlySupport;
+                return os_hd_basic.rawEntryWrite(self, raw_entry_nr);
+            },
         };
     }
 
     /// Try and auto-detect what type of disk image this is
-    /// TODO: Maybe we just detect in a specific order than in a loop? And somehow we have to make sure
+    /// FUTURE TODO: If future maybe we just detect in a specific order than in a loop? And somehow we have to make sure
     /// they are all included.
     pub fn detectImageType(io: std.Io, image_file: File, is_unique: *bool) ?*const DiskImageType {
         is_unique.* = true;
@@ -194,9 +198,21 @@ pub const DiskImage = struct {
                         }
                     },
                     .FDD_8IN => {
+                        const timeshare_basic = all_disk_types.getPtrConst(.TIMESHARE_BASIC);
+                        if (timeshare_basic.isCorrectFormat(io, image_file)) {
+                            return timeshare_basic;
+                        }
                         const ados = all_disk_types.getPtrConst(.ADOS_8IN);
                         if (ados.isCorrectFormat(io, image_file)) {
                             return ados;
+                        } else {
+                            return dt;
+                        }
+                    },
+                    .ADOS_8IN => {
+                        const timeshare_basic = all_disk_types.getPtrConst(.TIMESHARE_BASIC);
+                        if (timeshare_basic.isCorrectFormat(io, image_file)) {
+                            return timeshare_basic;
                         } else {
                             return dt;
                         }
@@ -232,7 +248,11 @@ pub const DiskImage = struct {
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyToImage(self, file_reader, to_filename, user, force),
             .ados => os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
-            .hd_basic => os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode),
+            .hd_basic => {
+                if (self.image_type.type_id == .TIMESHARE_BASIC)
+                    return error.ReadOnlySupport;
+                return os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode);
+            },
         };
     }
 
@@ -240,6 +260,8 @@ pub const DiskImage = struct {
     /// Note that this invalidates any pointers to existing CookedDirEntries
     /// Including any iterators.
     pub fn erase(self: *DiskImage, to_erase: *CookedDirEntry) !void {
+        if (self.image_type.type_id == .TIMESHARE_BASIC)
+            return error.ReadOnlySupport;
         return self.directory.eraseEntry(to_erase, self);
     }
 
@@ -264,6 +286,8 @@ pub const DiskImage = struct {
     }
 
     pub fn installOperatingSystem(self: *DiskImage, io: std.Io, in_file: File) !void {
+        if (self.image_type.type_id == .TIMESHARE_BASIC)
+            return error.ReadOnlySupport;
         const in_size = try in_file.length(io);
         if (self.image_type.reserved_tracks == 0) {
             logerr("Not a bootable disk", .{});
@@ -279,7 +303,7 @@ pub const DiskImage = struct {
 
         var buf: [4096]u8 = undefined;
         var file_reader = in_file.reader(io, &buf);
-        // TODO: Investigate why these don't work. SendFile mneeds a buffer in the writer, not the reader.
+        // FUTURE TODO: Investigate why these don't work. SendFile mneeds a buffer in the writer, not the reader.
         // but streamRemaining should work??
         //_ = try file_reader.interface.streamRemaining(self.writer.interface());
         //_ = try self.writer.interface().sendFileAll(&file_reader, .unlimited);
@@ -300,6 +324,8 @@ pub const DiskImage = struct {
     }
 
     pub fn formatImage(self: *DiskImage) !void {
+        if (self.image_type.type_id == .TIMESHARE_BASIC)
+            return error.ReadOnlySupport;
         var disk_sector: DiskSector = undefined;
         const varying_sector_format = self.image_type.varying_sector_format;
 
@@ -348,7 +374,7 @@ pub const DiskImage = struct {
                 raw_entry.filetype[1] = lbl.date_mmddyy[1];
                 raw_entry.filetype[2] = lbl.date_mmddyy[2];
                 raw_entry.extent_low = switch (self.image_type.type_id.toCDOS()) {
-                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // TODO: What is this? 8 or 16 bit allocs?
+                    .CDOS_SMSSSD, .CDOS_SMDSSD, .CDOS_SMSSDD, .CDOS_LGSSSD => 0x08, // FUTURE TODO: What is this? 8 or 16 bit allocs?
                     .CDOS_LGSSDD, .CDOS_LGDSSD, .CDOS_LGDSDD, .CDOS_SMDSDD => 0x10,
                 };
                 if (self.image_type.type_id == .CDOS_LGDSDD) {

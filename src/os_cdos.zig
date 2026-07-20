@@ -1,7 +1,7 @@
 //! Cromemco CDOS Support
 //! Functionality is shared with CPM.
 
-// TODO: Later version of CDOS encode the total number of directories in the 1st directory entry.
+// FUTURE TODO: Later version of CDOS encode the total number of directories in the 1st directory entry.
 //       - Support setting the number of directories at runtime
 //       - Support reading the 1st dir entry and decoding the number of directories
 //       - Support setting the number of directories at format time

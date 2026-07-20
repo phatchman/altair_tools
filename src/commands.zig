@@ -2,12 +2,6 @@
 //! Dispatches command line options to the appropriate command and prints the results
 //! Any errors are reported back via the error context.
 
-// TODO: Put multiple is tryign to copy the same files multiple times?
-// PS C:\src\altair_tools> .\zig-out\bin\altairdsk.exe mini.dsk -P PIP STARTREK
-// Error performing put multiple files: Error creating file PIP. Use --force to overwrite: File already exists
-// Error performing put multiple files: Error creating file STARTREK. Use --force to overwrite: File already exists
-// TODO: Errors readings DISK02.DSK
-
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 const CookedDirEntry = @import("directory_table.zig").CookedDirEntry;
@@ -188,7 +182,7 @@ pub fn directoryList(_: Context, disk_image: *DiskImage, options: CommandLineOpt
         kb_used += this_kb;
         switch (disk_image.image_type.OS) {
             inline else => |_, tag| {
-                // TODO: We need display capabilities like has extension, etc.
+                // TODO: In future we need display capabilities like has extension, has creation time.
                 const max_len = std.fmt.comptimePrint("{}", .{comptime CookedDirEntry.filenameOnlyMaxLen(tag)});
                 switch (tag) {
                     .cpm, .cdos => try Console.stdout().print("{s:<" ++ max_len ++ "} {s:<3} {:>7}B {:>4}K {} {s}", .{
@@ -353,7 +347,6 @@ pub fn directoryListRawHDB(_: Context, disk_image: *DiskImage, _: CommandLineOpt
     }
     try Console.stdout().print("FREE DIRECTORIES: ({})\n", .{disk_image.directory.rawEntryFreeCount()});
 
-    // TODO: This is common code- refactor.
     const free_allocations = disk_image.directory.free_allocations;
     try Console.stdout().print("FREE ALLOCATIONS: ({})\n", .{free_allocations.count()});
     var nr_output: usize = 0;
@@ -539,7 +532,6 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
 
     var read_buffer: [4096]u8 = undefined;
     var file_reader = in_file.reader(ctx.io, &read_buffer);
-    // TODO: So everywhere can now assume basename
     var conv_buf: [std.fs.max_name_bytes]u8 = undefined;
 
     const basename = host_os.fromSafeHostFilename(std.fs.path.basename(filename), &conv_buf) catch unreachable;
@@ -552,6 +544,10 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
             error.CookedDirEntryNotFound => {
                 printErrorMessage(current_command, .file_copy, .{basename}, err);
                 return error.CommandFailedCanContinue;
+            },
+            error.ReadOnlySupport => {
+                printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
+                return error.CommandFailed;
             },
             else => {
                 printErrorMessage(current_command, .file_copy, .{basename}, err);
@@ -566,9 +562,15 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
 pub fn eraseFile(_: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
     const filename = std.fs.path.basename(options.multiple_files[0]);
     if (disk_image.directory.findByFilename(filename, options.cpm_user)) |dir_entry| {
-        disk_image.erase(dir_entry) catch |err| {
-            printErrorMessage(current_command, .file_erase, .{filename}, err);
-            return error.CommandFailed;
+        disk_image.erase(dir_entry) catch |err| switch (err) {
+            error.ReadOnlySupport => {
+                printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
+                return error.CommandFailed;
+            },
+            else => {
+                printErrorMessage(current_command, .file_erase, .{filename}, err);
+                return error.CommandFailed;
+            },
         };
     } else {
         printErrorMessage(current_command, .file_not_found, .{filename}, error.None);
@@ -598,10 +600,16 @@ pub fn eraseFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandL
     }
     for (to_erase.items) |*entry| {
         blk: {
-            disk_image.erase(entry) catch |err| {
-                printErrorMessage(current_command, .file_erase, .{entry.filenameAndExtension()}, err);
-                had_error = true;
-                break :blk;
+            disk_image.erase(entry) catch |err| switch (err) {
+                error.ReadOnlySupport => {
+                    printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
+                    return error.CommandFailed;
+                },
+                else => {
+                    printErrorMessage(current_command, .file_erase, .{entry.filenameAndExtension()}, err);
+                    had_error = true;
+                    break :blk;
+                },
             };
             log.info("Erased file {s}", .{entry.filenameAndExtension()});
         }
@@ -620,9 +628,11 @@ pub fn extractCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOpti
         return error.CommandFailed;
     };
     defer out_file.close(ctx.io);
-    disk_image.extractOperatingSystem(ctx.io, out_file) catch |err| {
-        printErrorMessage(current_command, .extract_cpm, .{options.system_image_get}, err);
-        return error.CommandFailed;
+    disk_image.extractOperatingSystem(ctx.io, out_file) catch |err| switch (err) {
+        else => {
+            printErrorMessage(current_command, .extract_cpm, .{options.system_image_get}, err);
+            return error.CommandFailed;
+        },
     };
 }
 
@@ -635,17 +645,29 @@ pub fn installCPM(ctx: Context, disk_image: *DiskImage, options: CommandLineOpti
         return error.CommandFailed;
     };
     defer in_file.close(ctx.io);
-    disk_image.installOperatingSystem(ctx.io, in_file) catch |err| {
-        printErrorMessage(current_command, .install_cpm, .{options.system_image_put}, err);
-        return error.CommandFailed;
+    disk_image.installOperatingSystem(ctx.io, in_file) catch |err| switch (err) {
+        error.ReadOnlySupport => {
+            printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
+            return error.CommandFailed;
+        },
+        else => {
+            printErrorMessage(current_command, .install_cpm, .{options.system_image_put}, err);
+            return error.CommandFailed;
+        },
     };
 }
 
 pub fn formatImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
     log.info("Formatting {s} ....", .{options.image_file});
-    disk_image.formatImage() catch |err| {
-        printErrorMessage(current_command, .format, .{options.image_file}, err);
-        return error.CommandFailed;
+    disk_image.formatImage() catch |err| switch (err) {
+        error.ReadOnlySupport => {
+            printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
+            return error.CommandFailed;
+        },
+        else => {
+            printErrorMessage(current_command, .format, .{options.image_file}, err);
+            return error.CommandFailed;
+        },
     };
     if (options.disk_label.len > 0) {
         disk_image.loadDirectories(.full) catch |err| {
@@ -657,10 +679,9 @@ pub fn formatImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOpt
 }
 
 pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions) CommandError!void {
-    // TODO: make the label length come from disk image type
     const label_len: u32 = switch (disk_image.image_type.OS) {
-        .cdos => 8,
-        .hd_basic => 20,
+        .cdos => @field(@FieldType(DiskLabel, "cdos"), "user_label_len"),
+        .hd_basic => @field(@FieldType(DiskLabel, "hd_basic"), "user_label_len"),
         else => 0,
     };
 
@@ -946,6 +967,7 @@ const ErrorMessage = enum {
     label_invalid,
     label_not_found,
     directory_list,
+    read_only_support,
 };
 
 const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
@@ -975,6 +997,7 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
         .label_invalid = "Invalid label format {s}. Use <label>:mm/dd/yy where <label> is up to {d} characters",
         .label_not_found = "The first directory entry is not a disk label",
         .directory_list = "Error listing directory",
+        .read_only_support = "Writing is not supported for format {t}",
     },
 );
 

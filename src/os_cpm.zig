@@ -1,6 +1,3 @@
-// TODO: Audit all instances of Cook. It sohuld probably look more like what we do for CPM where it
-// validates and checks for errors etc?
-
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
@@ -87,7 +84,7 @@ pub const DiskImageType_MITS_8IN_8MB = struct {
             .skew_table = &skew_table,
         };
         result.init();
-        // TODO: These should be calculated, correctly in init, instead of being set here.
+        // FUTURE TODO: These should be calculated, correctly in init, instead of being set here.
         result.allocs_per_extent = 16;
         result.recs_per_extent = 256;
         return result;
@@ -506,8 +503,7 @@ pub const LogicalAddress = struct {
 };
 
 /// Add any new allocations to the list of used allocations.
-// TODO: Prob doesn;t need to be pub whene we move extend.
-pub fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
+fn copyAllocations(cooked: *CookedDirEntry, arena: std.mem.Allocator, raw: *const DirEntry, image_type: *const DiskImageType) (error{OutOfMemory} || RawDirError)!u8 {
     var alloc_count: u8 = 0;
 
     try cooked.allocations.ensureUnusedCapacity(arena, raw.allocations.len);
@@ -550,7 +546,7 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
     }
 
     // For CDOS, Check that the number of directories etc is the "default" value for that disk
-    // Support for other directories counts is a TODO
+    // Support for other directories counts is a FUTURE TODO
     if (dir.image_type.OS == .cdos and dir.raw_directories.cpm.items.len > 0 and dir.raw_directories.cpm.items[0].isLabel()) {
         const raw_item = dir.raw_directories.cpm.items[0];
         const expected_num_records: u8 = switch (image_type.type_id.toCDOS()) {
@@ -844,7 +840,6 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         // Is this a new extent?
         if (record_nr % image.image_type.recs_per_extent == 0) {
             if (record_nr > 0) {
-                // TODO: should this still exists?
                 try buildCookedEntry(&image.directory, extent_nr);
                 extent_count += 1;
             }

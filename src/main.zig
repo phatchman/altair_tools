@@ -28,11 +28,8 @@
 // SOFTWARE.
 //
 
-// TODO: Errors not being shown for invalid options e.g. -q. This needs an upstream fix
 // TODO: Add a --quiet option to not print errors for bad disks
-// TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
-// TODO: Fix issue with the timeshare basic disks where we could potentially overwite directory tracks?? Is this just hte same thing as the above?
-
+// FUTURE TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
 var init: *const std.process.Init = undefined;

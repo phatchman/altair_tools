@@ -9,7 +9,7 @@ pub const DiskImageType_HD_BASIC = struct {
         24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
         36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
     };
-    const directory_page = 192;
+    pub const directory_page = 192;
     const allocation_page = 1;
     const unusable_groups = 4;
     // These groups at end of disk are never allocated to a file.
@@ -199,11 +199,10 @@ pub const DirEntry = extern struct {
     }
 
     pub fn setDeleted(self: *DirEntry) void {
-        self.status = 0x00; // TODO: Confirm correct.
+        self.status = 0x00;
     }
 
     pub fn isLastEntry(self: *const DirEntry) bool {
-        // TODO: Test this.. what actually happens for deleted files?
         return self.status == 0xff;
     }
 
@@ -262,7 +261,7 @@ pub const DirEntry = extern struct {
             if (alloc == 0xffff) break;
             result.allocations.appendAssumeCapacity(alloc);
         }
-        @memcpy(result.filename[0..24], &self.filename); // TODO: Support larger filenames
+        @memcpy(result.filename[0..24], &self.filename);
         return result;
     }
 };
@@ -346,8 +345,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             for (0..8) |_| {
                 if (alloc_nr == dir.free_allocations.capacity()) break;
                 if (dir.free_allocations.isSet(alloc_nr) == if (to_shift & 0x01 == 1) true else false) {
-                    // TODO: Make this a log message
-                    std.debug.print(
+                    logerr(
                         "Allocation validation for {}. disk map is {} directory map is {}\n",
                         .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
                     );
@@ -728,7 +726,6 @@ pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
     return @intCast(free);
 }
 
-// TODO: Remove initialized from the other ones and add an init to the Raw Entries
 fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtents}!*DirEntry {
     for (dir.raw_directories.hd_basic.items, 0..) |*entry, nr| {
         if (entry.isDeleted()) {
@@ -739,17 +736,13 @@ fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtent
     return error.OutOfExtents;
 }
 
-// TODO: Doesn;t need to be pub after we fix up the init stuff
-pub fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) PhysicalAddress {
-    // TODO: Add validation
-    // Pages are sequentially numbered sectors starting from track 0
+fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) PhysicalAddress {
     return .{
         .track = page_nr / image_type.sectors_per_track,
         .sector = page_nr % image_type.sectors_per_track,
     };
 }
 
-// TODO: Support get / set volume label for user.
 fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDescriptor {
     const location: PhysicalAddress = .{ .track = 0, .sector = 0 };
     sector.* = .initUnformatted(image.image_type, location.track);
@@ -758,7 +751,6 @@ fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDescriptor {
     return result;
 }
 
-// TODO: Needs to pass disk image type here.
 pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) void {
     const label: *VolumeDescriptor = std.mem.bytesAsValue(VolumeDescriptor, sector.dataBytes());
     label.* = .{
@@ -823,7 +815,6 @@ pub fn volumeLabelGet(image: *DiskImage, label: *DiskLabel) !void {
     };
 }
 
-// TODO: Be consistent about what namespace the errors live in.
 pub fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError || DirectoryTable.RawDirError)!void {
     const image_type = img.image_type;
 
@@ -836,7 +827,7 @@ pub fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError
     var sector: DiskSector = .initFormatted(img.image_type, location);
     // start_index is the index of the directory entry that is first in the sector.
     const start_index = entry_nr / image_type.dirs_per_sector * image_type.dirs_per_sector;
-    // Copy 1 full sector worth of extents/raw entries i.e. 2. TODO: This is genric, but small.
+    // Copy 1 full sector worth of extents/raw entries i.e. 2.
     @memcpy(sector.dataBytes(), std.mem.sliceAsBytes(img.directory.raw_directories.hd_basic.items[start_index..][0..image_type.dirs_per_sector]));
     try img.writeSector(location, &sector);
 }
@@ -844,7 +835,8 @@ pub fn rawEntryWrite(img: *DiskImage, entry_nr: u16) (DiskImage.WriteSectorError
 pub fn initAllocationMap(sector: *DiskSector, which: enum { first, second }) void {
     switch (which) {
         .first => @memset(sector.dataBytes()[0..7], 0xff),
-        .second => sector.dataBytes()[49] = 0xF8, // TODO: Allocations 2440 - 2440 are marked as unsed / unsable??
+        //  Allocations 2440 - 2440 are marked as unsed / unsable
+        .second => sector.dataBytes()[49] = 0xF8,
     }
 }
 
@@ -871,7 +863,8 @@ pub fn writeAllocationBitmap(image: *DiskImage) !void {
 
     var vol_sector: DiskSector = .initUnformatted(image.image_type, 0);
     const vol = try loadVolumeLabel(image, &vol_sector);
-    vol.free_groups = @intCast(image.directory.free_allocations.count() + 32); // TODO: Constant somewhere?
+    // Account for the 32 mystery unused groups.
+    vol.free_groups = @intCast(image.directory.free_allocations.count() + 32);
     try image.writeSector(.{ .track = 0, .sector = 0 }, &vol_sector);
     try image.writeSector(.{
         .track = image.image_type.tracks - 1,

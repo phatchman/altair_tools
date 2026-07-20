@@ -115,7 +115,7 @@ pub const DiskSector = union(enum) {
 
     pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
         return switch (image_type.type_id) {
-            // TODO: Need to make this so when add a new 137 byte format we
+            // FUTURE TODO: Need to make this so when add a new 137 byte format we
             // either get a compile error here, or don;t have to update this switch. Either one.
             .FDD_8IN,
             .FDD_8IN_8MB,
@@ -124,6 +124,7 @@ pub const DiskSector = union(enum) {
             else
                 .{ .data = undefined },
             .ADOS_8IN,
+            .TIMESHARE_BASIC,
             .ADOS_MINI,
             .ADOS_MINI_BOOT,
             => if (track_nr < image_type.reserved_tracks)
@@ -143,8 +144,8 @@ pub const DiskSector = union(enum) {
         };
     }
 
-    // 2 TODO: think of a better way to split this out.
-    // Issue is that some htings change on OS, some on OS within format and some just on format.
+    // FUTURE TODO: In future think of a better way to split this out.
+    // Issue is that some things change on OS, some on OS within format and some just on format.
     pub fn initFormatted(image_type: *const DiskImageType, location: PhysicalAddress) DiskSector {
         var result: DiskSector = .initUnformatted(image_type, location.track);
         @memset(result.rawBytes(), 0xe5);
@@ -172,6 +173,7 @@ pub const DiskSector = union(enum) {
                         sector.sector_nr = @intCast(image_type.skew_table[location.sector]);
                     },
                     .ados => {
+                        if (image_type.type_id == .TIMESHARE_BASIC) unreachable;
                         @memset(result.rawBytes(), 0x00);
                         sector.track_nr = @truncate(location.track | 0x80);
                         sector.stop = 0xff;
@@ -220,8 +222,7 @@ pub const DiskSector = union(enum) {
                     hd_basic.initVolumeLabel(image_type, &result);
                 } else {
                     const page = location.track * image_type.sectors_per_track + location.sector;
-                    // TODO: fix hard-coded stuff
-                    if (page >= 193 and page < 448) {
+                    if (page > hd_basic.DiskImageType_HD_BASIC.directory_page and page < hd_basic.DiskImageType_HD_BASIC.directory_page + 256) {
                         @memset(result.rawBytes(), 0xff);
                     } else {
                         @memset(result.rawBytes(), 0x00);
@@ -265,7 +266,7 @@ pub const DiskSector = union(enum) {
                     .cpm => {
                         sector.checksum = self.mitsChecksum(location);
                     },
-                    .ados => { // if (location.track > 5) { // TODO: Need to sort out why >5 and do we need to do this for ADOS?
+                    .ados => {
                         sector.checksum = self.mitsChecksum(location);
                     },
                     else => unreachable,
@@ -408,7 +409,6 @@ pub const DiskImageType = struct {
     }
 
     pub fn dump(self: *const DiskImageType) void {
-        // TODO: Work out what is important to show here.
         std.debug.print("Type:         {s}\n", .{self.type_name});
         std.debug.print("Sector Len:   {}\n", .{self.sector_size_raw});
         std.debug.print("Data Len:     {}\n", .{self.sector_size_data});
@@ -421,6 +421,7 @@ pub const DiskImageType = struct {
         std.debug.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
         std.debug.print("Dirs / Sect   {}\n", .{self.dirs_per_sector});
         std.debug.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
+        std.debug.print("Sect / Alloc: {}\n", .{self.sectors_per_alloc});
         std.debug.print("Dir Allocs:   {}\n", .{self.reserved_allocs});
         std.debug.print("Num Dirs:     {}\n", .{self.directories});
         std.debug.print("Num Allocs:   {}\n", .{self.total_allocs});
@@ -508,6 +509,7 @@ pub const DiskImageTypes = enum {
     ADOS_MINI_BOOT,
     CPM_MINI,
     HD_BASIC,
+    TIMESHARE_BASIC,
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
         const fields = std.meta.fields(@This());
@@ -551,6 +553,7 @@ pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .
     .CDOS_LGDSDD = cdos.DiskImageType_CDOS_LGDSDD.init(),
     .ADOS_8IN = ados.DiskImageType_ADOS_8IN.init(),
     .ADOS_MINI = ados.DiskImageType_ADOS_MINI.init(),
+    .TIMESHARE_BASIC = ados.DiskImageType_TIMESHARE_BASIC.init(),
     .ADOS_MINI_BOOT = ados.DiskImageType_ADOS_MINI_BOOT.init(),
     .HD_BASIC = hd_basic.DiskImageType_HD_BASIC.init(),
 });

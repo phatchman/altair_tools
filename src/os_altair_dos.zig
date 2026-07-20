@@ -54,7 +54,6 @@ pub const DiskImageType_ADOS_8IN = struct {
         var entries: []DirEntry = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
 
         // It might be a new directory with no entries.
-        // std.debug.print("checking empty\n", .{});
         if (entries[0].filename[0] == 0xff) {
             // All the other entry filenames need ot start with 0 as they either never existed, or were deleted.
             for (entries[1..]) |e| {
@@ -62,7 +61,6 @@ pub const DiskImageType_ADOS_8IN = struct {
             }
             return true;
         }
-        // std.debug.print("checking dir\n", .{});
 
         // So there must be at least 1 entry
         var start: usize = 1;
@@ -71,19 +69,15 @@ pub const DiskImageType_ADOS_8IN = struct {
                 if (e.filename[0] == 255) return false;
                 if (e.filename[0] == 0x00) continue; // deleted
                 if (e.track >= self.tracks or e.sector >= self.sectors_per_track) return false;
-                //                std.debug.print("not EOD or deleted\n", .{});
 
                 for (e.filename) |ch| {
                     // invalid filename chars
                     if (!std.ascii.isPrint(ch)) return false;
                 }
-                //              std.debug.print("valid filename {s}\n", .{e.filename});
 
                 // must be valid filename. so check that this entry had correct fileno.
                 reader.seekTo(@as(u32, e.track) * self.track_size + 137 * @as(u32, e.sector)) catch return false;
-                //             std.debug.print("Seeked to : {x}, \n", .{reader.logicalPos()});
                 reader.interface.readSliceAll(sector.rawBytes()) catch return false;
-                //           std.debug.print("checking file_nr {} vs {}\n", .{ sector.mits_track_6_76.file_nr, entry_nr });
 
                 return sector.data.file_nr == entry_nr;
             }
@@ -199,6 +193,29 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
     }
 };
 
+pub const DiskImageType_TIMESHARE_BASIC = struct {
+    pub fn init() DiskImageType {
+        var result = DiskImageType_ADOS_8IN.init();
+        result.type_name = "MITS 5.25\" Floppy Disk (Timeshare BASIC)";
+        result.type_id = .TIMESHARE_BASIC;
+        result.detect_fn = isCorrectFormat;
+        return result;
+    }
+
+    pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
+        if (self.defaultDetectFn(io, image_file)) {
+            // Timeshare basic puts 0x41 in a stop byte, which normally should be 0xff in track 65, sector 25.
+            var buf: [1]u8 = undefined;
+            var reader = image_file.reader(io, &buf);
+            reader.seekTo(0x46708) catch return false;
+            const byte = reader.interface.takeByte() catch return false;
+            return byte == 0x41;
+        } else {
+            return false;
+        }
+    }
+};
+
 pub const DirEntry = extern struct {
     pub const filename_len = 8;
     filename: [filename_len]u8,
@@ -251,7 +268,7 @@ pub const DirEntry = extern struct {
                     if (entry.mode == 0x02) { // Sequential
                         while (track_nr != 0) {
                             const allocation = try toAllocation(image.image_type, .{ .track = track_nr, .sector = sector_nr });
-                            dir.free_allocations.unset(allocation);
+                            try unsetAllocation(dir, allocation);
                             if (sector_nr % sectors_per_alloc == 0) {
                                 try allocations.append(dir.allocator(), allocation);
                             }
@@ -300,7 +317,7 @@ pub const DirEntry = extern struct {
                         for (0..nr_groups) |idx| {
                             const encoded_group: u8 = group_map[idx];
                             const alloc = toAllocation(image.image_type, .{
-                                .track = (encoded_group & 0x3f) + if (image.image_type.type_id == .ADOS_8IN) @as(u8, 6) else @as(u8, 0),
+                                .track = (encoded_group & 0x3f) + if (image.image_type.type_id == .ADOS_8IN or image.image_type.type_id == .TIMESHARE_BASIC) @as(u8, 6) else @as(u8, 0),
                                 .sector = (encoded_group >> 6) * sectors_per_alloc,
                             }) catch |err| switch (err) {
                                 error.InvalidTrack, error.InvalidSector => {
@@ -313,7 +330,7 @@ pub const DirEntry = extern struct {
                                     };
                                 },
                             };
-                            dir.free_allocations.unset(alloc); // TODO: We need checks around all of these. it is coming from untrusted data.
+                            try unsetAllocation(dir, alloc);
                         }
                     } else unreachable; // Should have already been validated before we get here.
                     break :blk .{
@@ -402,12 +419,12 @@ pub fn loadDirectory(image: *DiskImage, option: DirectoryTable.LoadOption) Direc
     const directory_track = dir.image_type.OS.ados.directory_track;
     for (0..dir.image_type.reserved_allocs) |i| {
         // 8 sectors per block (block_size / sector_size_data)
-        dir.free_allocations.unset(try toAllocation(dir.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
+        try unsetAllocation(dir, try toAllocation(dir.image_type, .{ .track = directory_track, .sector = @intCast(i * 8) }));
     }
     if (dir.image_type.type_id == .ADOS_MINI) {
         // Can't use track 0 to store data.
-        dir.free_allocations.unset(0);
-        dir.free_allocations.unset(1);
+        try unsetAllocation(dir, 0);
+        try unsetAllocation(dir, 1);
     }
     var sector: DiskSector = .initUnformatted(dir.image_type, directory_track);
     try dir.raw_directories.ados.ensureTotalCapacity(dir.allocator(), dir.image_type.directories);
@@ -599,7 +616,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
 
             const sectors_per_group = image.image_type.block_size / image.image_type.sector_size_data;
             var idx: usize = 0;
-            while (idx != group_count) : (idx += 1) { // TODO:
+            while (idx != group_count) : (idx += 1) {
                 const group_encoded = group_map[idx];
                 track_nr = (group_encoded & 0x3f) + 6;
                 const group_nr = group_encoded >> 6;
@@ -635,12 +652,12 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     @memcpy(&new_entry.filename, &filename_buf);
     new_entry.mode = if (text_mode == .Rand) 0x04 else 0x2; // tODO: enumify?
 
-    var file_data: [128]u8 = undefined; // TODO: Hard coded
+    var file_data: [128]u8 = undefined;
     var nbytes = reader.readSliceShort(&file_data) catch |err| switch (err) {
         error.ReadFailed => return basic_reader.err orelse err,
     };
     // Zero length files only get a directory entry and nothing else.
-    // TODO: The handlign of cooked dirs here is very fragile. move this into a fucntion and handled cooked dirs outside of it?
+    // FUTURE TODO: The handling of cooked dirs here is very fragile. move this into a fucntion and handled cooked dirs outside of it?
     if (nbytes == 0) {
         try rawEntryWrite(image, extent_nr);
         image.directory.cooked_directories.appendAssumeCapacity(try new_entry.cook(image, extent_nr));
@@ -723,7 +740,6 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         sector.data.next_track = @intCast(group_map_location.track);
         sector.data.next_sector = @intCast(group_map_location.sector + 1);
         @memcpy(sector.dataBytes(), group_map[0..128]);
-        //        std.debug.print("writing to {} with nbytes = {}\n", .{ group_map_location, sector.data.nbytes });
         try image.writeSector(group_map_location, &sector);
         group_map_location.sector += 1;
         sector = .initFormatted(image.image_type, group_map_location);
@@ -799,7 +815,7 @@ pub fn clearErasedSectors(image: *DiskImage, raw_item: *DirEntry) !void {
 }
 
 /// Return a free allocation
-pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{OutOfAllocs}!u16 {
+pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{ OutOfAllocs, InvalidAllocation }!u16 {
     // Allocations are performed in the order track 71 to track 76
     // Then from track 69 down to 6
     const allocs_per_track = dir.image_type.sectors_per_track / dir.image_type.sectors_per_alloc;
@@ -809,7 +825,7 @@ pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{Ou
             for (0..allocs_per_track) |alloc_in_track| {
                 const alloc_nr = (track_nr - dir.image_type.reserved_tracks) * allocs_per_track + alloc_in_track;
                 if (dir.free_allocations.isSet(alloc_nr)) {
-                    dir.free_allocations.unset(alloc_nr);
+                    try unsetAllocation(dir, @intCast(alloc_nr));
                     return @intCast(alloc_nr);
                 }
             }
@@ -822,7 +838,7 @@ pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{Ou
             const first_alloc = free / allocs_per_track * allocs_per_track;
             for (first_alloc..first_alloc + allocs_per_track) |alloc| {
                 if (dir.free_allocations.isSet(alloc)) {
-                    dir.free_allocations.unset(alloc);
+                    try unsetAllocation(dir, @intCast(alloc));
                     return @intCast(alloc);
                 }
             }
@@ -835,13 +851,21 @@ pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{Ou
             for (0..allocs_per_track) |offset| {
                 const alloc = (track - dir.image_type.reserved_tracks) * allocs_per_track + offset;
                 if (dir.free_allocations.isSet(alloc)) {
-                    dir.free_allocations.unset(alloc);
+                    try unsetAllocation(dir, @intCast(alloc));
                     return @intCast(alloc);
                 }
             }
         }
         return error.OutOfAllocs;
     }
+}
+
+pub fn unsetAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
+    if (alloc >= dir.free_allocations.capacity()) {
+        logerr("Attempt to set an invalid allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
+        return error.InvalidAllocation;
+    }
+    dir.free_allocations.unset(alloc);
 }
 
 pub fn rawEntryGetFreeInitialized(image: *DiskImage, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
