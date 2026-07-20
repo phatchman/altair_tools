@@ -3,8 +3,6 @@
 //! Provides generic routines to skew logical to physical disk sectors and
 //! other various quirks of the raw disk layouts.
 
-// FUTURE TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
-
 const log = std.log.scoped(.altair_disk_lib);
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 

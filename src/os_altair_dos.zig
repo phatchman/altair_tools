@@ -1,5 +1,7 @@
 // Somehow do something to mark random access files, so that they will get loaded back correctly??
 
+// FUTURE TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
+
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
