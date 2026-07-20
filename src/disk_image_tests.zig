@@ -727,7 +727,11 @@ test "fuzz image CPM_MINI" {
     try std.testing.fuzz(CPM_MINI, randomData, .{});
 }
 
-//const crash = @embedFile("crash");
+test "fuzz image HD_BASIC" {
+    try std.testing.fuzz(HD_BASIC, randomData, .{ .corpus = &.{crash} });
+}
+
+const crash = @embedFile("crash");
 
 fn randomData(fmt: *const DiskImageType, smith: *std.testing.Smith) !void {
     const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
