@@ -2,13 +2,8 @@
 //! Contains all parameters required to process the various altair disk formats.
 //! Provides generic routines to skew logical to physical disk sectors and
 //! other various quirks of the raw disk layouts.
-//!
-// To add a new image type:
-// 1) Create a new DiskImageType_XXX struct
-// 2) Add a new entry to the DiskImageTypes enum
-// 3) Add (1) and (2) to all_disk_types.
-// 4) Add a freshly formatted version of the image to src/test_images
-// 5) Add a format test and any other relevant tests to disk_image_tests.zig
+
+// FUTURE TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
 
 const log = std.log.scoped(.altair_disk_lib);
 const logerr = if (@import("builtin").fuzz) log.info else log.err;

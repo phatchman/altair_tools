@@ -5,9 +5,7 @@
 // aDD SOME COPY SAME FILE TWICE TESTS.
 // test Extract random access files from disk basic
 // TODO: Support big and small files on hd_basic.
-// Test zero length files for all formats.
 // Merge change to split out fuzz tests into individual tests.
-// TODO: Fuzz test the basic decoder.
 // TODO: Filled random access.
 
 const io = std.testing.io;
@@ -456,6 +454,41 @@ test "8in Binary file" {
 
 test "8in Auto detect file type" {
     // TODO: embed a test file with bin and ascii in it and get both.
+
+}
+
+test "Altair DOS random access file" {
+    // Standard size
+    var test_file: [5 * 1024 - 256]u8 = @splat(0x55);
+    var test_stream: std.Io.Reader = .fixed(&test_file);
+    var test_stream2: std.Io.Reader = .fixed(test_file[0..128]);
+
+    var image_file: [ADOS_8IN.image_size]u8 = undefined;
+    var test_image: InMemoryImage = undefined;
+    test_image.init(&image_file);
+    var disk_image = try newFormattedMemoryDiskImage(&test_image, ADOS_8IN);
+    defer disk_image.deinit();
+
+    try disk_image.copyToImage(&test_stream, "RAND", null, false, .Rand);
+    try disk_image.copyToImage(&test_stream2, "RAND2", null, false, .Rand);
+
+    var in_file: [test_file.len]u8 = undefined;
+    var in_stream: std.Io.Writer = .fixed(&in_file);
+    var cooked_dir = disk_image.directory.findByFilename("RAND", null);
+    try std.testing.expect(cooked_dir != null);
+    try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Rand);
+    try std.testing.expectEqualSlices(u8, &test_file, &in_file);
+
+    var in_file2: [1024 - 256]u8 = undefined;
+    var in_stream2: std.Io.Writer = .fixed(&in_file2);
+
+    cooked_dir = disk_image.directory.findByFilename("RAND2", null);
+    try std.testing.expect(cooked_dir != null);
+    try disk_image.copyFromImage(cooked_dir.?, &in_stream2, .Rand);
+    saveImage(test_stream2.buffered());
+    saveFile(in_stream2.buffered());
+    try std.testing.expectEqualSlices(u8, test_file[0..128], in_file2[0..128]);
+    try std.testing.expect(std.mem.allEqual(u8, in_file2[128..], 0));
 }
 
 fn countFilenames(itr: FileNameIterator) usize {

@@ -722,10 +722,18 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             prev_location = location;
             prev_sector = sector;
 
-            nbytes = reader.readSliceShort(&file_data) catch |err| switch (err) {
-                error.ReadFailed => return basic_reader.err orelse err,
-            };
-            if (nbytes == 0) break;
+            if (nbytes != 0) {
+                nbytes = reader.readSliceShort(&file_data) catch |err| switch (err) {
+                    error.ReadFailed => return basic_reader.err orelse err,
+                };
+            } else {
+                // Random access files have to fill up the whole group/allocation.
+                if (text_mode == .Rand) {
+                    @memset(&file_data, 0x00);
+                } else {
+                    break;
+                }
+            }
         }
         if (nbytes != 0) {
             alloc = try allocationGetFree(&image.directory, text_mode == .Rand);

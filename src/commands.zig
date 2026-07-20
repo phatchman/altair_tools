@@ -85,7 +85,7 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
                 printErrorMessage(current_command, .image_type_detect, .{}, error.CantDetectImage);
                 return error.CommandFailed;
             };
-            if (!unique) {
+            if (!unique and !options.quiet) {
                 try Console.stderr().print(
                     "WARNING: {s} and {s} formats cannot be distinuished with autodection. Assuming {s}. Use -T to set correct image type.\n",
                     .{
@@ -95,7 +95,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
                     },
                 );
             }
-            // std.debug.print("end detect\n", .{});
         }
 
         if (!options.do_format and !trial_image_type.isCorrectFormat(io, file)) {

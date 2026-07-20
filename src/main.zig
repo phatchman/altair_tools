@@ -28,7 +28,6 @@
 // SOFTWARE.
 //
 
-// TODO: Add a --quiet option to not print errors for bad disks
 // FUTURE TODO: For ados 8 in formats we should detect how many tracks are reserved by looking at the format.
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
@@ -93,6 +92,7 @@ pub const CommandLineOptions = struct {
     text_mode: bool = false,
     bin_mode: bool = false,
     rand_mode: bool = false,
+    quiet: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
     force: bool = false,
@@ -257,6 +257,12 @@ pub fn main(init_args: std.process.Init) !void {
                     .short_alias = 'T',
                     .value_ref = r.mkRef(&options.disk_image_type),
                     .value_name = "type",
+                },
+                .{
+                    .long_name = "quiet",
+                    .help = "Quiet - Suppress non-fatal error, warning and info messages",
+                    .short_alias = 'q',
+                    .value_ref = r.mkRef(&options.quiet),
                 },
                 .{
                     .long_name = "verbose",
@@ -457,6 +463,7 @@ pub fn log(
         .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
         else => return std.debug.print(@tagName(message_level) ++ ": " ++ @tagName(scope) ++ ": " ++ format, args),
     }
+    if (options.quiet) return;
     switch (message_level) {
         .info, .warn => {
             if (options.verbose) {
