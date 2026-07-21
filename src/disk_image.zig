@@ -79,9 +79,12 @@ pub const DiskImage = struct {
         }
     };
 
+    // TODO: We can re-ify this from the underlying errors?
+    pub const CopyFromImageError = (error{ InvalidFormat, InvalidToken, InvalidRecordNumber, WriteFailed } || ReadSectorError);
+
     /// copy a file from the image
     /// Expects a buffered out_writer.
-    pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) !void {
+    pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) CopyFromImageError!void {
         //std.debug.assert(out_writer.buffer.len > 0); // Buffered writer required.
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyFromImage(self, entry, out_writer, text_mode),
@@ -90,7 +93,7 @@ pub const DiskImage = struct {
         };
     }
 
-    pub fn rawEntryWrite(self: *DiskImage, raw_entry_nr: u16) !void {
+    pub fn rawEntryWrite(self: *DiskImage, raw_entry_nr: u16) (error{ReadOnlySupport} || WriteSectorError || RawDirError)!void {
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.rawEntryWrite(self, raw_entry_nr),
             .ados => os_ados.rawEntryWrite(self, raw_entry_nr),
@@ -167,25 +170,28 @@ pub const DiskImage = struct {
         return null;
     }
 
+    pub const CopyToImageError = (error{ InvalidFilename, InvalidFormat, PathAlreadyExists, OutOfExtents, OutOfAllocs, ReadFailed, StreamTooLong, OutOfMemory, InvalidImageFile } || DiskImage.EraseError);
+
     /// Copy a file from file_reader to the disk image.
     pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool, text_mode: TextMode) !void {
-        try switch (self.image_type.OS) {
-            .cpm, .cdos => os_cpm.copyToImage(self, file_reader, to_filename, user, force),
-            .ados => os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
+        switch (self.image_type.OS) {
+            .cpm, .cdos => try os_cpm.copyToImage(self, file_reader, to_filename, user, force),
+            .ados => try os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
             .hd_basic => {
                 if (self.image_type.type_id == .TIMESHARE_BASIC)
                     return error.ReadOnlySupport;
-                return os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode);
+                return try os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode);
             },
-        };
+        }
     }
 
+    pub const EraseError = (error{ CookedDirEntryNotFound, ReadOnlySupport } || ReadSectorError || WriteSectorError || RawDirError);
     /// Erase a file.
     /// Note that this invalidates any pointers to existing CookedDirEntries
     /// Including any iterators.
     // FUTURE TODO: erase is better implemented in disk_image than directory_table.
     // especially now that erase does not more than just flip some bits in the dircetory table.
-    pub fn erase(self: *DiskImage, to_erase: *CookedDirEntry) !void {
+    pub fn erase(self: *DiskImage, to_erase: *CookedDirEntry) EraseError!void {
         if (self.image_type.type_id == .TIMESHARE_BASIC)
             return error.ReadOnlySupport;
         return self.directory.eraseEntry(to_erase, self);
@@ -198,7 +204,8 @@ pub const DiskImage = struct {
             return self.image_type.sectors_per_track;
     }
 
-    pub fn extractOperatingSystem(self: *DiskImage, io: std.Io, out_file: File) !void {
+    pub const ExtractOperatingSystemError = (error{ InvalidImageFile, WriteFailed } || std.Io.File.Reader.SeekError || std.Io.File.Writer.Error);
+    pub fn extractOperatingSystem(self: *DiskImage, io: std.Io, out_file: File) ExtractOperatingSystemError!void {
         try self.reader.seekTo(0);
         var writer = out_file.writer(io, &.{});
 
@@ -206,12 +213,23 @@ pub const DiskImage = struct {
             var sector: DiskSector = .initUnformatted(self.image_type, @intCast(track_nr));
             for (0..self.sectorsForTrack(track_nr)) |_| {
                 self.reader.interface().readSliceAll(sector.rawBytes()) catch return error.InvalidImageFile;
-                try writer.interface.writeAll(sector.rawBytes());
+                writer.interface.writeAll(sector.rawBytes()) catch |err| switch (err) {
+                    error.WriteFailed => return writer.err.?,
+                };
             }
         }
     }
 
-    pub fn installOperatingSystem(self: *DiskImage, io: std.Io, in_file: File) !void {
+    pub const InstallOperatingSystemError = (error{
+        InvalidImageFile,
+        InvalidTrack,
+        InvalidSector,
+        ReadFailed,
+        WriteFailed,
+        EndOfStream,
+        ReadOnlySupport,
+    } || std.Io.File.Writer.SeekError || std.Io.File.Reader.Error || std.Io.File.LengthError);
+    pub fn installOperatingSystem(self: *DiskImage, io: std.Io, in_file: File) InstallOperatingSystemError!void {
         if (self.image_type.type_id == .TIMESHARE_BASIC)
             return error.ReadOnlySupport;
         const in_size = try in_file.length(io);

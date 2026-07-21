@@ -3,6 +3,9 @@
 //! Then next 2 bytes are the line number or 0x0000 for EOF
 //! The file is then read character by character and processed until 0x00 which indicated end of line.
 
+// FUTURE TODO: Make the decode available for all formats after more testing.
+// FUTURE TODO: Make a standalone version of the decoder.
+
 const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;

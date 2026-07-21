@@ -232,7 +232,7 @@ pub const DirEntry = extern struct {
         try writer.print("Allocations      : {any}\n", .{self.allocations});
     }
 
-    pub fn cook(self: *const DirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType, entry_nr: u16) !CookedDirEntry {
+    pub fn cook(self: *const DirEntry, arena: std.mem.Allocator, image_type: *const DiskImageType, entry_nr: u16) (error{OutOfMemory} || DirectoryTable.RawDirError)!CookedDirEntry {
         try self.validate(image_type, entry_nr);
         var result: CookedDirEntry = .{
             .user = 0,
@@ -515,7 +515,7 @@ const ImageFileReader = struct {
     }
 };
 
-pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: DiskImage.TextMode) !void {
+pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: DiskImage.TextMode) (error{ InvalidFormat, InvalidToken, WriteFailed } || ReadSectorError)!void {
     var buffer: [256]u8 = undefined;
     var decode_basic_file: bool = false;
     var reader: ImageFileReader = .init(image, entry, &buffer);
@@ -547,7 +547,8 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     }
 }
 
-pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) !void {
+pub const CopyToImageError = (EraseError || error{ PathAlreadyExists, OutOfExtents, OutOfAllocs, OutOfMemory });
+pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) CopyToImageError!void {
     const CopyToImage = struct {
         const CopyToImage = @This();
         img: *DiskImage,
@@ -568,7 +569,9 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             };
         }
 
-        pub fn newAllocation(self: *CopyToImage) !void { //error{OutOfAllocs}!void {
+        /// return a new allocation or error when no more allocations
+        /// Handles allocations for both small and large files and conversion from small to large
+        pub fn newAllocation(self: *CopyToImage) (error{OutOfAllocs} || WriteSectorError)!void {
             // This should be impossible to trigger on 5MB hd_basic disks.
             if (self.indirect_alloc_idx >= self.entry.allocations.len) return error.OutOfAllocs;
 
@@ -603,7 +606,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             }
         }
 
-        fn initIndirectGroupPages(self: *CopyToImage) !void {
+        fn initIndirectGroupPages(self: *CopyToImage) WriteSectorError!void {
             const location = self.indirect_location.?;
             for (0..self.img.image_type.sectors_per_alloc) |offset| {
                 var sector: DiskSector = .initUnformatted(self.img.image_type, location.track);
@@ -612,7 +615,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             }
         }
 
-        fn writeIndirectGroupPage(self: *CopyToImage) !void {
+        fn writeIndirectGroupPage(self: *CopyToImage) WriteSectorError!void {
             var sector: DiskSector = .initUnformatted(self.img.image_type, self.indirect_location.?.track);
             @memcpy(sector.dataBytes(), @as([]u8, @ptrCast(&self.indirect_groups)));
             try self.img.writeSector(self.indirect_location.?, &sector);
@@ -637,8 +640,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             self.indirect_group_idx = self.entry.allocations.len;
         }
 
-        // TODO: errorsets.
-        pub fn writePage(self: *CopyToImage, data: []const u8) !void {
+        pub fn writePage(self: *CopyToImage, data: []const u8) WriteSectorError!void {
             if (data.len == 0) return;
             const image_type = self.img.image_type;
             const sectors_per_alloc = image_type.sectors_per_alloc;
@@ -655,8 +657,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             }
         }
 
-        // TODO: Error sets
-        pub fn copyFile(self: *CopyToImage, reader: *std.Io.Reader) !void {
+        pub fn copyFile(self: *CopyToImage, reader: *std.Io.Reader) (error{OutOfAllocs} || std.Io.Reader.ShortError || WriteSectorError)!void {
             var read_buffer: [256]u8 = undefined;
             const sectors_per_alloc = self.img.image_type.block_size / self.img.image_type.sector_size_data;
             var nbytes = try reader.readSliceShort(&read_buffer);
@@ -670,14 +671,14 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             }
         }
 
-        pub fn flush(self: *CopyToImage) !void {
+        pub fn flush(self: *CopyToImage) WriteSectorError!void {
             if (self.indirect_location != null) {
                 try self.writeIndirectGroupPage();
             }
         }
     };
 
-    // TODO: This is common to all copy routines.
+    // FUTURE TODO: This is common to all copy routines.
     const basename = std.fs.path.basename(to_filename);
     var conversion_buf: [@typeInfo(@FieldType(DirEntry, "filename")).array.len]u8 = undefined;
     const filename = translateFilename(basename, &conversion_buf);
@@ -686,10 +687,10 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         if (force) {
             try image.erase(existing_entry);
         } else {
-            return std.Io.File.OpenError.PathAlreadyExists;
+            return error.PathAlreadyExists;
         }
     }
-    // TODO: end common.
+    // FUTURE TODO: end common.
 
     var label_sector: DiskSector = .initUnformatted(image.image_type, 0);
     const label: *VolumeDescriptor = try loadVolumeLabel(image, &label_sector);
@@ -744,7 +745,7 @@ fn toPhysicalAddress(image_type: *const DiskImageType, page_nr: u16) PhysicalAdd
     };
 }
 
-fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) !*VolumeDescriptor {
+fn loadVolumeLabel(image: *DiskImage, sector: *DiskSector) ReadSectorError!*VolumeDescriptor {
     const location: PhysicalAddress = .{ .track = 0, .sector = 0 };
     sector.* = .initUnformatted(image.image_type, location.track);
     try image.readSector(location, sector);
@@ -779,8 +780,7 @@ pub fn initVolumeLabel(image_type: *const DiskImageType, sector: *DiskSector) vo
     };
 }
 
-// TODO: error sets
-pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) !void {
+pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) (ReadSectorError || WriteSectorError)!void {
     var sector: DiskSector = .initUnformatted(image.image_type, 0);
     try image.readSector(.{ .track = 0, .sector = 0 }, &sector);
     const vd: *VolumeDescriptor = std.mem.bytesAsValue(VolumeDescriptor, sector.dataBytes());
@@ -802,7 +802,7 @@ pub fn volumeLabelSet(image: *DiskImage, label: DiskLabel) !void {
     try image.writeSector(dir_location, &sector);
 }
 
-pub fn volumeLabelGet(image: *DiskImage, label: *DiskLabel) !void {
+pub fn volumeLabelGet(image: *DiskImage, label: *DiskLabel) error{ LabelingNotSupported, LabelNotFound }!void {
     label.* = .{ .hd_basic = undefined };
     var sector: DiskSector = .initUnformatted(image.image_type, 0);
     const vol = loadVolumeLabel(image, &sector) catch |err| {
@@ -841,7 +841,7 @@ pub fn initAllocationMap(sector: *DiskSector, which: enum { first, second }) voi
     }
 }
 
-pub fn writeAllocationBitmap(image: *DiskImage) !void {
+pub fn writeAllocationBitmap(image: *DiskImage) (ReadSectorError || WriteSectorError)!void {
     var allocation_bitmap: [512]u8 = @splat(0);
     for (&allocation_bitmap, 0..) |*byte, idx| {
         const capacity = image.directory.free_allocations.capacity();
@@ -1023,4 +1023,6 @@ const PhysicalAddress = disk_types.PhysicalAddress;
 const DiskLabel = disk_types.DiskLabel;
 const CookedDirEntry = directory_table.CookedDirEntry;
 const ReadSectorError = DiskImage.ReadSectorError;
+const WriteSectorError = DiskImage.WriteSectorError;
+const EraseError = DiskImage.EraseError;
 const basic_file_decoder = @import("basic_file_decoder.zig");

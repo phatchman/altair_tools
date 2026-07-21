@@ -634,14 +634,15 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     }
 }
 
-pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) !void {
+pub const CopyToImageError = (error{ InvalidFilename, InvalidFormat, PathAlreadyExists, OutOfExtents, OutOfAllocs, ReadFailed, StreamTooLong, OutOfMemory, InvalidImageFile } || DiskImage.EraseError);
+pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) CopyToImageError!void {
     var filename_buf: [8]u8 = undefined;
     const ados_filename = try translateFilename(to_filename, &filename_buf);
     if (image.directory.findByFilename(ados_filename, null)) |existing_entry| {
         if (force) {
             try image.erase(existing_entry);
         } else {
-            return std.Io.File.OpenError.PathAlreadyExists;
+            return error.PathAlreadyExists;
         }
     }
 
@@ -800,7 +801,7 @@ pub fn rawEntryWrite(image: *DiskImage, extent_nr: u16) (WriteSectorError || Raw
     try image.writeSector(location, &sector);
 }
 
-pub fn clearErasedSectors(image: *DiskImage, raw_item: *DirEntry) !void {
+pub fn clearErasedSectors(image: *DiskImage, raw_item: *DirEntry) (error{ WriteFailed, InvalidAllocation } || ReadSectorError)!void {
     var track_nr: u16 = raw_item.track;
     var sector_nr: u16 = raw_item.sector;
 
