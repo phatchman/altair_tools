@@ -286,10 +286,12 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
     {
         var label_sector: DiskSector = undefined;
         const label = try loadVolumeLabel(image, &label_sector);
-        if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
-            return unsupported(label);
-        } else if (label.allocation_pages[0] != DiskImageType_HD_BASIC.allocation_page) {
-            return unsupported(label);
+        if (!@import("builtin").fuzz) {
+            if (label.directory_pages[0] != DiskImageType_HD_BASIC.directory_page) {
+                return unsupported(label);
+            } else if (label.allocation_pages[0] != DiskImageType_HD_BASIC.allocation_page) {
+                return unsupported(label);
+            }
         }
 
         var dir_page: u16 = DiskImageType_HD_BASIC.directory_page;
