@@ -1,12 +1,7 @@
-//! Test all disk operations on each image format
+//! Tests most disk operations on each image format
 
-// TODO: Invalid images and recovery of images.
-// Add some generic erase tests.
-// aDD SOME COPY SAME FILE TWICE TESTS.
-// test Extract random access files from disk basic
-// TODO: Support big and small files on hd_basic.
-// Merge change to split out fuzz tests into individual tests.
-// TODO: Filled random access.
+// FUTURE TODO: Invalid images and recovery of images.
+// FUTURE TODO: Filled random access.
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -68,7 +63,7 @@ test "8in alt size" {
     var image_writer = image_file.writer(io, &.{});
 
     var disk_image = try DiskImage.init(
-        std.testing.allocator,
+        allocator,
         .{ .on_disk = &image_reader },
         .{ .on_disk = &image_writer },
         FDD_8IN,
@@ -302,23 +297,27 @@ test "overfill directory" {
     }
 }
 
-test "8in duplicate filenames" {
-    var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
-    var test_stream: std.Io.Reader = .fixed(&test_file);
+test "duplicate filenames" {
+    for (all_formats) |fmt| {
+        if (fmt.type_id == .TIMESHARE_BASIC) continue;
+        var test_file = "Ain't got no distractions, can't hear no buzzes and bells. Don't see no lights a-flashing, plays by sense of smell. Always gets the replay, never seen him fall".*;
+        var test_stream: std.Io.Reader = .fixed(&test_file);
 
-    var image_file: [FDD_8IN.image_size]u8 = undefined;
-    var test_image: InMemoryImage = undefined;
-    test_image.init(&image_file);
-    var disk_image = try newFormattedMemoryDiskImage(&test_image, FDD_8IN);
-    defer disk_image.deinit();
+        const image_file = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(image_file);
+        var test_image: InMemoryImage = undefined;
+        test_image.init(image_file);
+        var disk_image = try newFormattedMemoryDiskImage(&test_image, fmt);
+        defer disk_image.deinit();
 
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
-    try std.testing.expectError(
-        std.Io.File.OpenError.PathAlreadyExists,
-        disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto),
-    );
-    // 2nd time force the overwrite.
-    try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true, .Auto);
+        try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto);
+        try std.testing.expectError(
+            std.Io.File.OpenError.PathAlreadyExists,
+            disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, false, .Auto),
+        );
+        // 2nd time force the overwrite.
+        try disk_image.copyToImage(&test_stream, "PINBALL.TXT", 0, true, .Auto);
+    }
 }
 
 test "8in duplicate CPM filenames" {
@@ -371,8 +370,8 @@ test "zero-length file" {
         var test_file = "".*;
         var test_stream: std.Io.Reader = .fixed(&test_file);
 
-        const image_file = try std.testing.allocator.alloc(u8, fmt.image_size);
-        defer std.testing.allocator.free(image_file);
+        const image_file = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(image_file);
         var test_image: InMemoryImage = undefined;
         test_image.init(image_file);
 
@@ -502,8 +501,8 @@ fn countFilenames(itr: FileNameIterator) usize {
 
 test "Multiple filenames across users" {
     var image_file: InMemoryConstImage = undefined;
-    try image_file.init(std.testing.allocator, @embedFile("test_disks/filenames.dsk"));
-    defer image_file.deinit(std.testing.allocator);
+    try image_file.init(allocator, @embedFile("test_disks/filenames.dsk"));
+    defer image_file.deinit(allocator);
 
     var disk_image = try newMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
@@ -551,8 +550,8 @@ test "Find filename with wildcards" {
     // SOMETHIN EXT     128B   2K 2 W
 
     var image_file: InMemoryConstImage = undefined;
-    try image_file.init(std.testing.allocator, @embedFile("test_disks/filenames.dsk"));
-    defer image_file.deinit(std.testing.allocator);
+    try image_file.init(allocator, @embedFile("test_disks/filenames.dsk"));
+    defer image_file.deinit(allocator);
     var disk_image = try newMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
 
@@ -609,8 +608,8 @@ test "Find filenames without extensions" {
 
 test "erase" {
     var image_file: InMemoryConstImage = undefined;
-    try image_file.init(std.testing.allocator, @embedFile("test_disks/erase_pre.dsk"));
-    defer image_file.deinit(std.testing.allocator);
+    try image_file.init(allocator, @embedFile("test_disks/erase_pre.dsk"));
+    defer image_file.deinit(allocator);
 
     var disk_image = try newMemoryDiskImage(&image_file, FDD_8IN);
     defer disk_image.deinit();
@@ -636,11 +635,61 @@ test "erase" {
     try std.testing.expectEqualSlices(u8, compare_file, image_file.buffer);
 }
 
+test "disk erase" {
+    //std.testing.log_level = .info;
+    inline for (all_formats) |fmt| {
+        if (fmt.type_id == .TIMESHARE_BASIC) continue;
+        std.log.info("disk erase for {t}\n", .{fmt.type_id});
+        const image_buf = try allocator.alloc(u8, fmt.image_size);
+        defer allocator.free(image_buf);
+
+        var image_file: InMemoryImage = undefined;
+        image_file.init(image_buf);
+
+        var disk_image = try newFormattedMemoryDiskImage(&image_file, fmt);
+        defer disk_image.deinit();
+
+        const in_file: [129]u8 = @splat('T');
+        var in_reader: std.Io.Reader = .fixed(&in_file);
+
+        try disk_image.copyToImage(&in_reader, "fil0.txt", null, false, .Auto);
+        in_reader.seek = 0;
+        try disk_image.copyToImage(&in_reader, "fil1.txt", null, false, .Auto);
+        in_reader.seek = 0;
+        try disk_image.copyToImage(&in_reader, "fil2.txt", null, false, .Auto);
+
+        const initial_free_count = disk_image.directory.rawEntryFreeCount();
+        const initial_free_allocs = disk_image.directory.free_allocations.count();
+
+        const to_erase = disk_image.directory.findByFilename("fil1.txt", null);
+        try std.testing.expect(to_erase != null);
+        try disk_image.erase(to_erase.?);
+        const erased = disk_image.directory.findByFilename("fil1.txt", null);
+        try std.testing.expect(erased == null);
+
+        try std.testing.expect(disk_image.directory.findByFilename("fil0.txt", null) != null);
+        try std.testing.expect(disk_image.directory.findByFilename("fil2.txt", null) != null);
+
+        try std.testing.expectEqual(initial_free_count + 1, disk_image.directory.rawEntryFreeCount());
+        try std.testing.expect(initial_free_allocs < disk_image.directory.free_allocations.count());
+
+        // Make sure it is really erased
+        try reinitDiskImage(&disk_image);
+        try std.testing.expectEqual(null, disk_image.directory.findByFilename("fil1.txt", null));
+
+        try std.testing.expect(disk_image.directory.findByFilename("fil0.txt", null) != null);
+        try std.testing.expect(disk_image.directory.findByFilename("fil2.txt", null) != null);
+
+        try std.testing.expectEqual(initial_free_count + 1, disk_image.directory.rawEntryFreeCount());
+        try std.testing.expect(initial_free_allocs < disk_image.directory.free_allocations.count());
+    }
+}
+
 // Test no corruption when raw directory entries are not contiguous
 test "non-contiguous extent" {
     var compare_image: InMemoryConstImage = undefined;
-    try compare_image.init(std.testing.allocator, @embedFile("test_disks/non_contiguous.dsk"));
-    defer compare_image.deinit(std.testing.allocator);
+    try compare_image.init(allocator, @embedFile("test_disks/non_contiguous.dsk"));
+    defer compare_image.deinit(allocator);
 
     const expected = @embedFile("test_disks/32k.txt");
 
@@ -699,8 +748,8 @@ test "autodetect image" {
 test "non-standard CDOS" {
     //    std.testing.log_level = .info;
     var test_image: InMemoryConstImage = undefined;
-    try test_image.init(std.testing.allocator, @embedFile("test_disks/lgdsdd_64dirs.dsk"));
-    defer test_image.deinit(std.testing.allocator);
+    try test_image.init(allocator, @embedFile("test_disks/lgdsdd_64dirs.dsk"));
+    defer test_image.deinit(allocator);
 
     const disk_image = newMemoryDiskImage(&test_image, CDOS_LGDSDD);
     try std.testing.expectError(error.InvalidImageFile, disk_image);
@@ -767,19 +816,19 @@ test "fuzz image HD_BASIC" {
 //const crash = @embedFile("crash");
 
 fn randomData(fmt: *const DiskImageType, smith: *std.testing.Smith) !void {
-    const image_buffer = try std.testing.allocator.alloc(u8, fmt.image_size);
-    defer std.testing.allocator.free(image_buffer);
+    const image_buffer = try allocator.alloc(u8, fmt.image_size);
+    defer allocator.free(image_buffer);
     smith.bytes(image_buffer);
     var mem_image: InMemoryImage = undefined;
     mem_image.init(image_buffer);
 
-    var disk_image: DiskImage = DiskImage.init(std.testing.allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt) catch return;
+    var disk_image: DiskImage = DiskImage.init(allocator, .{ .in_memory = &mem_image.reader }, .{ .in_memory = &mem_image.writer }, fmt) catch return;
     defer disk_image.deinit();
 
     disk_image.loadDirectories(.full) catch return;
 
-    var test_file: []u8 = try std.testing.allocator.alloc(u8, 1024 * 1024);
-    defer std.testing.allocator.free(test_file);
+    var test_file: []u8 = try allocator.alloc(u8, 1024 * 1024);
+    defer allocator.free(test_file);
 
     if (disk_image.directory.cooked_directories.items.len > 0) {
         var file_writer: std.Io.Writer = .fixed(test_file);
@@ -840,14 +889,14 @@ const InMemoryImage = struct {
 };
 
 fn newMemoryDiskImage(raw_image: *InMemoryConstImage, image_type: *const DiskImageType) !DiskImage {
-    var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
+    var disk_image = try DiskImage.init(allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
     try disk_image.loadDirectories(.full);
     return disk_image;
 }
 
 fn newFormattedMemoryDiskImage(raw_image: *InMemoryImage, image_type: *const DiskImageType) !DiskImage {
-    var disk_image = try DiskImage.init(std.testing.allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
+    var disk_image = try DiskImage.init(allocator, .{ .in_memory = &raw_image.reader }, .{ .in_memory = &raw_image.writer }, image_type);
     errdefer disk_image.deinit();
     try disk_image.formatImage();
     try disk_image.loadDirectories(.full);
@@ -878,7 +927,7 @@ pub fn reinitDiskImage(image: *DiskImage) !void {
     const writer = image.writer;
     try reader.seekTo(0);
     try writer.seekTo(0);
-    try image.reinit(std.testing.allocator, reader, writer);
+    try image.reinit(allocator, reader, writer);
     try image.loadDirectories(.full);
 }
 
@@ -887,7 +936,7 @@ fn newPhysicalDiskImage(reader: *std.Io.File.Reader, writer: *std.Io.File.Writer
     const image_file = try std.Io.Dir.cwd().createFile(std.testing.io, "TEST.IMG", .{ .read = true });
     reader.* = image_file.reader(std.testing.io, &.{});
     writer.* = image_file.writer(std.testing.io, &.{});
-    var disk_image = try DiskImage.init(std.testing.allocator, .{ .on_disk = reader }, .{ .on_disk = writer }, image_type);
+    var disk_image = try DiskImage.init(allocator, .{ .on_disk = reader }, .{ .on_disk = writer }, image_type);
     try disk_image.formatImage();
     try disk_image.loadDirectories(.full);
     return disk_image;
@@ -909,7 +958,7 @@ fn saveImage(contents: []const u8) void {
 
 // Save an image with a filename including the image format.
 fn saveImageFmt(contents: []const u8, fmt: *const DiskImageType) void {
-    var file_name: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    var file_name: std.Io.Writer.Allocating = .init(allocator);
     defer file_name.deinit();
     file_name.writer.print("TEST_OUT_{s}.DSK", .{fmt.type_name}) catch unreachable;
     var file = std.Io.Dir.cwd().createFile(std.testing.io, file_name.written(), .{}) catch {

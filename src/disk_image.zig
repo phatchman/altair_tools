@@ -10,7 +10,6 @@ pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
-
 /// Interface for opening and maniplating various Altair CPM disk images.
 pub const DiskImage = struct {
     reader: SeekableReader,
@@ -184,6 +183,8 @@ pub const DiskImage = struct {
     /// Erase a file.
     /// Note that this invalidates any pointers to existing CookedDirEntries
     /// Including any iterators.
+    // FUTURE TODO: erase is better implemented in disk_image than directory_table.
+    // especially now that erase does not more than just flip some bits in the dircetory table.
     pub fn erase(self: *DiskImage, to_erase: *CookedDirEntry) !void {
         if (self.image_type.type_id == .TIMESHARE_BASIC)
             return error.ReadOnlySupport;
@@ -423,7 +424,6 @@ pub const DiskImage = struct {
         try sector.dump(physical_location, sector_offset);
     }
 };
-
 
 /// Allows Files and memory images to be used interchangeably for reading
 pub const SeekableReader = union(enum) {

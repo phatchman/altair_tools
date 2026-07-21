@@ -814,13 +814,17 @@ pub fn clearErasedSectors(image: *DiskImage, raw_item: *DirEntry) !void {
             },
             else => return err,
         };
-        track_nr = sector.data.next_track;
-        sector_nr = sector.data.next_sector;
         sector.data.file_nr = 0;
         sector.data.nbytes = 0;
         sector.data.next_sector = 0;
         sector.data.next_track = 0;
         try image.writeSector(location, &sector);
+        if (sector_nr % image.image_type.sectors_per_alloc == 0) {
+            const alloc = try toAllocation(image.image_type, location);
+            try setAllocation(&image.directory, alloc);
+        }
+        track_nr = sector.data.next_track;
+        sector_nr = sector.data.next_sector;
     }
 }
 
@@ -870,12 +874,21 @@ pub fn allocationGetFree(dir: *DirectoryTable, for_random_access: bool) error{ O
     }
 }
 
-pub fn unsetAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
+fn unsetAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
     if (alloc >= dir.free_allocations.capacity()) {
-        logerr("Attempt to set an invalid allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
+        logerr("Attempt to unset an invalid free allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
         return error.InvalidAllocation;
     }
     dir.free_allocations.unset(alloc);
+}
+
+fn setAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
+    if (alloc >= dir.free_allocations.capacity()) {
+        logerr("Attempt to set an invalid free allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
+        return error.InvalidAllocation;
+    }
+    std.debug.assert(!dir.free_allocations.isSet(alloc));
+    dir.free_allocations.set(alloc);
 }
 
 pub fn rawEntryGetFreeInitialized(image: *DiskImage, extent_nr: *u16) error{OutOfExtents}!*DirEntry {
