@@ -22,7 +22,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 [Go straight to the gui examples](docs/ADGUI.md)
 
 ### LLM / "AI" Disclosure and Policy
-* All Zig code and documentation in this repository are human crafted.
+* All Zig code and documentation in this repository is human crafted.
 * No LLMs have been used to write any line of code or documentation.
 * LLMs have been used in a read-only mode for review and writing temporary testing tools.
 * Code and documentation contributions must not contain any LLM content or be derived from LLM content.
