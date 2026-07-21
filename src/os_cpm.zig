@@ -951,7 +951,7 @@ fn toPhysicalAddress(image: *const DiskImage, address: LogicalAddress) PhysicalA
     const track: u16 = image.image_type.reserved_tracks + (absolute_sector / image.image_type.sectors_per_track);
     const logical_sector = absolute_sector % image.image_type.sectors_per_track;
 
-    log.debug("ALLOCATION[{}], RECORD[{}], LOGICAL[{}], ", .{ address.allocation, address.record, logical_sector });
+    log.debug("ALLOCATION[{}], RECORD[{}], ", .{ address.allocation, address.record });
     return PhysicalAddress{ .track = track, .sector = logical_sector };
 }
 

@@ -401,7 +401,7 @@ pub const DiskImage = struct {
         const physical_location: PhysicalAddress = .{ .track = location.track, .sector = self.image_type.skew(location.track, location.sector) };
         const sector_offset = self.image_type.seekOffset(physical_location);
 
-        log.debug("Reading from TRACK[{}], SECTOR[{}], OFFSET[{}]\n", .{ physical_location.track, physical_location.sector, sector_offset });
+        log.debug("Reading from TRACK[{}], LOGICAL[{}], PHYSICAL[{}] OFFSET[{}]\n", .{ physical_location.track, location.sector, physical_location.sector, sector_offset });
 
         try self.reader.seekTo(@intCast(sector_offset));
         sector.* = .initUnformatted(self.image_type, physical_location.track);
