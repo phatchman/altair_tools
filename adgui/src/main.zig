@@ -144,13 +144,33 @@ var commands = Commands{};
 
 var io: std.Io = undefined;
 
+var log_level: std.log.Level = .err;
+
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = myLogFn,
+};
+
+fn myLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@intFromEnum(level) > @intFromEnum(log_level)) return;
+    std.log.defaultLog(level, scope, format, args);
+}
+
 const os = @import("builtin").os;
 pub fn main(init: std.process.Init) !void {
     if (os.tag == .windows and os.isAtLeast(.windows, .win10) orelse false) { // optional
         // on windows graphical apps have no console, so output goes to nowhere - attach it manually. related: https://github.com/ziglang/zig/issues/4196
         _ = winapi.AttachConsole(0xFFFFFFFF);
     }
-
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len > 1 and std.mem.eql(u8, args[1], "--debug")) {
+        log_level = .debug;
+    }
     std.log.info("SDL version: {}", .{Backend.getSDLVersion()});
     io = init.io;
 
@@ -240,13 +260,6 @@ pub fn main(init: std.process.Init) !void {
         // marks end of dvui frame, don't call dvui functions after this
         // - sends all dvui stuff to backend for rendering, must be called before renderPresent()
         const end_micros = try win.end(.{});
-
-        // cursor management
-        backend.setCursor(win.cursorRequested());
-        backend.textInputRect(win.textInputRequested());
-
-        // render frame to OS
-        backend.renderPresent();
 
         // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros);
@@ -815,12 +828,18 @@ fn makeGridBody(id: GridType) !void {
             switch (e.evt) {
                 .mouse => |me| {
                     const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
-                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
+                    //                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
+                    const mouse_p_relative = scroll.data().contentRectScale().pointFromPhysical(me.p);
                     const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
                     rel_mouse_index = @intFromFloat(rel_mouse_index_f);
                     rel_mouse_index = @min(rel_mouse_index, to_display.items.len - 1);
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
+                    const rs = scroll.data().contentRectScale();
+                    std.log.debug(
+                        "me.p=({d:.1},{d:.1}) rs.topleft=({d:.1},{d:.1}) rs.s={d:.3} mouse_rel=({d:.1},{d:.1}), viewport.y={d:.1} first_disp={d:.3} rel_idx_f={d:.3} rel_idx={} abs_idx={}\n",
+                        .{ me.p.x, me.p.y, rs.r.x, rs.r.y, rs.s, mouse_p_relative.x, mouse_p_relative.y, getScrollInfo(id).viewport.y, first_displayed_f, rel_mouse_index_f, rel_mouse_index, abs_mouse_index },
+                    );
                     if (me.action == .press and me.button.pointer()) {
                         e.handled = true;
                         var dirs = getDirectoryById(id);
@@ -2590,10 +2609,6 @@ fn defaultPath() [:0]u8 {
 const winapi = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn AttachConsole(dwProcessId: std.os.windows.DWORD) std.os.windows.BOOL;
 } else struct {};
-
-pub const std_options: std.Options = .{
-    .log_level = .err,
-};
 
 const ButtonHandler = @import("ButtonHandler.zig");
 const CommandState = @import("CommandState.zig");

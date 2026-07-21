@@ -296,7 +296,7 @@ pub fn main(init_args: std.process.Init) !void {
                 },
             },
         },
-        .version = "0.9",
+        .version = "0.9.5",
         //.author = "Paul Hatchman",
     };
 

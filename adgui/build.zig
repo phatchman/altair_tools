@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
 
     const dvui_dep = b.dependency("dvui", .{
         .target = target,
-        // TODO: This works around a bug in translate-c which won;t compile dvui in ReleaseSafe mode
+        // TODO: This works around a bug in translate-c which won't compile dvui in ReleaseSafe mode
         .optimize = if (optimize == .ReleaseSafe) .ReleaseFast else optimize,
         .linux_display_backend = .X11,
     });
