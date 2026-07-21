@@ -1,5 +1,5 @@
-//! The hole of various host operating system fuctions
-//! By host we mean the operating system running altairdsk
+//! The home of various host operating system fuctions
+//! By host we mean the operating system running altairdsk vs the image operating system
 
 pub const windows = struct {
     // This is non-backtracking implementation of globbing.

@@ -6,6 +6,85 @@
 const log = std.log.scoped(.altair_disk_lib);
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
+/// all available disk image formats.
+pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .init(.{
+    .FDD_8IN = cpm.DiskImageType_MITS_8IN.init(),
+    .HDD_5MB = cpm.DiskImageType_MITS_5MB_HDD.init(),
+    .HDD_5MB_1024 = cpm.DiskImageType_MITS_5MB_HDD_1024.init(),
+    .FDD_TAR = cpm.DiskImageType_TARBELL_FDD.init(),
+    .@"FDD_1.5MB" = cpm.@"DiskImageType_FDD_1.5MB".init(),
+    .FDD_8IN_8MB = cpm.DiskImageType_MITS_8IN_8MB.init(),
+    .CPM_MINI = cpm.DiskImageType_CPM_MINI.init(),
+    .CDOS_SMSSSD = cdos.DiskImageType_CDOS_SMSSSD.init(),
+    .CDOS_SMSSDD = cdos.DiskImageType_CDOS_SMSSDD.init(),
+    .CDOS_SMDSSD = cdos.DiskImageType_CDOS_SMDSSD.init(),
+    .CDOS_SMDSDD = cdos.DiskImageType_CDOS_SMDSDD.init(),
+    .CDOS_LGSSSD = cdos.DiskImageType_CDOS_LGSSSD.init(),
+    .CDOS_LGSSDD = cdos.DiskImageType_CDOS_LGSSDD.init(),
+    .CDOS_LGDSSD = cdos.DiskImageType_CDOS_LGDSSD.init(),
+    .CDOS_LGDSDD = cdos.DiskImageType_CDOS_LGDSDD.init(),
+    .ADOS_8IN = ados.DiskImageType_ADOS_8IN.init(),
+    .ADOS_MINI = ados.DiskImageType_ADOS_MINI.init(),
+    .TIMESHARE_BASIC = ados.DiskImageType_TIMESHARE_BASIC.init(),
+    .ADOS_MINI_BOOT = ados.DiskImageType_ADOS_MINI_BOOT.init(),
+    .HD_BASIC = hd_basic.DiskImageType_HD_BASIC.init(),
+});
+
+/// The display names for each image type.
+pub const all_disk_type_names = init: {
+    var r: [all_disk_types.values.len][]const u8 = undefined;
+    for (0..all_disk_types.values.len) |i| {
+        r[i] = all_disk_types.values[i].type_name;
+    }
+    const result = r;
+    break :init result;
+};
+
+pub const DiskImageTypes = enum {
+    FDD_8IN,
+    HDD_5MB,
+    HDD_5MB_1024,
+    FDD_TAR,
+    @"FDD_1.5MB",
+    FDD_8IN_8MB,
+    CDOS_SMSSSD,
+    CDOS_SMSSDD,
+    CDOS_SMDSSD,
+    CDOS_SMDSDD,
+    CDOS_LGSSSD,
+    CDOS_LGSSDD,
+    CDOS_LGDSSD,
+    CDOS_LGDSDD,
+    ADOS_8IN,
+    ADOS_MINI,
+    ADOS_MINI_BOOT,
+    CPM_MINI,
+    HD_BASIC,
+    TIMESHARE_BASIC,
+    // Create an enum with just the sub-set of CDOS disk types.
+    pub fn CDOSTypes() type {
+        const fields = std.meta.fields(@This());
+        const tag_type = @typeInfo(@This()).@"enum".tag_type;
+        var names: [fields.len][]const u8 = undefined;
+        var values: [fields.len]tag_type = undefined;
+        var field_count: usize = 0;
+        for (fields) |field| {
+            if (std.mem.startsWith(u8, field.name, "CDOS_")) {
+                names[field_count] = field.name;
+                values[field_count] = field.value;
+                field_count += 1;
+            }
+        }
+        return @Enum(tag_type, .exhaustive, names[0..field_count], values[0..field_count]);
+    }
+
+    /// Convert a DiskImageTypes enum to a CDOSTypes enum
+    /// Will panic if called for a non-cdos image type.
+    pub fn toCDOS(self: DiskImageTypes) CDOSTypes() {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
+
 pub const OperatingSystem = enum {
     cpm,
     cdos,
@@ -109,7 +188,7 @@ pub const DiskSector = union(enum) {
     pub fn initUnformatted(image_type: *const DiskImageType, track_nr: u16) DiskSector {
         return switch (image_type.type_id) {
             // FUTURE TODO: Need to make this so when add a new 137 byte format we
-            // either get a compile error here, or don;t have to update this switch. Either one.
+            // either get a compile error here, or don't have to update this switch. Either one.
             .FDD_8IN,
             .FDD_8IN_8MB,
             => if (track_nr < 6)
@@ -481,93 +560,6 @@ pub const DiskImageType = struct {
         return image_size == self.image_size or image_size == (self.image_size + 127) / 128 * 128;
     }
 };
-
-pub const DiskImageTypes = enum {
-    FDD_8IN,
-    HDD_5MB,
-    HDD_5MB_1024,
-    FDD_TAR,
-    @"FDD_1.5MB",
-    FDD_8IN_8MB,
-    CDOS_SMSSSD,
-    CDOS_SMSSDD,
-    CDOS_SMDSSD,
-    CDOS_SMDSDD,
-    CDOS_LGSSSD,
-    CDOS_LGSSDD,
-    CDOS_LGDSSD,
-    CDOS_LGDSDD,
-    ADOS_8IN,
-    ADOS_MINI,
-    ADOS_MINI_BOOT,
-    CPM_MINI,
-    HD_BASIC,
-    TIMESHARE_BASIC,
-    // Create an enum with just the sub-set of CDOS disk types.
-    pub fn CDOSTypes() type {
-        const fields = std.meta.fields(@This());
-        const tag_type = @typeInfo(@This()).@"enum".tag_type;
-        var names: [fields.len][]const u8 = undefined;
-        var values: [fields.len]tag_type = undefined;
-        var field_count: usize = 0;
-        for (fields) |field| {
-            if (std.mem.startsWith(u8, field.name, "CDOS_")) {
-                names[field_count] = field.name;
-                values[field_count] = field.value;
-                field_count += 1;
-            }
-        }
-        return @Enum(tag_type, .exhaustive, names[0..field_count], values[0..field_count]);
-    }
-
-    /// Convert a DiskImageTypes enum to a CDOSTypes enum
-    /// Will panic if called for a non-cdos image type.
-    pub fn toCDOS(self: DiskImageTypes) CDOSTypes() {
-        return @enumFromInt(@intFromEnum(self));
-    }
-};
-
-/// all available disk image formats.
-pub const all_disk_types: std.enums.EnumArray(DiskImageTypes, DiskImageType) = .init(.{
-    .FDD_8IN = cpm.DiskImageType_MITS_8IN.init(),
-    .HDD_5MB = cpm.DiskImageType_MITS_5MB_HDD.init(),
-    .HDD_5MB_1024 = cpm.DiskImageType_MITS_5MB_HDD_1024.init(),
-    .FDD_TAR = cpm.DiskImageType_TARBELL_FDD.init(),
-    .@"FDD_1.5MB" = cpm.@"DiskImageType_FDD_1.5MB".init(),
-    .FDD_8IN_8MB = cpm.DiskImageType_MITS_8IN_8MB.init(),
-    .CPM_MINI = cpm.DiskImageType_CPM_MINI.init(),
-    .CDOS_SMSSSD = cdos.DiskImageType_CDOS_SMSSSD.init(),
-    .CDOS_SMSSDD = cdos.DiskImageType_CDOS_SMSSDD.init(),
-    .CDOS_SMDSSD = cdos.DiskImageType_CDOS_SMDSSD.init(),
-    .CDOS_SMDSDD = cdos.DiskImageType_CDOS_SMDSDD.init(),
-    .CDOS_LGSSSD = cdos.DiskImageType_CDOS_LGSSSD.init(),
-    .CDOS_LGSSDD = cdos.DiskImageType_CDOS_LGSSDD.init(),
-    .CDOS_LGDSSD = cdos.DiskImageType_CDOS_LGDSSD.init(),
-    .CDOS_LGDSDD = cdos.DiskImageType_CDOS_LGDSDD.init(),
-    .ADOS_8IN = ados.DiskImageType_ADOS_8IN.init(),
-    .ADOS_MINI = ados.DiskImageType_ADOS_MINI.init(),
-    .TIMESHARE_BASIC = ados.DiskImageType_TIMESHARE_BASIC.init(),
-    .ADOS_MINI_BOOT = ados.DiskImageType_ADOS_MINI_BOOT.init(),
-    .HD_BASIC = hd_basic.DiskImageType_HD_BASIC.init(),
-});
-
-// Zig creates these array at compile time, including setting up the function calls
-// for the different image types, performs all of the calculations in the init functions and
-// initializes the array with these values.
-// Similarly initDiskTypeNames() iterates through each entry in all_disk_types and extracts just the names,
-// at compile time.
-
-/// The display names for each image type.
-pub const all_disk_type_names = initDiskTypeNames();
-
-/// Return an array of just the image type names
-fn initDiskTypeNames() [all_disk_types.values.len][]const u8 {
-    var result: [all_disk_types.values.len][]const u8 = undefined;
-    for (0..all_disk_types.values.len) |i| {
-        result[i] = all_disk_types.values[i].type_name;
-    }
-    return result;
-}
 
 const std = @import("std");
 const hd_basic = @import("os_hd_basic.zig");

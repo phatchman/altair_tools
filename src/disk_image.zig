@@ -10,81 +10,6 @@ pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
 
-/// Allows Files and memory images to be used interchangeably for reading
-pub const SeekableReader = union(enum) {
-    on_disk: *std.Io.File.Reader,
-    in_memory: *std.Io.Reader,
-
-    pub fn seekTo(self: SeekableReader, offset: u64) File.Reader.SeekError!void {
-        switch (self) {
-            .on_disk => |file| try file.seekTo(offset),
-            .in_memory => |mem| {
-                std.debug.assert(offset <= mem.buffer.len);
-                mem.seek = offset;
-            },
-        }
-    }
-
-    pub fn seekPos(self: SeekableReader) usize {
-        return switch (self) {
-            .on_disk => |file| {
-                file.logicalPos();
-            },
-            .in_memory => |mem| {
-                mem.seek;
-            },
-        };
-    }
-
-    pub fn interface(self: SeekableReader) *std.Io.Reader {
-        return switch (self) {
-            .on_disk => |file| &file.interface,
-            .in_memory => |mem| mem,
-        };
-    }
-};
-
-/// Allows Files and memory images to be used interchangeably for writing
-pub const SeekableWriter = union(enum) {
-    on_disk: *std.Io.File.Writer,
-    in_memory: *std.Io.Writer,
-
-    pub fn seekTo(self: SeekableWriter, offset: u64) (File.Writer.SeekError || Io.Writer.Error)!void {
-        switch (self) {
-            .on_disk => |file| try file.seekTo(offset),
-            .in_memory => |mem| {
-                std.debug.assert(offset <= mem.buffer.len);
-                mem.end = offset;
-            },
-        }
-    }
-
-    pub fn seekPos(self: SeekableWriter) usize {
-        return switch (self) {
-            .on_disk => |file| file.logicalPos(),
-            .in_memory => |mem| mem.end,
-        };
-    }
-
-    pub fn interface(self: SeekableWriter) *std.Io.Writer {
-        return switch (self) {
-            .on_disk => |file| &file.interface,
-            .in_memory => |mem| mem,
-        };
-    }
-
-    pub fn truncate(self: SeekableWriter) (File.Writer.EndError || File.Writer.SeekError || Io.Writer.Error)!void {
-        return switch (self) {
-            .on_disk => |file| {
-                try file.seekTo(0);
-                try file.end();
-            },
-            .in_memory => |mem| {
-                mem.end = 0;
-            },
-        };
-    }
-};
 
 /// Interface for opening and maniplating various Altair CPM disk images.
 pub const DiskImage = struct {
@@ -496,6 +421,83 @@ pub const DiskImage = struct {
         try self.writer.interface().writeAll(sector.rawBytes());
 
         try sector.dump(physical_location, sector_offset);
+    }
+};
+
+
+/// Allows Files and memory images to be used interchangeably for reading
+pub const SeekableReader = union(enum) {
+    on_disk: *std.Io.File.Reader,
+    in_memory: *std.Io.Reader,
+
+    pub fn seekTo(self: SeekableReader, offset: u64) File.Reader.SeekError!void {
+        switch (self) {
+            .on_disk => |file| try file.seekTo(offset),
+            .in_memory => |mem| {
+                std.debug.assert(offset <= mem.buffer.len);
+                mem.seek = offset;
+            },
+        }
+    }
+
+    pub fn seekPos(self: SeekableReader) usize {
+        return switch (self) {
+            .on_disk => |file| {
+                file.logicalPos();
+            },
+            .in_memory => |mem| {
+                mem.seek;
+            },
+        };
+    }
+
+    pub fn interface(self: SeekableReader) *std.Io.Reader {
+        return switch (self) {
+            .on_disk => |file| &file.interface,
+            .in_memory => |mem| mem,
+        };
+    }
+};
+
+/// Allows Files and memory images to be used interchangeably for writing
+pub const SeekableWriter = union(enum) {
+    on_disk: *std.Io.File.Writer,
+    in_memory: *std.Io.Writer,
+
+    pub fn seekTo(self: SeekableWriter, offset: u64) (File.Writer.SeekError || Io.Writer.Error)!void {
+        switch (self) {
+            .on_disk => |file| try file.seekTo(offset),
+            .in_memory => |mem| {
+                std.debug.assert(offset <= mem.buffer.len);
+                mem.end = offset;
+            },
+        }
+    }
+
+    pub fn seekPos(self: SeekableWriter) usize {
+        return switch (self) {
+            .on_disk => |file| file.logicalPos(),
+            .in_memory => |mem| mem.end,
+        };
+    }
+
+    pub fn interface(self: SeekableWriter) *std.Io.Writer {
+        return switch (self) {
+            .on_disk => |file| &file.interface,
+            .in_memory => |mem| mem,
+        };
+    }
+
+    pub fn truncate(self: SeekableWriter) (File.Writer.EndError || File.Writer.SeekError || Io.Writer.Error)!void {
+        return switch (self) {
+            .on_disk => |file| {
+                try file.seekTo(0);
+                try file.end();
+            },
+            .in_memory => |mem| {
+                mem.end = 0;
+            },
+        };
     }
 };
 

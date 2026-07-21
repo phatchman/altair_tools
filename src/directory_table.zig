@@ -138,7 +138,7 @@ pub const DirectoryTable = struct {
     }
 
     /// All allocations need to be done via this allocator so they can be
-    /// freed in deinit. TODO: pub because of refactor, but need to get rid of the need to pass allocator there.
+    /// freed in deinit.
     pub fn allocator(self: *DirectoryTable) std.mem.Allocator {
         return self.arena.allocator();
     }
@@ -176,6 +176,7 @@ pub const DirectoryTable = struct {
 
         // Delete all the raw_entries and write to disk.
         switch (self.raw_directories) {
+            // FUTURE TODO: It is only CPM that needs to scan through all the entries.
             inline else => |raw_dirs, os| {
                 for (raw_dirs.items, 0..) |*raw_item, idx| {
                     if (!raw_item.isDeleted() and raw_item.eql(cooked_dir)) {
@@ -199,6 +200,7 @@ pub const DirectoryTable = struct {
         }
     }
 
+    /// Translate from host filename to image-compatible filename.
     pub fn translateToFilename(os: OperatingSystem, from_filename: []const u8, to_filename: []u8) error{InvalidFilename}![]u8 {
         return switch (os) {
             .cpm, .cdos => os_cpm.translateFilename(from_filename, to_filename),
@@ -214,6 +216,7 @@ pub const DirectoryTable = struct {
     }
 
     /// Find by exact match. Case insentitive.
+    /// FUTURE TODO: not all formats are case insensitive.
     pub fn findByFilename(self: *const DirectoryTable, filename: []const u8, user: ?u8) ?*CookedDirEntry {
         // Can't use a binary search here as when adding new files, they are added at the end,
         // not in alhpabetical order. So need to walk entire directory. There are 1024 entries
@@ -229,7 +232,7 @@ pub const DirectoryTable = struct {
         return null;
     }
 
-    /// Number of free CPM directory entries
+    /// Number of free directory entries
     pub fn rawEntryFreeCount(self: *const DirectoryTable) usize {
         var count: usize = 0;
         switch (self.raw_directories) {
@@ -304,6 +307,7 @@ pub const FileNameIterator = struct {
     }
 
     /// Tests if two filenames are equal using wildcard pattern matching.
+    // FUTURE TODO: not all filesystems have extensions and some are case sensitive
     pub fn filenameEqual(lhs_pattern: []const u8, rhs: []const u8, wildcards: bool) bool {
         var lhs_pos: usize = 0;
         var rhs_pos: usize = 0;

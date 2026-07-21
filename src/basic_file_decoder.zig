@@ -494,7 +494,7 @@ pub fn floatSingle(raw: u32) std.fmt.Alt(u32, formatFloatSingle) {
 
 test "single precision format" {
     var buf: [32]u8 = undefined;
-    for (sng_cases) |case| {
+    for (single_precision_test_cases) |case| {
         var w: std.Io.Writer = .fixed(&buf);
         try w.print("{f}", .{floatSingle(case.val)});
         try std.testing.expectEqualStrings(case.expected, w.buffered());
@@ -587,15 +587,15 @@ pub fn floatDouble(raw: u64) std.fmt.Alt(u64, formatFloatDouble) {
 
 test "double precision format" {
     var buf: [32]u8 = undefined;
-    for (dbl_cases) |case| {
+    for (double_precision_test_cases) |case| {
         var w: std.Io.Writer = .fixed(&buf);
         try w.print("{f}", .{floatDouble(case.val)});
         try std.testing.expectEqualStrings(case.expected, w.buffered());
     }
 }
 
-const SngCase = struct { val: u32, expected: []const u8 };
-const sng_cases = [_]SngCase{
+const SinglePrecisionTestCase = struct { val: u32, expected: []const u8 };
+const single_precision_test_cases = [_]SinglePrecisionTestCase{
     .{ .val = 0x00000000, .expected = "0!" }, //            0.0
     .{ .val = 0x00200000, .expected = "0!" }, //            underflow → 0
     .{ .val = 0x00800000, .expected = "-0!" }, //           negative zero
@@ -628,8 +628,8 @@ const sng_cases = [_]SngCase{
     .{ .val = 0x6A210FB0, .expected = "1.5E-07" }, //       short form negative exponent
 };
 
-const DblCase = struct { val: u64, expected: []const u8 };
-const dbl_cases = [_]DblCase{
+const DoublePrecisionTestCase = struct { val: u64, expected: []const u8 };
+const double_precision_test_cases = [_]DoublePrecisionTestCase{
     .{ .val = 0x000E000000000000, .expected = "0#" },
     .{ .val = 0x5F5BE6FECEBDEDD6, .expected = "1D-10" },
     .{ .val = 0x6A210FAFA06C1BB2, .expected = "1.5D-07" },

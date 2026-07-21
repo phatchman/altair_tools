@@ -230,11 +230,6 @@ pub const @"DiskImageType_FDD_1.5MB" = struct {
 };
 
 pub const DiskImageType_CPM_MINI = struct {
-    // Note that mits skew algorithm requires first sector to be 1, not 0
-    // const skew_table = [16]u16{
-    //     0, 2, 4, 6, 8, 10, 12, 14,
-    //     1, 3, 5, 7, 9, 11, 13, 15,
-    // };
     const skew_table = [16]u16{
         0, 2, 4, 6, 8, 10, 12, 14,
         1, 3, 5, 7, 9, 11, 13, 15,
@@ -464,7 +459,6 @@ pub const DirEntry = extern struct {
     }
 
     pub fn isFirstEntryForFile(self: *const DirEntry, image_type: *const DiskImageType) bool {
-        //std.debug.print("isFirstExtentforFile: recs_per_extent {}, allocations[4] {}. extent {} = ", .{ image_type.recs_per_extent, self.entry.allocations[4], self.extentGet() });
         if (image_type.OS == .cpm and image_type.recs_per_extent > 128 and self.allocations[4] != 0 and self.extentGet(image_type) == 1) {
             return true;
         }
@@ -740,10 +734,10 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     const num_sectors = (num_records + recs_per_sector - 1) / recs_per_sector;
     var total_rec_nr: u16 = 0;
     for (0..num_sectors) |sec_nr| {
-        // This protects against trying to copy files from CDOS.
+        // We should not longer be able to trigger this. Left for safety.
         const alloc_idx = total_rec_nr / image.image_type.recs_per_alloc;
         if (alloc_idx >= entry.allocations.items.len) {
-            std.debug.print("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
+            logerr("FATAL ERROR: num_records = {}, num_sectors = {}, total_rec_nr = {}, alloc_idx = {}, recs_per_alloc = {}, allocs.len = {}, total_allocs = {} num records = {}\n", .{
                 num_records,
                 num_sectors,
                 total_rec_nr,
@@ -933,7 +927,6 @@ pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
 
 /// write a CPM diretory entry (RawDirEntry)
 pub fn rawEntryWrite(image: *DiskImage, extent_nr: u16) (WriteSectorError || RawDirError)!void {
-    // std.debug.print("write entry: index = {}, extent_count = {}\n", .{ extent_nr, self.directory.raw_directories.cpm.items[extent_nr].extentGet() });
     // Make sure entry is valid before written.
     const this_entry = &image.directory.raw_directories.cpm.items[extent_nr];
     if (!this_entry.isDeleted()) {

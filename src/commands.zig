@@ -132,8 +132,6 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
     // Create a dispatch that calls the correct command based on
     // which do_xxx options is true in the options struct.
     inline for (command_list) |command| {
-        //        std.debug.print("looking for {s} vs {any}", .{ command.option, std.meta.fieldNames(Command) });
-
         // If there is a field in options with the same name as command.option
         if (@field(options, command.option)) {
             defer Console.flushOut() catch {};
@@ -459,7 +457,7 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     defer out_file.close(ctx.io);
 
     var text_mode: DiskImage.TextMode = .Auto;
-    if (options.text_mode) { // TODO: Change this to work as an enum option.. three options is just too much?
+    if (options.text_mode) { // FUTURE TODO: Change this to work as an enum option.. three options is just too much?
         // We should also restrict to the OS it applies to... maybe twe add a "BASIC" enum instead of abusing Ascii?
         text_mode = .Text;
     } else if (options.bin_mode) {
@@ -699,12 +697,11 @@ pub fn labelSet(_: Context, disk_image: *DiskImage, options: CommandLineOptions)
 fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
     // TODO: make the label length come from disk image type
     const label_len: u32 = switch (disk_image.image_type.OS) {
-        .cdos => 8,
-        .hd_basic => 20,
+        .cdos => @field(@FieldType(DiskLabel, "cdos"), "user_label_len"),
+        .hd_basic => @field(@FieldType(DiskLabel, "hd_basic"), "user_label_len"),
         else => 0,
     };
 
-    std.debug.print("1\n", .{});
     switch (disk_image.image_type.OS) {
         .cdos, .hd_basic => {
             // Format for CDOS label is llllllll:mm/dd/yy
@@ -715,7 +712,6 @@ fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
             // make sure both the label is at most 8 chars and the date is exactly 8 chars
             if (colon_pos > label_len or colon_pos + 9 != options.disk_label.len)
                 return error.InvalidLabelFormat;
-            std.debug.print("2\n", .{});
 
             // Make sure it is valid date in mm/dd/yy format.
             if (options.disk_label[colon_pos + 3] != '/' or
@@ -739,14 +735,12 @@ fn doLabelSet(disk_image: *DiskImage, options: CommandLineOptions) !void {
             if (options.disk_label[colon_pos + 8] < '0' or
                 options.disk_label[colon_pos + 8] > '9')
                 return error.InvalidLabelFormat;
-            std.debug.print("3\n", .{});
 
             const mm: u8 = (options.disk_label[colon_pos + 1] - '0') * 10 + options.disk_label[colon_pos + 2] - '0';
             const dd: u8 = (options.disk_label[colon_pos + 4] - '0') * 10 + options.disk_label[colon_pos + 5] - '0';
             const yy: u8 = (options.disk_label[colon_pos + 7] - '0') * 10 + options.disk_label[colon_pos + 8] - '0';
             if (dd < 1 or dd > 31 or mm < 1 or mm > 12)
                 return error.InvalidLabelFormat;
-            std.debug.print("4\n", .{});
 
             switch (disk_image.image_type.OS) {
                 .cdos => {

@@ -433,7 +433,6 @@ pub fn validateOptions() !bool {
     if (options.force and
         !(options.do_get or options.do_put or options.do_get_multi or options.do_put_multi))
     {
-        std.debug.print("{any}\n", .{options});
         cli.printError(&p, &app, "force can only be used with get or put operations", .{});
     }
     return true;

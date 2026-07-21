@@ -198,7 +198,8 @@ pub const DiskImageType_ADOS_MINI_BOOT = struct {
 pub const DiskImageType_TIMESHARE_BASIC = struct {
     pub fn init() DiskImageType {
         var result = DiskImageType_ADOS_8IN.init();
-        result.type_name = "MITS 5.25\" Floppy Disk (Timeshare BASIC)";
+        result.type_name = "TIMESHARE_BASIC";
+        result.description = "MITS 8\" Floppy Disk (Timeshare BASIC)";
         result.type_id = .TIMESHARE_BASIC;
         result.detect_fn = isCorrectFormat;
         return result;
@@ -558,7 +559,6 @@ const SequentialFileReader = struct {
 
         if (self.pending.len == 0) return error.EndOfStream;
         const n = limit.minInt(self.pending.len);
-        //        std.debug.print("writing n bytes {},  {} remain\n", .{ n, self.pending[n..].len });
         try w.writeAll(self.pending[0..n]);
         self.pending = self.pending[n..];
         return n;
