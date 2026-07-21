@@ -1,3 +1,4 @@
+// TODO: Replace all of the checks on attribs for 'Status'
 const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const logerr = if (@import("builtin").fuzz) log.info else log.err;
@@ -35,6 +36,23 @@ pub const CookedDirEntry = struct {
     /// prefer to use filenameOnly() filenameAndExtension(), extensionOnly(),
     filename: [filename_max]u8,
     has_extension: bool,
+
+    const FileType = enum { small, large, random_access, sequential, normal };
+    pub fn fileType(self: *const CookedDirEntry) FileType {
+        return switch (self.os) {
+            .cpm => .normal,
+            .ados => switch (self.attribs[1]) {
+                'S' => .sequential,
+                'R' => .random_access,
+                else => unreachable,
+            },
+            .hd_basic => switch (self.attribs[1]) {
+                'S' => .small,
+                'L' => .large,
+                else => unreachable,
+            },
+        };
+    }
 
     pub fn filenameOnlyMaxLen(os: OperatingSystem) u8 {
         return switch (os) {
@@ -167,8 +185,9 @@ pub const DirectoryTable = struct {
         const cooked_dir = &self.cooked_directories.items[cooked_index];
         // Set the allocs used by this cooked entry as free.
         for (cooked_dir.allocations.items) |alloc| {
+            // TODO: Does anything use allocation zero? This is CPM-specific.
             if (alloc == 0) break;
-            self.free_allocations.set(alloc);
+            self.allocationSetFree(disk_image, cooked_dir, alloc);
         }
         cooked_dir.allocations.clearAndFree(self.allocator());
         // Make sure to always remove the deleted CookedDir.
@@ -197,6 +216,13 @@ pub const DirectoryTable = struct {
                     }
                 }
             },
+        }
+    }
+
+    fn allocationSetFree(self: *DirectoryTable, image: *DiskImage, to_erase: *const CookedDirEntry, alloc: u16) void {
+        switch (self.image_type.OS) {
+            .hd_basic => os_hd_basic.allocationSetFree(image, to_erase, alloc),
+            else => self.free_allocations.set(alloc),
         }
     }
 

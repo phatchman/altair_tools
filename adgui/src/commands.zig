@@ -42,7 +42,7 @@ pub const LocalDirEntry = struct {
         const xlated_filename = try ad.DirectoryTable.translateToFilename(os, filename, &filename_buf);
         const dotIndex = std.mem.indexOf(u8, xlated_filename, ".") orelse xlated_filename.len;
         const filename_only = xlated_filename[0..dotIndex];
-        const extension = if (dotIndex < filename.len - 1) xlated_filename[dotIndex + 1 .. xlated_filename.len] else "";
+        const extension = if (dotIndex < xlated_filename.len - 1) xlated_filename[dotIndex + 1 .. xlated_filename.len] else "";
         return .{
             // TODO: There should be errdefers here? OR some other cleanup mechanism.
             .filename = try gpa.dupe(u8, filename_only),

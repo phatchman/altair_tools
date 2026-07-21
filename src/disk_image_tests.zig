@@ -690,6 +690,27 @@ test "disk erase" {
     }
 }
 
+test "erase large file" {
+    var large_buf: [1024 * 66]u8 = @splat(0x55);
+    var large_reader: std.Io.Reader = .fixed(&large_buf);
+
+    var image_buf: [HD_BASIC.image_size]u8 = undefined;
+    var image_file: InMemoryImage = undefined;
+    image_file.init(&image_buf);
+
+    var disk_image = try newFormattedMemoryDiskImage(&image_file, HD_BASIC);
+    defer disk_image.deinit();
+    defer saveImage(&image_buf);
+
+    const init_free = disk_image.capacityFreeInKB();
+    try disk_image.copyToImage(&large_reader, "TEST", null, false, .Auto);
+    try std.testing.expect(disk_image.capacityFreeInKB() < init_free);
+    const cooked = disk_image.directory.findByFilename("TEST", null);
+    try std.testing.expect(cooked != null);
+    try disk_image.erase(cooked.?);
+    try std.testing.expectEqual(init_free, disk_image.capacityFreeInKB());
+}
+
 // Test no corruption when raw directory entries are not contiguous
 test "non-contiguous extent" {
     var compare_image: InMemoryConstImage = undefined;

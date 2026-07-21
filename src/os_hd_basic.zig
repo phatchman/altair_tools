@@ -1,3 +1,6 @@
+// TODO: Do bounds checking on the alloction free. they come from the disk, so need checking.
+// TODO: In fact should do this for all formats. Just move the set/unset unto the directory table?.
+
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const builtin = @import("builtin");
@@ -346,7 +349,8 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             for (0..8) |_| {
                 if (alloc_nr == dir.free_allocations.capacity()) break;
                 if (dir.free_allocations.isSet(alloc_nr) == if (to_shift & 0x01 == 1) true else false) {
-                    logerr(
+                    // We do want this to trigger in testing and fuzz testing.
+                    log.err(
                         "Allocation validation for {}. disk map is {} directory map is {}\n",
                         .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
                     );
@@ -726,6 +730,27 @@ pub fn allocationGetFree(dir: *DirectoryTable) error{OutOfAllocs}!u16 {
     const free = dir.free_allocations.findFirstSet() orelse return error.OutOfAllocs;
     dir.free_allocations.unset(free);
     return @intCast(free);
+}
+
+pub fn allocationSetFree(image: *DiskImage, cooked: *const CookedDirEntry, alloc: u16) void {
+    if (cooked.fileType() == .large) {
+        const image_type = image.image_type;
+        const sectors_per_alloc = image_type.sectors_per_alloc;
+        loop: for (0..sectors_per_alloc) |offset| {
+            const location = toPhysicalAddress(image_type, @intCast(alloc * sectors_per_alloc + offset));
+            var sector: DiskSector = .initUnformatted(image_type, location.track);
+            image.readSector(location, &sector) catch |err| {
+                logerr("Error freeing sub allocations for allocation {}: {t}", .{ alloc, err });
+                return;
+            };
+            const sub_allocs: []align(1) u16 = @ptrCast(sector.dataBytes());
+            for (sub_allocs) |sub_alloc| {
+                if (sub_alloc == 0xffff) break :loop;
+                image.directory.free_allocations.set(sub_alloc);
+            }
+        }
+    }
+    image.directory.free_allocations.set(alloc);
 }
 
 fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtents}!*DirEntry {
