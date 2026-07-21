@@ -457,7 +457,6 @@ test "8in Auto detect file type" {
 }
 
 test "Altair DOS random access file" {
-    // Standard size
     var test_file: [5 * 1024 - 256]u8 = @splat(0x55);
     var test_stream: std.Io.Reader = .fixed(&test_file);
     var test_stream2: std.Io.Reader = .fixed(test_file[0..128]);
@@ -484,10 +483,16 @@ test "Altair DOS random access file" {
     cooked_dir = disk_image.directory.findByFilename("RAND2", null);
     try std.testing.expect(cooked_dir != null);
     try disk_image.copyFromImage(cooked_dir.?, &in_stream2, .Rand);
-    saveImage(test_stream2.buffered());
-    saveFile(in_stream2.buffered());
+
     try std.testing.expectEqualSlices(u8, test_file[0..128], in_file2[0..128]);
     try std.testing.expect(std.mem.allEqual(u8, in_file2[128..], 0));
+
+    const free_allocs = disk_image.directory.free_allocations.count();
+    const used_dirs = disk_image.directory.cooked_directories.items.len;
+
+    try disk_image.erase(cooked_dir.?);
+    try std.testing.expect(free_allocs < disk_image.directory.free_allocations.count());
+    try std.testing.expect(used_dirs > disk_image.directory.cooked_directories.items.len);
 }
 
 fn countFilenames(itr: FileNameIterator) usize {
