@@ -42,8 +42,14 @@ pub const all_disk_type_names = init: {
 
 pub const DiskImageTypes = enum {
     FDD_8IN,
+    ADOS_8IN,
+    TIMESHARE_BASIC,
+    ADOS_MINI,
+    ADOS_MINI_BOOT,
+    CPM_MINI,
     HDD_5MB,
     HDD_5MB_1024,
+    HD_BASIC,
     FDD_TAR,
     @"FDD_1.5MB",
     FDD_8IN_8MB,
@@ -55,12 +61,6 @@ pub const DiskImageTypes = enum {
     CDOS_LGSSDD,
     CDOS_LGDSSD,
     CDOS_LGDSDD,
-    ADOS_8IN,
-    ADOS_MINI,
-    ADOS_MINI_BOOT,
-    CPM_MINI,
-    HD_BASIC,
-    TIMESHARE_BASIC,
     // Create an enum with just the sub-set of CDOS disk types.
     pub fn CDOSTypes() type {
         const fields = std.meta.fields(@This());

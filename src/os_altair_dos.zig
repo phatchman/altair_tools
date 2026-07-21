@@ -199,7 +199,7 @@ pub const DiskImageType_TIMESHARE_BASIC = struct {
     pub fn init() DiskImageType {
         var result = DiskImageType_ADOS_8IN.init();
         result.type_name = "TIMESHARE_BASIC";
-        result.description = "MITS 8\" Floppy Disk (Timeshare BASIC)";
+        result.description = "MITS 8\" Floppy Disk (Timeshare BASIC) [READ ONLY]";
         result.type_id = .TIMESHARE_BASIC;
         result.detect_fn = isCorrectFormat;
         return result;

@@ -1154,7 +1154,6 @@ pub fn makeTransferDialog() !void {
         var open_flag: bool = false;
         var scroll_info: dvui.ScrollInfo = .{};
         var last_nr_messages: usize = 0;
-        var choice: usize = 0;
     };
     showing_dialog = false;
     if (CommandState.state != .waiting_for_input and CommandState.processed_files.items.len == 0) {
@@ -1328,19 +1327,24 @@ pub fn makeTransferDialog() !void {
 
                         dvui.labelNoFmt(@src(), "Format:    ", .{}, .{ .gravity_y = 0.5 });
                         al.spacer(@src(), 0);
-                        if (dvui.dropdown(@src(), &ad.all_disk_type_names, .{ .choice = &static.choice }, .{}, .{})) {
-                            CommandState.image_type = &ad.all_disk_types.values[static.choice];
+                        if (dvui.dropdown(@src(), &ad.all_disk_type_names, .{ .choice = &CommandState.dialog_choice }, .{}, .{})) {
+                            CommandState.image_type = &ad.all_disk_types.values[CommandState.dialog_choice];
                         }
                     }
                     if (CommandState.image_type) |img_type| {
                         var label_str: []u8 = undefined;
-                        if (img_type.OS == .cdos) {
+                        if (img_type.OS == .cdos or img_type.OS == .hd_basic) {
                             {
                                 var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
                                 defer hbox.deinit();
                                 dvui.labelNoFmt(@src(), "Label: ", .{ .align_y = 0.5 }, .{ .expand = .vertical });
                                 al.spacer(@src(), 0);
-                                var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = @FieldType(DiskLabel, "cdos").user_label_len } } }, .{});
+                                const label_len = switch (img_type.OS) {
+                                    // FUTURE TODO: Do this better.
+                                    inline .cdos, .hd_basic => |_, opsys| @FieldType(DiskLabel, @tagName(opsys)).user_label_len,
+                                    .cpm, .ados => unreachable,
+                                };
+                                var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = label_len } } }, .{});
                                 label_str = te.textGet();
                                 te.deinit();
                             }
@@ -1371,12 +1375,30 @@ pub fn makeTransferDialog() !void {
                                     .{ .min_size_content = size, .max_size_content = .cast(size) },
                                 );
                                 if (mm.value == .Valid and dd.value == .Valid and yy.value == .Valid) {
-                                    var label: ad.DiskLabel = .{ .cdos = undefined };
-                                    @memset(&label.cdos.user_label, ' ');
-                                    @memcpy(label.cdos.user_label[0..label_str.len], label_str);
-                                    label.cdos.date_mmddyy[0] = @intCast(mm.value.Valid);
-                                    label.cdos.date_mmddyy[1] = @intCast(dd.value.Valid);
-                                    label.cdos.date_mmddyy[2] = @intCast(yy.value.Valid);
+                                    const label: ad.DiskLabel = lbl: switch (img_type.OS) {
+                                        .cdos => {
+                                            var label: ad.DiskLabel = .{ .cdos = undefined };
+                                            @memset(&label.cdos.user_label, ' ');
+                                            @memcpy(label.cdos.user_label[0..label_str.len], label_str);
+                                            label.cdos.date_mmddyy[0] = @intCast(mm.value.Valid);
+                                            label.cdos.date_mmddyy[1] = @intCast(dd.value.Valid);
+                                            label.cdos.date_mmddyy[2] = @intCast(yy.value.Valid);
+                                            break :lbl label;
+                                        },
+                                        .hd_basic => {
+                                            var label: ad.DiskLabel = .{ .hd_basic = undefined };
+                                            @memset(&label.hd_basic.user_label, ' ');
+                                            @memcpy(label.hd_basic.user_label[0..label_str.len], label_str);
+                                            label.hd_basic.created_yymmdd[0] = @intCast(yy.value.Valid);
+                                            label.hd_basic.created_yymmdd[1] = @intCast(mm.value.Valid);
+                                            label.hd_basic.created_yymmdd[2] = @intCast(dd.value.Valid);
+                                            label.hd_basic.modified_yymmdd[0] = @intCast(yy.value.Valid);
+                                            label.hd_basic.modified_yymmdd[1] = @intCast(mm.value.Valid);
+                                            label.hd_basic.modified_yymmdd[2] = @intCast(dd.value.Valid);
+                                            break :lbl label;
+                                        },
+                                        .cpm, .ados => unreachable,
+                                    };
                                     CommandState.label = label;
                                 }
                             }
@@ -2164,7 +2186,8 @@ pub fn nextCopyMode(mode: CopyMode) CopyMode {
     return switch (mode) {
         .AUTO => .ASCII,
         .ASCII => .BINARY,
-        .BINARY => .AUTO,
+        .BINARY => if (commands.disk_image) |img| if (img.image_type.OS == .ados) .RAND else .AUTO else .AUTO,
+        .RAND => .AUTO,
     };
 }
 

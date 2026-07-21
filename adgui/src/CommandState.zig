@@ -71,6 +71,8 @@ pub var file_selector_buffer: ?[]const u8 = null;
 pub var image_type: ?*const ad.DiskImageType = null;
 pub var label: ?ad.DiskLabel = null;
 pub var prompt: ?[]const u8 = null;
+pub var dialog_choice: usize = 0;
+
 pub var err_message: ?[]const u8 = null;
 pub var initialized = false;
 pub var arena: std.heap.ArenaAllocator = undefined;
@@ -134,6 +136,7 @@ pub fn freeResources() void {
     prompt = null;
     err_message = null;
     initialized = false;
+    dialog_choice = 0;
     _ = arena.reset(.free_all);
 }
 

@@ -311,7 +311,7 @@ pub fn main(init_args: std.process.Init) !void {
 fn generateDiskImageList() []const u8 {
     var image_list: []const u8 = "";
     inline for (all_disk_types.values, 0..) |image_type, i| {
-        image_list = image_list ++ "      * " ++ image_type.type_name ++ " - " ++ image_type.description ++ if (i == 0) " (Default)\n" else "\n";
+        image_list = image_list ++ "      * " ++ image_type.type_name ++ " - " ++ image_type.description ++ if (i == 0) " [Default]\n" else "\n";
     }
     const result = image_list;
     return result;
