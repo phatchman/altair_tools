@@ -27,29 +27,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-pub const global_allocator = gpa.allocator();
 
-// This arena lasts the lifetime of the application.
-pub var arena = std.heap.ArenaAllocator.init(global_allocator);
 const all_disk_types = @import("disk_types.zig").all_disk_types;
 const all_disk_type_names = @import("disk_types.zig").all_disk_type_names;
+var init: *const std.process.Init = undefined;
 
 /// Main processing takes place here
-fn do_main() !void {
-    var stdin_buffered = std.io.bufferedReader(std.io.getStdIn().reader());
-    const stdin_buffered_reader = stdin_buffered.reader().any();
-    var stdout_buffered = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const stdout_buffered_writer = stdout_buffered.writer().any();
-    const stderr_writer_any = std.io.getStdErr().writer().any();
-
-    Console.init(
-        &stdin_buffered,
-        &stdin_buffered_reader,
-        &stdout_buffered,
-        &stdout_buffered_writer,
-        &stderr_writer_any,
-    );
+fn do_main() error{ErrorExit}!void {
+    Console.init(init.io);
     defer Console.deinit();
 
     if (!(validateOptions() catch false)) {
@@ -60,32 +45,32 @@ fn do_main() !void {
     // Print out log messages in verbose mode on exit.
     defer {
         if (error_collection.items.len > 0) {
-            Console.stderr.print("The following errors were encountered:\n", .{}) catch {};
+            Console.stderr().print("The following errors were encountered:\n", .{}) catch {};
             for (error_collection.items) |message| {
-                Console.stderr.print("{s}\n", .{message}) catch {};
+                Console.stderr().print("{s}\n", .{message}) catch {};
             }
             if (options.do_recover) {
-                Console.stderr.print("It is normal to see errors when running --recover\n", .{}) catch {};
+                Console.stderr().print("It is normal to see errors when running --recover\n", .{}) catch {};
             }
         }
     }
 
     // Start of processing.
-    Commands.dispatch(options) catch |err| {
+    Commands.dispatch(init.io, init.gpa, options) catch |err| {
         switch (err) {
-            error.CommandFailed, error.CommandFailedCanContinue => return error.ErrorExit,
-            else => return err,
+            error.CommandFailed, error.CommandFailedCanContinue, error.WriteFailed => return error.ErrorExit,
         }
     };
 }
 
 pub const CommandLineOptions = struct {
-    image_file: []const u8 = undefined,
-    multiple_files: [][]const u8 = undefined,
-    system_image_get: []const u8 = undefined,
-    system_image_put: []const u8 = undefined,
-    recovery_image_file: []const u8 = undefined,
-    get_out_dir: []const u8 = undefined,
+    image_file: []const u8 = "",
+    multiple_files: [][]const u8 = &.{},
+    system_image_get: []const u8 = "",
+    system_image_put: []const u8 = "",
+    recovery_image_file: []const u8 = "",
+    get_out_dir: []const u8 = "",
+    disk_label: []const u8 = "",
     // All command options need to be in the format do_xxxx to be
     // included in the dispatch table.
     do_directory: bool = false,
@@ -101,23 +86,26 @@ pub const CommandLineOptions = struct {
     do_cpm_get: bool = false,
     do_cpm_put: bool = false,
     do_recover: bool = false,
+    do_label_get: bool = false,
+    do_label_set: bool = false,
     text_mode: bool = false,
     bin_mode: bool = false,
+    rand_mode: bool = false,
+    quiet: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
+    force: bool = false,
     cpm_user: ?u8 = null,
     disk_image_type: ?ImageType = null,
 };
 
-var options = CommandLineOptions{};
+var options: CommandLineOptions = .{};
 var app: cli.App = undefined;
-pub fn main() !void {
-    defer {
-        arena.deinit();
-        _ = gpa.deinit();
-    }
+pub fn main(init_args: std.process.Init) !void {
+    init = &init_args;
 
-    var r = try cli.AppRunner.init(arena.allocator());
+    var r = cli.AppRunner.init(init);
+    defer r.deinit();
     app = cli.App{
         .command = cli.Command{
             .target = cli.CommandTarget{
@@ -226,22 +214,28 @@ pub fn main() !void {
                     .value_ref = r.mkRef(&options.bin_mode),
                 },
                 .{
+                    .long_name = "rand",
+                    .help = "Put or get a random access file (Altair DOS/BASIC only)",
+                    .short_alias = 'n',
+                    .value_ref = r.mkRef(&options.rand_mode),
+                },
+                .{
                     .long_name = "user",
-                    .help = "Restrict operation to this CP/M user",
+                    .help = "Restrict operation to this user (CP/M and CDOS)",
                     .short_alias = 'u',
                     .value_name = "user",
                     .value_ref = r.mkRef(&options.cpm_user),
                 },
                 .{
                     .long_name = "extract-cpm",
-                    .help = "Extract CP/M system (from a bootable disk image) to a file",
+                    .help = "Extract operating system (from a bootable disk image) to a file",
                     .short_alias = 'x',
                     .value_name = "system_image",
                     .value_ref = r.mkRef(&options.system_image_get),
                 },
                 .{
                     .long_name = "write-cpm",
-                    .help = "Write saved CP/M system image to disk image (make disk bootable)",
+                    .help = "Write saved operating system image to disk image (make disk bootable)",
                     .short_alias = 's',
                     .value_name = "system_image",
                     .value_ref = r.mkRef(&options.system_image_put),
@@ -264,16 +258,41 @@ pub fn main() !void {
                     .value_name = "type",
                 },
                 .{
+                    .long_name = "quiet",
+                    .help = "Suppress non-fatal error, warning and info messages",
+                    .short_alias = 'q',
+                    .value_ref = r.mkRef(&options.quiet),
+                },
+                .{
                     .long_name = "verbose",
-                    .help = "Verbose - Prints information about operations being performed",
+                    .help = "Prints information about operations being performed",
                     .short_alias = 'v',
                     .value_ref = r.mkRef(&options.verbose),
                 },
                 .{
                     .long_name = "very-verbose",
-                    .help = "Very verbose - Additionally prints sector read/write information",
+                    .help = "Additionally prints sector read/write information",
                     .short_alias = 'V',
                     .value_ref = r.mkRef(&options.very_verbose),
+                },
+                .{
+                    .long_name = "label-set",
+                    .help = "Set the disk label and timestamp on CDOS and HD BASIC disks",
+                    .short_alias = 'L',
+                    .value_name = "label",
+                    .value_ref = r.mkRef(&options.disk_label),
+                },
+                .{
+                    .long_name = "label",
+                    .help = "Print the disk label and timestamp from CDOS or HD BASIC disks",
+                    .short_alias = 'l',
+                    .value_ref = r.mkRef(&options.do_label_get),
+                },
+                .{
+                    .long_name = "force",
+                    .help = "Force overwrite of existing files with get or put",
+                    .short_alias = 'f',
+                    .value_ref = r.mkRef(&options.force),
                 },
             },
         },
@@ -283,18 +302,16 @@ pub fn main() !void {
 
     app.help_config.print_help_on_error = false;
     r.run(&app) catch {
-        // De-init in the error case because exit(1) skips the defers
-        arena.deinit();
-        _ = gpa.deinit();
         std.process.exit(1);
     };
+    std.process.cleanExit(init.io);
 }
 
 /// Generate help text for all disk image types. The first entry is considered the default.
 fn generateDiskImageList() []const u8 {
     var image_list: []const u8 = "";
     inline for (all_disk_types.values, 0..) |image_type, i| {
-        image_list = image_list ++ "      * " ++ image_type.type_name ++ " - " ++ image_type.description ++ if (i == 0) " (Default)\n" else "\n";
+        image_list = image_list ++ "      * " ++ image_type.type_name ++ " - " ++ image_type.description ++ if (i == 0) " [Default]\n" else "\n";
     }
     const result = image_list;
     return result;
@@ -307,6 +324,7 @@ pub fn validateOptions() !bool {
     options.do_cpm_get = options.system_image_get.len != 0;
     options.do_cpm_put = options.system_image_put.len != 0;
     options.do_recover = options.recovery_image_file.len != 0;
+    options.do_label_set = options.disk_label.len != 0;
 
     // Can only by one of directory, get/multi, put/multi, etc
     const single_options = [_]bool{
@@ -314,52 +332,81 @@ pub fn validateOptions() !bool {
         options.do_format,      options.do_get,       options.do_get_multi,
         options.do_put,         options.do_put_multi, options.do_raw_dir,
         options.do_cpm_get,     options.do_cpm_put,   options.do_recover,
-        options.do_information,
+        options.do_information, options.do_label_get, options.do_label_set,
     };
+
+    // For windows do some simple globbing for put multiple
+    if (@import("builtin").os.tag == .windows) {
+        if (options.multiple_files.len > 0 and options.do_put_multi) {
+            const current = options.multiple_files;
+            var new: std.ArrayList([]const u8) = .empty;
+            errdefer new.deinit(init.gpa);
+            for (current) |pattern| {
+                try host_os.windows.glob(init.io, init.gpa, pattern, &new);
+                //                init.gpa.free(pattern);
+            }
+            //            init.gpa.free(options.multiple_files);
+            options.multiple_files = try new.toOwnedSlice(init.arena.allocator());
+        }
+    }
 
     var option_count: usize = 0;
     for (single_options) |value| {
         if (value)
             option_count += 1;
     }
+    if (options.do_format and options.do_label_set) {
+        // Format will handle the labelling.
+        option_count -= 1;
+        options.do_label_set = false;
+    }
+
     if (option_count == 0) {
         // Default to directory listing
         options.do_directory = true;
     }
 
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+    var p: Printer = .init(&stderr);
+    defer p.flush();
+
     if (option_count > 1) {
-        cli.printError(&app,
+        cli.printError(&p, &app,
             \\You may only specify one of:
-            \\       --directory, 
-            \\       --raw
-            \\       --info
+            \\       --dir,
+            \\       --raw,
+            \\       --info,
             \\       --format,
             \\       --get, --get-multiple,
             \\       --put, --put-multiple,
             \\       --erase, --erase-multiple,
-            \\       --extract-cpm, --write-cpm
-            \\       --recover
+            \\       --extract-cpm, --write-cpm,
+            \\       --label, --recover
+            \\       --label-set (except with --format),
             \\
         , .{});
         return false;
     }
 
-    if (options.do_directory or options.do_raw_dir or options.do_information or options.do_format) {
+    if (options.do_directory or options.do_raw_dir or options.do_information or
+        options.do_format or options.do_label_get or options.do_label_set)
+    {
         if (options.multiple_files.len != 0) {
-            cli.printError(&app,
+            cli.printError(&p, &app,
                 \\No filenames are allowed for:
-                \\       --directory, 
+                \\       --dir,
                 \\       --raw
                 \\       --info
                 \\       --format
-                \\
+                \\       --label
+                \\       --label-set
             , .{});
             return false;
         }
     }
     if (options.do_get or options.do_put or options.do_erase) {
         if (options.multiple_files.len != 1) {
-            cli.printError(&app,
+            cli.printError(&p, &app,
                 \\You must specify exactly one filename for:
                 \\       --get, --put, --erase
                 \\
@@ -368,7 +415,7 @@ pub fn validateOptions() !bool {
         }
     }
     if (options.get_out_dir.len != 0 and !(options.do_get or options.do_get_multi)) {
-        cli.printError(&app,
+        cli.printError(&p, &app,
             \\You may only use --out with:
             \\ --get, --get-multiple
             \\
@@ -378,17 +425,21 @@ pub fn validateOptions() !bool {
 
     if (options.cpm_user) |user| {
         if (user > 15) {
-            cli.printError(&app, "User must be between 0 and 15.", .{});
+            cli.printError(&p, &app, "User must be between 0 and 15.", .{});
             return false;
         }
+    }
+
+    if (options.force and
+        !(options.do_get or options.do_put or options.do_get_multi or options.do_put_multi))
+    {
+        cli.printError(&p, &app, "force can only be used with get or put operations", .{});
     }
     return true;
 }
 
 pub const std_options: std.Options = .{
-    // Set the log level to info
     .log_level = .debug,
-
     // Define logFn to override the std implementation
     .logFn = log,
 };
@@ -398,36 +449,37 @@ var error_collection: std.ArrayListUnmanaged([]const u8) = .empty;
 
 /// Custom log function that collects errors to be displayed at the end for:
 /// .altair_disk, .altair_disk_lib scopes
-/// Redirects .debug, .infor and .warn to stdout.
+/// Redirects .debug, .info and .warn to stdout.
 /// Any errors not for .altair_disk, .altair_disk_lib are logged straight to stderr instead.
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
     switch (scope) {
         .altair_disk, .altair_disk_lib => {}, // Continue to below for these 2 scopes.
-        else => return std.io.getStdErr().writer().print(@tagName(message_level) ++ ": " ++ format, args) catch {},
+        else => return std.debug.print(@tagName(message_level) ++ ": " ++ @tagName(scope) ++ ": " ++ format, args),
     }
+    if (options.quiet) return;
     switch (message_level) {
         .info, .warn => {
             if (options.verbose) {
-                Console.stdout.print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
+                Console.stdout().print(@tagName(message_level) ++ ": " ++ format ++ "\n", args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .debug => {
             if (options.very_verbose) {
-                Console.stdout.print(format, args) catch {};
+                Console.stdout().print(format, args) catch {};
                 Console.flushOut() catch {};
             }
         },
         .err => {
-            const message = std.fmt.allocPrint(arena.allocator(), format, args) catch {
+            const message = std.fmt.allocPrint(init.arena.allocator(), format, args) catch {
                 return;
             };
-            error_collection.append(arena.allocator(), message) catch {};
+            error_collection.append(init.arena.allocator(), message) catch {};
         },
     }
 }
@@ -440,3 +492,9 @@ const Commands = @import("commands.zig");
 const RawDirError = @import("directory_table.zig").RawDirError;
 const DirectoryError = @import("directory_table.zig").DirectoryTable.DirectoryError;
 const ImageType = @import("disk_types.zig").DiskImageTypes;
+const host_os = @import("host_os.zig");
+// Workaround for cli lib not exporting "Printer" as public.
+const Printer = blk: {
+    const ti = @typeInfo(@TypeOf(cli.printError));
+    break :blk @typeInfo(ti.@"fn".params[0].type.?).pointer.child;
+};

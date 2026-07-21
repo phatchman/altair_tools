@@ -29,7 +29,12 @@ pub fn build(b: *std.Build) void {
         exe.subsystem = .Windows;
     }
 
-    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .linux_display_backend = .X11 });
+    const dvui_dep = b.dependency("dvui", .{
+        .target = target,
+        // TODO: This works around a bug in translate-c which won;t compile dvui in ReleaseSafe mode
+        .optimize = if (optimize == .ReleaseSafe) .ReleaseFast else optimize,
+        .linux_display_backend = .X11,
+    });
     exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
     exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
     b.installArtifact(exe);
@@ -48,9 +53,10 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    const button_handler_tests = b.addTest(.{
+    const button_handler_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/ButtonHandler.zig"),
-    });
+        .target = target,
+    }) });
     button_handler_tests.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
     const run_button_handler_tests = b.addRunArtifact(button_handler_tests);
 
