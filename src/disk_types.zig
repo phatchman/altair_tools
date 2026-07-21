@@ -481,22 +481,27 @@ pub const DiskImageType = struct {
     }
 
     pub fn dump(self: *const DiskImageType) void {
-        std.debug.print("Type:         {s}\n", .{self.type_name});
-        std.debug.print("Sector Len:   {}\n", .{self.sector_size_raw});
-        std.debug.print("Data Len:     {}\n", .{self.sector_size_data});
-        std.debug.print("Num Tracks:   {}\n", .{self.tracks});
-        std.debug.print("Res Tracks:   {}\n", .{self.reserved_tracks});
-        std.debug.print("Secs / Track: {}\n", .{self.sectors_per_track});
-        std.debug.print("Block Size:   {}\n", .{self.block_size});
-        std.debug.print("Track Len:    {}\n", .{self.track_size});
-        std.debug.print("Recs / Ext:   {}\n", .{self.recs_per_extent});
-        std.debug.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
-        std.debug.print("Dirs / Sect   {}\n", .{self.dirs_per_sector});
-        std.debug.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
-        std.debug.print("Sect / Alloc: {}\n", .{self.sectors_per_alloc});
-        std.debug.print("Dir Allocs:   {}\n", .{self.reserved_allocs});
-        std.debug.print("Num Dirs:     {}\n", .{self.directories});
-        std.debug.print("Num Allocs:   {}\n", .{self.total_allocs});
+        self.dumpFallible() catch {};
+    }
+
+    fn dumpFallible(self: *const DiskImageType) !void {
+        const stderr = Console.stderr();
+        try stderr.print("Type:         {s}\n", .{self.type_name});
+        try stderr.print("Sector Len:   {}\n", .{self.sector_size_raw});
+        try stderr.print("Data Len:     {}\n", .{self.sector_size_data});
+        try stderr.print("Num Tracks:   {}\n", .{self.tracks});
+        try stderr.print("Res Tracks:   {}\n", .{self.reserved_tracks});
+        try stderr.print("Secs / Track: {}\n", .{self.sectors_per_track});
+        try stderr.print("Block Size:   {}\n", .{self.block_size});
+        try stderr.print("Track Len:    {}\n", .{self.track_size});
+        try stderr.print("Recs / Ext:   {}\n", .{self.recs_per_extent});
+        try stderr.print("Recs / Alloc: {}\n", .{self.recs_per_alloc});
+        try stderr.print("Dirs / Sect   {}\n", .{self.dirs_per_sector});
+        try stderr.print("Allocs / Dir: {}\n", .{self.allocs_per_extent});
+        try stderr.print("Sect / Alloc: {}\n", .{self.sectors_per_alloc});
+        try stderr.print("Dir Allocs:   {}\n", .{self.reserved_allocs});
+        try stderr.print("Num Dirs:     {}\n", .{self.directories});
+        try stderr.print("Num Allocs:   {}\n", .{self.total_allocs});
     }
 
     pub fn isCorrectFormat(self: *const DiskImageType, io: std.Io, image_file: std.Io.File) bool {
@@ -566,3 +571,4 @@ const hd_basic = @import("os_hd_basic.zig");
 const cpm = @import("os_cpm.zig");
 const cdos = @import("os_cdos.zig");
 const ados = @import("os_altair_dos.zig");
+const Console = @import("console.zig");
