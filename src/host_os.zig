@@ -10,7 +10,7 @@ pub const windows = struct {
         const dirname = std.fs.path.dirname(pattern) orelse "";
         // Check if any globbing is required.
         if (std.mem.findAny(u8, basename, "*?") == null) {
-            try out_paths.append(gpa, try gpa.dupe(u8, basename));
+            try out_paths.append(gpa, try gpa.dupe(u8, pattern));
             return;
         }
 
