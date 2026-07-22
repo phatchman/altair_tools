@@ -96,7 +96,6 @@ pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
         const line_nr: u16 = try reader.takeInt(u16, .little);
         try writer.print("{} ", .{line_nr});
         while (true) {
-            try writer.flush();
             try switch (try reader.takeByte()) {
                 0x00 => {
                     const end_file = try reader.peekInt(u16, .little) == 0;
@@ -299,6 +298,7 @@ pub fn decode(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
             };
         }
     }
+    try writer.flush();
 }
 
 fn unhandledToken(token: u8) error{InvalidToken}!void {

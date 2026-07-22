@@ -22,9 +22,7 @@ pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM };
 pub fn deinit(self: *Self, gpa: std.mem.Allocator, io: std.Io) void {
     freeDirList(gpa, &self.image_directory_list);
     freeDirList(gpa, &self.local_directory_list);
-    if (self.disk_image) |*disk_image| {
-        disk_image.deinit();
-    }
+    self.closeImage(io);
     if (self.current_dir) |*current_dir| {
         current_dir.close(io);
         self.current_dir = null;
