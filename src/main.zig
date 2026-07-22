@@ -277,7 +277,7 @@ pub fn main(init_args: std.process.Init) !void {
                 },
                 .{
                     .long_name = "label-set",
-                    .help = "Set the disk label and timestamp on CDOS and HD BASIC disks",
+                    .help = "Set the disk label and timestamp on CDOS and HD BASIC disks. Format <label>:mm/dd/yy",
                     .short_alias = 'L',
                     .value_name = "label",
                     .value_ref = r.mkRef(&options.disk_label),

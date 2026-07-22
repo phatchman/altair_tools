@@ -161,10 +161,10 @@ OPTIONS:
 
 | Operating system | Notes |
 |---|---|
-| CP/M | For text files it is important to use <code>--text</code> when copying from image.<br>Otherwise the files will be padded with ^Z to the next 128 byte multiple. |
+| CP/M | For text files it is important to use <code>--text</code> when copying from image.Otherwise the files will be padded with ^Z to the next 128 byte multiple.<br>The only format that supports <code>--user</code> |
 | Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul> |
 | Timeshare Basic | As per Altair BASIC, but read-only. |
-| Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul> |
+| Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>The creation date contained in the disk label is used as the creation and modification time of any file created by altairdsk. |
 | Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
 | | |
 
@@ -211,6 +211,28 @@ At is the file attributes which vary per operating system.
 | Alatir DOS & BASIC<br>Timeshare BASIC | S - Sequential<br> R - Random Access | | 
 | HD BASIC         |  R - Read Only<br>W - Read / Write | S - Small File<br>L - Large File |
 
+Below is an example for HD BASIC showing the disk label and file dates.<br>
+Filenames are up to 24 characters nong, with no file extension.
+
+```
+Label: DISK LABEL  Created: 01/02/73  Modified: 01/02/73
+Name                       Length  Used U At Created  Modified
+*COPRND*                    5888B    6K 0 WS 10/23/78 11/06/78
+*HDCDATA                    9511B   10K 0 WS 10/18/78 10/18/78
+*INSTR                      4625B    6K 0 WS 10/18/78 10/18/78
+COP-HF                      4579B    6K 0 WS 10/23/78 10/23/78
+DIRLIST                     2052B    4K 0 WS 10/18/78 10/18/78
+FILECOPY                    6656B    8K 0 WS 10/23/78 10/23/78
+HDCOPY                       821B    2K 0 WS 00/00/00 00/00/00
+HELP                         293B    2K 0 WS 11/06/78 11/06/78
+HELP.TXT                    6788B    8K 0 WS 10/23/78 10/23/78
+ISAM-T16                    6170B    8K 0 WS 11/06/78 11/06/78
+ISAM-TWO                    6148B    8K 0 WS 11/07/78 11/07/78
+STARTREK                    5425B    6K 0 WS 10/18/78 10/18/78
+VOLINIT                    10290B   12K 0 WS 07/20/79 07/20/79
+13 file(s), occupying 86K of 4694K total capacity
+497 directory entries and 4608K bytes remain
+```
 
 ### Format a disk
 `./altairdsk -F new.dsk`<br>
@@ -220,6 +242,11 @@ To format for a specific type<br>
 You can generally put options in any order<br>
 `./altairdsk new.dsk -F -T HDD_5MB`<br>
 `./altairdsk -F new.dsk -T FDD_TAR`
+
+### Set a disk label
+`HDSK01.DSK --label-set "DISK LABEL:01/02/73"`<br>
+Can be combined with --format (-F)<br>
+`./altairdsk -F -T HD_BASIC new.dsk -L ABC:05/06/77`
 
 ### Copy a file from the disk (get)
 `./altairdsk -g cpm.dsk LADDER.COM`
