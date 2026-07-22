@@ -277,6 +277,7 @@ You can generally put options in any order<br>
 `./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Set a disk label
+Label format is <label>:mm/dd//yy.<br>
 `HDSK01.DSK --label-set "DISK LABEL:01/02/73"`<br>
 Can be combined with --format (-F)<br>
 `./altairdsk -F -T HD_BASIC new.dsk -L ABC:05/06/77`
