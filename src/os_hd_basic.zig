@@ -1,6 +1,5 @@
-// TODO: Do bounds checking on the alloction free. they come from the disk, so need checking.
-// TODO: In fact should do this for all formats. Just move the set/unset unto the directory table?.
-
+// TODO: For all formats  move the set/unset unto the directory table?.
+// Check that the erase functionality is bit-compatible with basic. We know it is logically compatible.
 pub const log = std.log.scoped(.altair_disk_lib);
 // Don't log errors during fuzz testing.
 const builtin = @import("builtin");
@@ -400,7 +399,6 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
     }
 }
 
-// TODO: Errorset
 const ImageFileReader = struct {
     interface: std.Io.Reader,
     dir_entry: *const CookedDirEntry,
@@ -445,18 +443,17 @@ const ImageFileReader = struct {
         };
     }
 
-    // TODO: Error set
     pub fn nextAllocation(self: *ImageFileReader) ReadSectorError!?u16 {
         const image_type = self.image.image_type;
         if (self.dir_alloc_idx == self.dir_entry.allocations.items.len) return null;
 
         const dir_alloc = self.dir_entry.allocations.items[self.dir_alloc_idx];
-        switch (self.dir_entry.attribs[1]) {
-            'S' => {
+        switch (self.dir_entry.fileType()) {
+            .small => {
                 self.dir_alloc_idx += 1;
                 return dir_alloc;
             },
-            'L' => {
+            .large => {
                 // groups are u16 = 128 per sector. 8 sectors per group
                 // = 1024 groups per indirect block.
                 if (self.sub_alloc_idx % 128 == 0) {

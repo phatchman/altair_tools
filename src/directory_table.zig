@@ -41,7 +41,7 @@ pub const CookedDirEntry = struct {
     pub fn fileType(self: *const CookedDirEntry) FileType {
         return switch (self.os) {
             .cpm => .normal,
-            .ados => switch (self.attribs[1]) {
+            .ados => switch (self.attribs[0]) {
                 'S' => .sequential,
                 'R' => .random_access,
                 else => unreachable,

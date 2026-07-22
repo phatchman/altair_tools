@@ -571,8 +571,8 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     var sector_nr: u8 = entry.os.ados.sector;
     errdefer out_writer.flush() catch {};
     var buffer: [max_sector_data_len]u8 = undefined;
-    switch (entry.attribs[0]) {
-        'S' => { // sequential
+    switch (entry.fileType()) {
+        .sequential => { // sequential
             var decode_basic_file: bool = false;
             var reader: SequentialFileReader = .init(image, entry, &buffer);
             if (text_mode == .Text) {
@@ -602,7 +602,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
                 };
             }
         },
-        'R' => { // Random access file
+        .random_access => { // Random access file
             // The first 256 bytes are the group and track number encoded as
             // 2 bits group and 6 bits track nr - 6. i.e. 0 = track 6.
             // The first sector's `nbytes` holds the number of groups.
