@@ -308,7 +308,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             dir_location = toPhysicalAddress(image.image_type, dir_page);
         }
         for (0..image.image_type.reserved_allocs) |alloc| {
-            dir.free_allocations.unset(alloc);
+            unsetAllocation(dir, @intCast(alloc)) catch unreachable;
         }
 
         for (dir.raw_directories.hd_basic.items, 0..) |entry, entry_nr| {
@@ -316,7 +316,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                 if (alloc == 0xffff) break;
                 if (!entry.isDeleted()) {
                     try entry.validate(image.image_type, @intCast(entry_nr));
-                    dir.free_allocations.unset(alloc);
+                    unsetAllocation(dir, alloc) catch unreachable; // already validated.
                     // Large files use an indirect allocation scheme.
                     if (entry.status == 0x03) { // Large file
                         sub_allocs: for (0..image.image_type.sectors_per_alloc) |offset| {
@@ -326,7 +326,14 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                             const allocations: []align(1) u16 = @ptrCast(alloc_sector.dataBytes());
                             for (allocations) |ind_alloc| {
                                 if (ind_alloc == 0xffff) break :sub_allocs;
-                                dir.free_allocations.unset(ind_alloc);
+                                unsetAllocation(dir, ind_alloc) catch |err| switch (err) {
+                                    error.InvalidAllocation => {
+                                        logerr(
+                                            "An invalid allocation was found for file {s}. [Actual {}, Expected 0 - {}]",
+                                            .{ std.mem.trimEnd(u8, &entry.filename, " "), ind_alloc, image.image_type.total_allocs },
+                                        );
+                                    },
+                                };
                             }
                         }
                     }
@@ -750,11 +757,40 @@ pub fn allocationSetFree(image: *DiskImage, cooked: *const CookedDirEntry, alloc
             const sub_allocs: []align(1) u16 = @ptrCast(sector.dataBytes());
             for (sub_allocs) |sub_alloc| {
                 if (sub_alloc == 0xffff) break :loop;
-                image.directory.free_allocations.set(sub_alloc);
+                setAllocation(&image.directory, sub_alloc) catch |err| switch (err) {
+                    error.InvalidAllocation => {
+                        logerr("Error freeing sub allocations for allocation {}: {t}", .{ sub_alloc, err });
+                    },
+                };
             }
         }
     }
-    image.directory.free_allocations.set(alloc);
+    setAllocation(&image.directory, alloc) catch |err| switch (err) {
+        error.InvalidAllocation => {
+            logerr("Error freeing sub allocations for allocation {}: {t}", .{ alloc, err });
+        },
+    };
+}
+
+// FUTURE TODO: Move this logic into the directory table to return error if invalid.
+// Each implementation can decide whether to panic or return error
+// depending on source of the allocation (trusted vs untrusted).
+// This would also resolve the confusing naiming unsetAllocation vs allocationSetFree.
+fn unsetAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
+    if (alloc >= dir.free_allocations.capacity()) {
+        logerr("Attempt to unset an invalid free allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
+        return error.InvalidAllocation;
+    }
+    dir.free_allocations.unset(alloc);
+}
+
+fn setAllocation(dir: *DirectoryTable, alloc: u16) error{InvalidAllocation}!void {
+    if (alloc >= dir.free_allocations.capacity()) {
+        logerr("Attempt to set an invalid free allocation. [Allocation = {}. Must be 0 - {}]", .{ alloc, dir.free_allocations.capacity() - 1 });
+        return error.InvalidAllocation;
+    }
+    std.debug.assert(!dir.free_allocations.isSet(alloc));
+    dir.free_allocations.set(alloc);
 }
 
 fn rawEntryGetFree(dir: *const DirectoryTable, entry_nr: *u16) error{OutOfExtents}!*DirEntry {
