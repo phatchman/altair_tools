@@ -21,35 +21,48 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 [Go straight to the command examples](#command-line)<br>
 [Go straight to the gui examples](docs/ADGUI.md)
 
-### LLM / "AI" Disclosure and Policy
+### LLM Disclosure and Contribution Policy
 * All Zig code and documentation in this repository is human crafted.
-* No LLMs have been used to write any line of code or documentation.
-* LLMs have been used in a read-only mode for review and writing temporary testing tools.
-* Code and documentation contributions must not contain any LLM content or be derived from LLM content.
+* No LLMs have been used to write any lines of code or documentation.
+* LLMs have been used in a read-only capacity for code review, and format debugging.
+* LLMS have also been used for writing throw-away investigation tools.
+* Code and documentation contributions must not contain any LLM content or be directly derived from LLM content.
+* All bugs and issues are also human crafted.
 
 ## Supported Disk Image Types
 
-| Type              | Description   |
-|-------------------|---------------|
-| FDD_8IN (default) | The MITS 8" hard-sectored floppy disk images |
-| FDD_TAR           | Tarbell disk images |
-| HDD_5MB           | The MITS 5MB hard disk disk images |
-| HDD_5MB_1024      | The MITS 5MB hard disk, but modified for 1024 directory entries. Note you need the modified CP/M image to use this format. See https://github.com/ratboy666/hd1024 |
-| FDD_1.5MB         | FDC+ 1.5MB images |
-| FDD_8IN_8MB       | FDC+ 8MB "floppy" images |
-| CDOS_SMSSSD       | CDOS 5.12" Single Sided Single Density |
-| CDOS_SMSSDD       | CDOS 5.12" Single Sided Double Density |
-| CDOS_SMDSSD       | CDOS 5.12" Double Sided Single Density |
-| CDOS_SMDSDD       | CDOS 5.12" Double Sided Double Density |
-| CDOS_LGSSSD       | CDOS 8" Single Sided Single Density |
-| CDOS_LGSSDD       | CDOS 8" Single Sided Double Density |
-| CDOS_LGDSSD       | CDOS 8" Double Sided Single Density |
-| CDOS_LGDSDD       | CDOS 8" Double Sided Double Density |
 
-_Things to note_
-1) The CDOS formats do not currently support a non-standard number of directory entries and the image will fail to open.
+| Type              | Format                          | Operating System   | Support Level |
+|-------------------|---------------------------------|--------------------|---------------|
+| FDD_8IN (default) | MITS 8" Floppy Disk             | CPM                | Full |
+| ADOS_8IN          | MITS 8" Floppy Disk             | Altair DOS & BASIC | Full |
+| TIMESHARE_BASIC   | MITS 8" Floppy Disk             | Timeshare BASIC    | Read Only |
+| ADOS_MINI         | MITS 5.25" Data Floppy Disk     | Altair DOS & BASIC | Full |
+| ADOS_MINI_BOOT    | MITS 5.25" Bootable Floppy Disk | Altair DOS & BASIC | Full |
+| CPM_MINI          | MITS 5.25" Floppy Disk          | CPM                | Full |
+| HDD_5MB           | MITS 5MB Hard Disk              | CPM                | Full |
+| HDD_5MB_1024      | MITS 5MB, with 1024 directories(1) | CPM             | Full |
+| HD_BASIC          | MITS 5MB Hard Disk              | Altair HD BASIC    | Full |
+| FDD_TAR           | Tarbell Floppy Disk             | CPM                | Full |
+| FDD_1.5MB         | FDC+ 1.5MB Floppy Disk          | CPM                | Full |
+| FDD_8IN_8MB       | FDC+ 8MB "Floppy" Disk          | CPM                | Full |
+| CDOS_SMSSSD       | CROMEMCO 5.25" SS SD Disk       | CDOS               | Full |
+| CDOS_SMSSDD       | CROMEMCO 5.25" SS DD Disk       | CDOS               | Full |
+| CDOS_SMDSSD       | CROMEMCO 5.25" DS SD Disk       | CDOS               | Full |
+| CDOS_SMDSDD       | CROMEMCO 5.25" DS DD Disk       | CDOS               | Full |
+| CDOS_LGSSSD       | CROMEMCO 8" SSSD Disk           | CDOS               | Full |
+| CDOS_LGSSDD       | CROMEMCO 8" SSDD Disk           | CDOS               | Full |
+| CDOS_LGDSSD       | CROMEMCO 8" DSSD Disk           | CDOS               | Full |
+| CDOS_LGDSDD       | CROMEMCO 8" DSDD Disk           | CDOS               | Full |
+
+(1) Note you need the modified CP/M image to use this format. See https://github.com/ratboy666/hd1024                           
+
+## Operating System - Specific details
+
+
+<!-- 1) The CDOS formats do not currently support a non-standard number of directory entries and the image will fail to open.
 2) FDD_TAR and CDOS_LGSSSD are the same image file size. Normally the correct format can be determined from a disk type label that CDOS places in the first track and sector.
-3) Early CDOS, including images shipped with AltairDuino, don't have the disk type label. As a fallback altairdsk looks to see if the CDOS boot loader is installed on track 0. However, it is still quite possible that CDOS_LGSSSD can be mistakenly identified as FDD_TAR. Please check if the image type is detected correctly using the --info option.
+3) Early CDOS, including images shipped with AltairDuino, don't have a disk type label. As a fallback altairdsk looks to see if the CDOS boot loader is installed on track 0. However, it is still quite possible that CDOS_LGSSSD can be mistakenly identified as FDD_TAR. Please check if the image type is detected correctly using the --info option. -->
 
 While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
 
@@ -76,12 +89,12 @@ The C version can be found in the legacy directory and should still build using 
 
 One of the nice things about Zig is that the build system is part of the language making building from source relatively simple. However, Zig is still a young language and many things change from release to release. So please make sure you use the correct Zig verison to build the project.
 
-1. Install Zig version 0.14.1 from https://ziglang.org/ or from your package manager if available.
-2. zig build --release=safe -Doptimize=ReleaseSafe
+1. Install Zig version 0.16.0 from https://ziglang.org/ or from your package manager if available.
+2. zig build --release=safe
 
 Optionally build the GUI.
 1. cd adgui
-2. zig buld --release=safe -Doptimize=ReleaseSafe
+2. zig build --release=safe
 
 The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
@@ -139,13 +152,21 @@ OPTIONS:
 ```
 
 ## Some things to note:
+* If an invalid filename for the disk format is supplied, for example ABC.COMMMMMM on CP/M, it will be converted to a similar valid  filename; ABC.COM in this example.
+* If the disk contains an invalid format for the host operating system, the invalid characters with be URL-encoded. e.g. \*FILE\* translates to %2AFILE%2A on Windows.
 * The 5MB HDD images that come with the Altair-Duino have an invalid directory table. altairdsk will print an error and refuse to open these images. Use the -R / --recover option to create a clean version of these disk images.
-* There is no expansion of wildcards in windows. But there is a work-around for powershell. See the get multiple example for more details.
-* altairdsk will do it's best to detect whether a binary or text file is being transferred, but you can force that with the -t and -b options.
-This is only needed when copying a file from the altair disk.<br>
-* If an invalid CP/M filename is supplied, for example ABC.COMMMMMM, it will be converted to a similar valid CP/M filename; ABC.COM in this example.
+* Wildcard expansion is now performed on windows. 
 * Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension, and get all files. On CP/M you would use '\*.\*'. You can still use '\*.TXT' and 'ABC.\*' and that will work as expected.
 * As mentioned in the usage, if using the HDD_5MB_1024 format with 1024 directory entries, make sure you always use the -T option. You *will* corrupt the image if you don't specify the format.
+
+| Operating system | Notes |
+|---|---|
+| CP/M | For text files it is important to use <code>--text</code> when copying from image.<br>Otherwise the files will be padded with ^Z to the next 128 byte multiple. |
+| Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul> |
+| Timeshare Basic | As per Altair BASIC, but read-only. |
+| Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul> |
+| Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
+| | |
 
 ## Examples
 
@@ -183,7 +204,13 @@ XDIR     COM  11782B  12K 0 W
 Length is length of the file to nearest 128 byte sector<br>
 Used is the amount of space actually used on the disk (in multiples of 1 block)<br>
 U is the user number<br>
-At is the file attributes. R - Read only, W - Read/write. S - System
+At is the file attributes which vary per operating system.
+| Operating System | First | Second | 
+|------------------|-------|--------|
+| CPM / CDOS       | R - Read Only<br>W - Read / Write | S - System |
+| Alatir DOS & BASIC<br>Timeshare BASIC | S - Sequential<br> R - Random Access | | 
+| HD BASIC         |  R - Read Only<br>W - Read / Write | S - Small File<br>L - Large File |
+
 
 ### Format a disk
 `./altairdsk -F new.dsk`<br>
@@ -217,9 +244,6 @@ If the same file exists for multiple users, the user number is appended to the f
 
 Copy multiple files to user 1<br>
 `./altairdsk -P -u1 cpm.dsk *.com`
-
-Wildcard expansion is not performed on windows. However you can use the following powershell trick instead:<br>
-`altairdsk cpm.dsk -P $(dir *)`
 
 ### Erase a file
 `./altairdsk -e cpm.dsk asm.com`

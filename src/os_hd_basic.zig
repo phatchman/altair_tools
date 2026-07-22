@@ -463,7 +463,6 @@ const ImageFileReader = struct {
                     try self.image.readSector(indirect_location, &self.index_sector);
                 }
                 const sub_allocations: []align(1) u16 = @ptrCast(self.index_sector.dataBytes());
-                // Large files use indirect allocations
                 const sub_alloc = sub_allocations[self.sub_alloc_idx % 128];
                 self.sub_alloc_idx += 1;
 
@@ -484,7 +483,6 @@ const ImageFileReader = struct {
         }
     }
 
-    /// Loads the first sector if needed; does not consume any bytes.
     pub fn isBasicFile(self: *ImageFileReader) error{ReadFailed}!bool {
         try self.fillIfEmpty();
         return self.pending.len > 0 and self.pending[0] == 0xff;
@@ -581,13 +579,14 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
             };
         }
 
-        /// return a new allocation or error when no more allocations
+        /// Return a new allocation or error when no more allocations
         /// Handles allocations for both small and large files and conversion from small to large
         pub fn newAllocation(self: *CopyToImage) (error{OutOfAllocs} || WriteSectorError)!void {
             // This should be impossible to trigger on 5MB hd_basic disks.
             if (self.indirect_alloc_idx >= self.entry.allocations.len) return error.OutOfAllocs;
 
             self.entry.last_group = try allocationGetFree(&self.img.directory);
+            // Is this a small file allocation?
             if (self.entry.ngroups < self.entry.allocations.len) {
                 self.entry.allocations[self.entry.ngroups] = self.entry.last_group;
                 self.entry.ngroups += 1;
@@ -597,6 +596,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
                 // Now get a new allocation for the actual file data.
                 return self.newAllocation();
             } else {
+                // large file allocation.
                 // groups are u16 = 128 per sector. 8 sectors per group
                 // = 1024 groups per indirect block.
                 if (self.indirect_group_idx % 128 == 0 and self.indirect_group_idx != 0) {
