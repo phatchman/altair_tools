@@ -2,26 +2,31 @@
 
 A collection of utilities for the Altair 8800
 
-* Altairdsk allows the reading and writing of CP/M formatted Altair 8800 floppy disk disk images.
-* *NEW:* adgui provides a graphical user interface for most altairdsk operations.
+* Altairdsk allows the reading and writing of 8"  Altair 8800 floppy disk disk images.
+* Adgui provides a graphical user interface for most altairdsk operations.
+* *New:* Altairdisk now supports all formats shipped with the Altair Dunino, including support for CP/M, Altair DOS, Altair BASIC, Cromemco CDOS, Timeshare BASIC and Hard Disk BASIC.
 
-If you are looking for a utility similar to cpmtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
-It has been tested under Windows and Linux, and known to work under MacOS as well.
+If you are looking for a utility similar to CP/Mtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
+It has been tested under Windows and Linux, and known to work under MacOS.
 
 altairdsk allows you to:
   1. Perform a directory listing
   2. Copy files to and from the disk
   3. Erase files
   4. Format an existing disk or create a newly formatted disk.
-  5. Create bootable CP/M disk images
-  6. Recover disk images with directory entry corruption.
+  5. Create bootable disk images
+  6. Read and modify disk image labels (CDOS and HD Basic)
+  7. Translate encoded Altair / MS Basic files to ASCII.
+  8. Recover disk images with directory entry corruption.
 
 _Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
-[Go straight to the command examples](#command-line)<br>
-[Go straight to the gui examples](docs/ADGUI.md)
+## Example usage ##
 
-### LLM Disclosure and Contribution Policy
+[Go to the command examples](#command-line)<br>
+[Go to the gui examples](docs/ADGUI.md)
+
+## LLM Disclosure and Contribution Policy
 * All Zig code and documentation in this repository is human crafted.
 * No LLMs have been used to write any lines of code or documentation.
 * LLMs have been used in a read-only capacity for code review, and format debugging.
@@ -34,18 +39,18 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 
 | Type              | Format                          | Operating System   | Support Level |
 |-------------------|---------------------------------|--------------------|---------------|
-| FDD_8IN (default) | MITS 8" Floppy Disk             | CPM                | Full |
+| FDD_8IN (default) | MITS 8" Floppy Disk             | CP/M                | Full |
 | ADOS_8IN          | MITS 8" Floppy Disk             | Altair DOS & BASIC | Full |
 | TIMESHARE_BASIC   | MITS 8" Floppy Disk             | Timeshare BASIC    | Read Only |
 | ADOS_MINI         | MITS 5.25" Data Floppy Disk     | Altair DOS & BASIC | Full |
 | ADOS_MINI_BOOT    | MITS 5.25" Bootable Floppy Disk | Altair DOS & BASIC | Full |
-| CPM_MINI          | MITS 5.25" Floppy Disk          | CPM                | Full |
-| HDD_5MB           | MITS 5MB Hard Disk              | CPM                | Full |
-| HDD_5MB_1024      | MITS 5MB, with 1024 directories(1) | CPM             | Full |
+| CPM_MINI          | MITS 5.25" Floppy Disk          | CP/M                | Full |
+| HDD_5MB           | MITS 5MB Hard Disk              | CP/M                | Full |
+| HDD_5MB_1024      | MITS 5MB, with 1024 directories(1) | CP/M             | Full |
 | HD_BASIC          | MITS 5MB Hard Disk              | Altair HD BASIC    | Full |
-| FDD_TAR           | Tarbell Floppy Disk             | CPM                | Full |
-| FDD_1.5MB         | FDC+ 1.5MB Floppy Disk          | CPM                | Full |
-| FDD_8IN_8MB       | FDC+ 8MB "Floppy" Disk          | CPM                | Full |
+| FDD_TAR           | Tarbell Floppy Disk             | CP/M                | Full |
+| FDD_1.5MB         | FDC+ 1.5MB Floppy Disk          | CP/M                | Full |
+| FDD_8IN_8MB       | FDC+ 8MB "Floppy" Disk          | CP/M                | Full |
 | CDOS_SMSSSD       | CROMEMCO 5.25" SS SD Disk       | CDOS               | Full |
 | CDOS_SMSSDD       | CROMEMCO 5.25" SS DD Disk       | CDOS               | Full |
 | CDOS_SMDSSD       | CROMEMCO 5.25" DS SD Disk       | CDOS               | Full |
@@ -110,6 +115,9 @@ if desired.  [Keyboard shortcuts and general instructions for using the GUI](doc
 
 ## Command Line
 ```
+altairdsk
+Version: 0.9.5
+
 USAGE:
   altairdsk [OPTIONS] <disk_image> [<filename>...]
 
@@ -120,35 +128,60 @@ ARGUMENTS:
   filename     List of filesnames. Wildcards * and ? are supported e.g. '*.COM'
 
 OPTIONS:
-  -d, --dir                          Directory listing (default)
-  -r, --raw                          Raw directory listing
-  -i, --info                         Prints disk format information
-  -F, --format                       Format existing or create new disk image. Defaults to FDD_8IN
-  -g, --get                          Copy file from Altair disk image to host
-  -o, --out <outdir>                 Out directory for get and get multiple
-  -G, --get-multiple                 Copy multiple files from Altair disk image to host. Wildcards * and ? are supported e.g '*.COM'
-  -p, --put                          Copy file from host to Altair disk image
-  -P, --put-multiple                 Copy multiple files from host to Altair disk image
-  -e, --erase                        Erase a file
-  -E, --erase-multiple               Erase multiple files - wildcards supported
-  -t, --text                         Put or get a file in text mode
-  -b, --bin                          Put or get a file in binary mode
-  -u, --user <user>                  Restrict operation to this CP/M user
-  -x, --extract-cpm <system_image>   Extract CP/M system (from a bootable disk image) to a file
-  -s, --write-cpm <system_image>     Write saved CP/M system image to disk image (make disk bootable)
-  -R, --recover <new_disk_image>     Try to recover a corrupt image
-  -T, --type <type>                  Disk image type. Auto-detected if possible. Supported types are:
-                                           * FDD_8IN - MITS 8" Floppy Disk  (Default)
-                                           * HDD_5MB - MITS 5MB Hard Disk
-                                           * HDD_5MB_1024 - MITS 5MB, with 1024 directories
-                                           * FDD_TAR - Tarbell Floppy Disk
-                                           * FDD_1.5MB - FDC+ 1.5MB Floppy Disk
-                                           * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk
-                                     !!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.
-  -v, --verbose                      Verbose - Prints information about operations being performed
-  -V, --very-verbose                 Very verbose - Additionally prints sector read/write information
-  -h, --help                         Show this help output.
-      --color <VALUE>                When to use colors (*auto*, never, always).
+  -d, --dir                         Directory listing (default)
+  -r, --raw                         Raw directory listing
+  -i, --info                        Prints disk format information
+  -F, --format                      Format existing or create new disk image. Defaults to FDD_8IN
+  -g, --get                         Copy file from Altair disk image to host
+  -o, --out <outdir>                Out directory for get and get multiple
+  -G, --get-multiple                Copy multiple files from Altair disk image to host. Wildcards * 
+                                    and ? are supported e.g '*.COM'
+  -p, --put                         Copy file from host to Altair disk image
+  -P, --put-multiple                Copy multiple files from host to Altair disk image
+  -e, --erase                       Erase a file
+  -E, --erase-multiple              Erase multiple files - wildcards supported
+  -t, --text                        Put or get a file in text mode
+  -b, --bin                         Put or get a file in binary mode
+  -n, --rand                        Put or get a random access file (Altair DOS/BASIC only)
+  -u, --user <user>                 Restrict operation to this user (CP/M and CDOS)
+  -x, --extract-os <system_image>   Extract operating system (from a bootable disk image) to a file
+  -s, --write-os <system_image>     Write saved operating system image to disk image (make disk 
+                                    bootable)
+  -R, --recover <new_disk_image>    Try to recover a corrupt image
+  -T, --type <type>                 Disk image type. Auto-detected if possible. Supported types are:
+                                          * FDD_8IN - MITS 8" Floppy Disk (CPM) [Default]
+                                          * ADOS_8IN - MITS 8" Floppy Disk (Altair DOS & BASIC)
+                                          * TIMESHARE_BASIC - MITS 8" Floppy Disk (Timeshare BASIC)
+                                          [READ ONLY]
+                                          * ADOS_MINI - MITS 5.25" Data Floppy Disk (Altair DOS & 
+                                          BASIC)
+                                          * ADOS_MINI_BOOT - MITS 5.25" Bootable Floppy Disk (Altair 
+                                          DOS & BASIC)
+                                          * CPM_MINI - MITS 5.25" Floppy Disk (CPM)
+                                          * HDD_5MB - MITS 5MB Hard Disk (CPM)
+                                          * HDD_5MB_1024 - MITS 5MB, with 1024 directories (CPM)
+                                          * HD_BASIC - MITS 5MB Hard Disk (Altair HD BASIC)
+                                          * FDD_TAR - Tarbell Floppy Disk (CPM)
+                                          * FDD_1.5MB - FDC+ 1.5MB Floppy Disk (CPM)
+                                          * FDD_8IN_8MB - FDC+ 8MB "Floppy" Disk (CPM)
+                                          * CDOS_SMSSSD - CROMEMCO 5.25" SS SD Disk (CDOS)
+                                          * CDOS_SMSSDD - CROMEMCO 5.25" SS DD Disk (CDOS)
+                                          * CDOS_SMDSSD - CROMEMCO 5.25" DS SD Disk (CDOS)
+                                          * CDOS_SMDSDD - CROMEMCO 5.25" DS DD Disk (CDOS)
+                                          * CDOS_LGSSSD - CROMEMCO 8" SSSD Disk (CDOS)
+                                          * CDOS_LGSSDD - CROMEMCO 8" SSDD Disk (CDOS)
+                                          * CDOS_LGDSSD - CROMEMCO 8" DSSD Disk (CDOS)
+                                          * CDOS_LGDSDD - CROMEMCO 8" DSDD Disk (CDOS)
+                                    !!! The HDD_5MB_1024 type cannot be auto-detected. Always use -T with this format.
+  -q, --quiet                       Suppress non-fatal error, warning and info messages
+  -v, --verbose                     Prints information about operations being performed
+  -V, --very-verbose                Additionally prints sector read/write information
+  -L, --label-set <label>           Set the disk label and timestamp on CDOS and HD BASIC disks.
+                                    Format <label>:mm/dd/yy
+  -l, --label                       Print the disk label and timestamp from CDOS or HD BASIC disks
+  -f, --force                       Force overwrite of existing files with get or put
+  -h, --help                        Show this help output.
+      --color <VALUE>               When to use colors (*auto*, never, always).
 ```
 
 ## Some things to note:
@@ -161,20 +194,20 @@ OPTIONS:
 
 | Operating system | Notes |
 |---|---|
-| CP/M | For text files it is important to use <code>--text</code> when copying from image.Otherwise the files will be padded with ^Z to the next 128 byte multiple.<br>The only format that supports <code>--user</code> |
+| CP/M | For text files it is important to use <code>--text</code> when copying from image.Otherwise the files will be padded with ^Z to the next 128 byte multiple.<br>Supports <code>--user</code> |
 | Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul> |
 | Timeshare Basic | As per Altair BASIC, but read-only. |
 | Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>The creation date contained in the disk label is used as the creation and modification time of any file created by altairdsk. |
-| Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
+| Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Supports <code>--user</code><br>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
 | | |
 
 ## Examples
 
 ### Get a directory listing
-`./altairdsk -d cpm.dsk`<br>
-`./altairdsk cpm.dsk`<br>
+`./altairdsk -d CPM.dsk`<br>
+`./altairdsk CPM.dsk`<br>
 Restrict the directory listing to a particular user with the -u option<br>
-`./altairdsk -u 0 cpm.dsk`
+`./altairdsk -u 0 CPM.dsk`
 
 ```
 Name     Ext  Length Used U At
@@ -207,7 +240,7 @@ U is the user number<br>
 At is the file attributes which vary per operating system.
 | Operating System | First | Second | 
 |------------------|-------|--------|
-| CPM / CDOS       | R - Read Only<br>W - Read / Write | S - System |
+| CP/M / CDOS       | R - Read Only<br>W - Read / Write | S - System |
 | Alatir DOS & BASIC<br>Timeshare BASIC | S - Sequential<br> R - Random Access | | 
 | HD BASIC         |  R - Read Only<br>W - Read / Write | S - Small File<br>L - Large File |
 
@@ -249,46 +282,46 @@ Can be combined with --format (-F)<br>
 `./altairdsk -F -T HD_BASIC new.dsk -L ABC:05/06/77`
 
 ### Copy a file from the disk (get)
-`./altairdsk -g cpm.dsk LADDER.COM`
+`./altairdsk -g CPM.dsk LADDER.COM`
 
 get files for a single user<br>
-`./altairdsk -g -u1 cpm.dsk LADDER.COM`
+`./altairdsk -g -u1 CPM.dsk LADDER.COM`
 
 ### Copy a file to the disk (put)<br>
-`./altairdsk -p cpm.dsk LADDER.COM`
+`./altairdsk -p CPM.dsk LADDER.COM`
 
 ### Copy multiple files from the disk (get multiple)
 This command allows wildcards of * or ?. Note the use of single quotes to stop the shell/command prompt expanding wildcards<br>
-`./altairdsk -G cpm.dsk load.com dump.com 'asm.*' 'p?p.com'`
+`./altairdsk -G CPM.dsk load.com dump.com 'asm.*' 'p?p.com'`
 
 To get all files from the disk<br>
-`./altairdsk -G cpm.dsk '*'`
+`./altairdsk -G CPM.dsk '*'`
 
 If the same file exists for multiple users, the user number is appended to the filename e.g. ASM.TXT_1.
 
 ### Copy multiple files to the disk image (put multiple)
-`./altairdsk -P cpm.dsk load.com dump.com asm.com pip.com`
+`./altairdsk -P CPM.dsk load.com dump.com asm.com pip.com`
 
 Copy multiple files to user 1<br>
-`./altairdsk -P -u1 cpm.dsk *.com`
+`./altairdsk -P -u1 CPM.dsk *.com`
 
 ### Erase a file
-`./altairdsk -e cpm.dsk asm.com`
+`./altairdsk -e CPM.dsk asm.com`
 
 If the same file exists for multiple users, only the first copy of the file will be erased. Use the -E option to erase the file for all users.
 
 ### Erase a multiple files
-`./altairdsk -E cpm.dsk 'asm.*'`
+`./altairdsk -E CPM.dsk 'asm.*'`
 
 If the same file exists for multiple users, the -E option will remove the file from all users, unless the -u option is specified.<br>
 To remove all files from user 2<br>
-`./altairdsk -E -u 2 cpm.dsk '*'`
+`./altairdsk -E -u 2 CPM.dsk '*'`
 
 ### Save CP/M system tracks from bootable disk
-`./altairdsk -x cpm.dsk boot.img`
+`./altairdsk -x CPM.dsk boot.img`
 
 ### Make a bootable disk from previously saved system tracks
-`./altairdsk -s cpm.dsk boot.img`
+`./altairdsk -s CPM.dsk boot.img`
 
 ### Fixup Altair Duino 5MB HDSK images
 The CP/M HDSK03.DSK and HDSK04.DSK images that come with the Altair Duino have some directory entry corruption. 
@@ -300,7 +333,7 @@ You will see a list of errors while running this command. These are expected.
 
 ### Image Information
 Displays track and sector information.
-`./altairdsk -i cpm.dsk`
+`./altairdsk -i CPM.dsk`
 ```
 Type:         HDD_5MB
 Sector Len:   128
@@ -320,7 +353,7 @@ Num Dirs:     256
 
 ### Raw directory listing
 Dumps the CP/M extent information<br>
-`./altairdsk -r cpm.dsk`
+`./altairdsk -r CPM.dsk`
 ```
 IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]
 000:0:ASM     :COM:W :000:064:[2,3,4,5,0,0,0,0,0,0,0,0,0,0,0,0]

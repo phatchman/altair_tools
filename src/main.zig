@@ -227,14 +227,14 @@ pub fn main(init_args: std.process.Init) !void {
                     .value_ref = r.mkRef(&options.cpm_user),
                 },
                 .{
-                    .long_name = "extract-cpm",
+                    .long_name = "extract-os",
                     .help = "Extract operating system (from a bootable disk image) to a file",
                     .short_alias = 'x',
                     .value_name = "system_image",
                     .value_ref = r.mkRef(&options.system_image_get),
                 },
                 .{
-                    .long_name = "write-cpm",
+                    .long_name = "write-os",
                     .help = "Write saved operating system image to disk image (make disk bootable)",
                     .short_alias = 's',
                     .value_name = "system_image",
@@ -380,7 +380,7 @@ pub fn validateOptions() !bool {
             \\       --get, --get-multiple,
             \\       --put, --put-multiple,
             \\       --erase, --erase-multiple,
-            \\       --extract-cpm, --write-cpm,
+            \\       --extract-os, --write-os,
             \\       --label, --recover
             \\       --label-set (except with --format),
             \\
