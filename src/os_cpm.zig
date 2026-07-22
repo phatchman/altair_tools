@@ -696,10 +696,10 @@ pub fn translateFilename(filename: []const u8, buffer: []u8) error{InvalidFilena
                 char_count += 1;
                 found_dot = true;
 
-                while (in_char[0] == '.' and in_char != end_in) {
+                while (in_char != end_in and in_char[0] == '.') {
                     in_char += 1;
                 }
-                while (in_char[0] != '.' and in_char != end_in) {
+                while (in_char != end_in and in_char[0] != '.') {
                     in_char += 1;
                 }
             }

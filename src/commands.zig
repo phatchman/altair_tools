@@ -442,8 +442,8 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     else
         std.fmt.bufPrint(&filename_buf, "{s}", .{dir_entry.filenameAndExtension()}) catch unreachable;
     var safe_buf: [std.fs.max_name_bytes]u8 = undefined;
-
-    var out_file = cwd.createFile(ctx.io, host_os.toSafeHostFilename(out_filename, &safe_buf) catch unreachable, .{ .read = false, .exclusive = !options.force }) catch |err| {
+    const safe_filename = host_os.toSafeHostFilename(out_filename, &safe_buf) catch unreachable;
+    var out_file = cwd.createFile(ctx.io, safe_filename, .{ .read = false, .exclusive = !options.force }) catch |err| {
         switch (err) {
             error.PathAlreadyExists => {
                 printErrorMessage(current_command, .file_exists, .{out_filename}, err);
@@ -474,8 +474,8 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| {
         printErrorMessage(current_command, .file_copy, .{out_filename}, err);
         if (file_writer.pos == 0) {
-            cwd.deleteFile(ctx.io, out_filename) catch {
-                log.err("Error deleting empty output file: {s}.", .{out_filename});
+            cwd.deleteFile(ctx.io, safe_filename) catch {
+                log.err("Error deleting empty output file: {s}.", .{safe_filename});
             };
         }
         return error.CommandFailed;
@@ -840,6 +840,10 @@ pub fn recoverImage(ctx: Context, disk_image: *DiskImage, options: CommandLineOp
 
     var buffer: [4096]u8 = undefined;
     var writer = out_image.writer(ctx.io, &buffer);
+    disk_image.reader.seekTo(0) catch |err| {
+        printErrorMessage(current_command, .recover, .{options.recovery_image_file}, err);
+        return error.CommandFailed;
+    };
     _ = disk_image.reader.interface().streamRemaining(&writer.interface) catch |err| {
         printErrorMessage(current_command, .unexpected, .{}, err);
         return error.CommandFailed;

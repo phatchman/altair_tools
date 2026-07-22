@@ -337,16 +337,15 @@ pub fn validateOptions() !bool {
 
     // For windows do some simple globbing for put multiple
     if (@import("builtin").os.tag == .windows) {
+        const arena = init.arena.allocator();
         if (options.multiple_files.len > 0 and options.do_put_multi) {
             const current = options.multiple_files;
             var new: std.ArrayList([]const u8) = .empty;
-            errdefer new.deinit(init.gpa);
+            errdefer new.deinit(arena);
             for (current) |pattern| {
-                try host_os.windows.glob(init.io, init.gpa, pattern, &new);
-                //                init.gpa.free(pattern);
+                try host_os.windows.glob(init.io, arena, pattern, &new);
             }
-            //            init.gpa.free(options.multiple_files);
-            options.multiple_files = try new.toOwnedSlice(init.arena.allocator());
+            options.multiple_files = try new.toOwnedSlice(arena);
         }
     }
 
@@ -434,6 +433,7 @@ pub fn validateOptions() !bool {
         !(options.do_get or options.do_put or options.do_get_multi or options.do_put_multi))
     {
         cli.printError(&p, &app, "force can only be used with get or put operations", .{});
+        return false;
     }
     return true;
 }

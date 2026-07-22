@@ -33,11 +33,6 @@ pub fn deinit() void {
     flushOut() catch {};
 }
 
-/// Flush stdin
-pub fn flushIn() !void {
-    try internal.stdin.flush();
-}
-
 /// Flush stdout
 pub fn flushOut() !void {
     try internal.stdout.flush();

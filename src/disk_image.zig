@@ -70,13 +70,6 @@ pub const DiskImage = struct {
         Text,
         Binary,
         Rand,
-
-        pub fn forOs(_: TextMode, os: OperatingSystem) type {
-            return switch (os) {
-                .ados => .{ .Auto, .Text, .Binary, .Rand },
-                else => .{ .Auto, .Text, .Binary },
-            };
-        }
     };
 
     // TODO: We can re-ify this from the underlying errors?
@@ -460,12 +453,8 @@ pub const SeekableReader = union(enum) {
 
     pub fn seekPos(self: SeekableReader) usize {
         return switch (self) {
-            .on_disk => |file| {
-                file.logicalPos();
-            },
-            .in_memory => |mem| {
-                mem.seek;
-            },
+            .on_disk => |file| file.logicalPos(),
+            .in_memory => |mem| mem.seek,
         };
     }
 

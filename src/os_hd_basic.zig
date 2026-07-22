@@ -380,7 +380,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
         for (dir.raw_directories.hd_basic.items[2..]) |*entry| {
             if (entry.isLastEntry()) break;
             if (!entry.isDeleted()) {
-                const entry_nr = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.hd_basic.items[0])) / @bitSizeOf(DirEntry);
+                const entry_nr = (@intFromPtr(entry) - @intFromPtr(&dir.raw_directories.hd_basic.items[0])) / @sizeOf(DirEntry);
                 try entry.validate(image.image_type, @intCast(entry_nr));
                 const cooked = try entry.cook(arena, image.image_type, @intCast(entry_nr));
                 dir.cooked_directories.appendAssumeCapacity(cooked);
@@ -1005,7 +1005,7 @@ fn encodeDates(created_yymmdd: [3]u8, modified_yymmdd: [3]u8) [6]u8 {
     result[0] = ((created_yymmdd[1] / 10 << 4) | (created_yymmdd[1] % 10)) +| 0x30;
     result[1] = (created_yymmdd[0] / 10 << 4) | (created_yymmdd[0] % 10);
     result[2] = ((modified_yymmdd[0] / 10 << 4) | (modified_yymmdd[0] % 10)) +| 0x30;
-    result[3] = (created_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10);
+    result[3] = (created_yymmdd[2] / 10 << 4) | (created_yymmdd[2] % 10);
     result[4] = ((modified_yymmdd[2] / 10 << 4) | (modified_yymmdd[2] % 10)) +| 0x30;
     result[5] = (modified_yymmdd[1] / 10 << 4) | (modified_yymmdd[1] % 10);
     return result;

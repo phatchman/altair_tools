@@ -245,7 +245,7 @@ At is the file attributes which vary per operating system.
 | HD BASIC         |  R - Read Only<br>W - Read / Write | S - Small File<br>L - Large File |
 
 Below is an example for HD BASIC showing the disk label and file dates.<br>
-Filenames are up to 24 characters nong, with no file extension.
+Filenames are up to 24 characters long, with no file extension.
 
 ```
 Label: DISK LABEL  Created: 01/02/73  Modified: 01/02/73
@@ -277,7 +277,7 @@ You can generally put options in any order<br>
 `./altairdsk -F new.dsk -T FDD_TAR`
 
 ### Set a disk label
-Label format is \<label\>:mm/dd//yy<br>
+Label format is \<label\>:mm/dd/yy<br>
 `HDSK01.DSK --label-set "DISK LABEL:01/02/73"`<br>
 Can be combined with --format (-F)<br>
 `./altairdsk -F -T HD_BASIC new.dsk -L ABC:05/06/77`

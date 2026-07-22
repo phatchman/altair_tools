@@ -212,7 +212,7 @@ pub const DirectoryTable = struct {
                             },
                             else => {},
                         }
-                        return;
+                        if (os != .cpm) return;
                     }
                 }
             },
