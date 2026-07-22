@@ -1147,7 +1147,7 @@ fn makeStatusBar() !bool {
         }
     }
     label = try std.fmt.bufPrint(&buf, "{s}", .{@tagName(copy_mode)});
-    const underline_pos: usize = if (copy_mode == .BINARY) 3 else 0;
+    const underline_pos: usize = std.mem.indexOf(u8, label, "A").?;
     if (try statusBarButton(@src(), label, .{}, reversed, underline_pos, .mode, true)) {
         copy_mode = nextCopyMode(copy_mode);
         CommandState.finishCommand();
@@ -2205,8 +2205,8 @@ pub fn nextCopyMode(mode: CopyMode) CopyMode {
     return switch (mode) {
         .AUTO => .ASCII,
         .ASCII => .BINARY,
-        .BINARY => if (commands.disk_image) |img| if (img.image_type.OS == .ados) .RAND else .AUTO else .AUTO,
-        .RAND => .AUTO,
+        .BINARY => if (commands.disk_image) |img| if (img.image_type.OS == .ados) .RANDOM else .AUTO else .AUTO,
+        .RANDOM => .AUTO,
     };
 }
 

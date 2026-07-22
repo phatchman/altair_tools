@@ -17,7 +17,7 @@ image_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 
 const Self = @This(); // TODO: This should be Commands?
-pub const CopyMode = enum { AUTO, ASCII, BINARY, RAND };
+pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM };
 
 pub fn deinit(self: *Self, gpa: std.mem.Allocator, io: std.Io) void {
     freeDirList(gpa, &self.image_directory_list);
@@ -300,7 +300,7 @@ fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
         .AUTO => .Auto,
         .ASCII => .Text,
         .BINARY => .Binary,
-        .RAND => .Rand,
+        .RANDOM => .Rand,
     };
 }
 

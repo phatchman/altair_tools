@@ -85,7 +85,7 @@ pub const DiskImageType_ADOS_8IN = struct {
             }
             start = 0;
             reader.interface.readSliceAll(sector.rawBytes()) catch return false;
-            entries = std.mem.bytesAsSlice(DirEntry, sector.rawBytes());
+            entries = std.mem.bytesAsSlice(DirEntry, sector.dataBytes());
         }
 
         return false;
