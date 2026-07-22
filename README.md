@@ -30,7 +30,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 * All Zig code and documentation in this repository is human crafted.
 * No LLMs have been used to write any lines of code or documentation.
 * LLMs have been used in a read-only capacity for code review, and format debugging.
-* LLMS have also been used for writing throw-away investigation tools.
+* LLMs have also been used for writing throw-away investigation tools.
 * Code and documentation contributions must not contain any LLM content or be directly derived from LLM content.
 * All bugs and issues are also human crafted.
 
