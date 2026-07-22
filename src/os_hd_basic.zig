@@ -351,11 +351,13 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
             for (0..8) |_| {
                 if (alloc_nr == dir.free_allocations.capacity()) break;
                 if (dir.free_allocations.isSet(alloc_nr) == if (to_shift & 0x01 == 1) true else false) {
-                    // We do want this to trigger in testing and fuzz testing.
-                    log.err(
-                        "Allocation validation for {}. disk map is {} directory map is {}\n",
-                        .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
-                    );
+                    // We do want this to trigger in testing, but not fuzz testing.
+                    if (!@import("builtin").fuzz) {
+                        log.err(
+                            "Allocation validation for {}. disk map is {} directory map is {}\n",
+                            .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
+                        );
+                    }
                 }
                 to_shift >>= 1;
                 alloc_nr += 1;
