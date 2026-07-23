@@ -2202,12 +2202,13 @@ pub fn swapFocussedGrid() void {
 }
 
 pub fn nextCopyMode(mode: CopyMode) CopyMode {
-    return switch (mode) {
-        .AUTO => .ASCII,
-        .ASCII => .BINARY,
-        .BINARY => if (commands.disk_image) |img| if (img.image_type.OS == .ados) .RANDOM else .AUTO else .AUTO,
-        .RANDOM => .AUTO,
-    };
+    const supported = (commands.disk_image orelse return .AUTO).textModesAllSupported();
+    for (supported, 0..) |supported_mode, idx| {
+        if (supported_mode == Commands.xlateFromCopyMode(mode)) {
+            return if (idx == supported.len - 1) Commands.xlateToCopyMode2(supported[0]) else Commands.xlateToCopyMode2(supported[idx + 1]);
+        }
+    }
+    return .AUTO;
 }
 
 /// Get selected files from image to local
@@ -2315,6 +2316,7 @@ fn newButtonHandler() !void {
             try setImagePath(image_path);
             image_directories = try commands.directoryListing(allocator);
             sortDirectories(.image, null, false);
+            copy_mode = .AUTO;
         }
     }.createNewImage, struct {
         pub fn errorHandler(_: *FileStatus, _: anyerror) bool {
@@ -2530,6 +2532,7 @@ pub fn openImageFile(filename: []const u8) void {
             break :main errorDialog(error_title, "Could not open directory table.", err);
         };
         sortDirectories(.image, null, false);
+        copy_mode = .AUTO;
         success = true;
     }
     if (!success) {

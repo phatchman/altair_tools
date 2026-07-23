@@ -784,7 +784,8 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     }
 }
 
-pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) !void {
+pub const CopyToImageError = (error{ InvalidImageFile, PathAlreadyExists, InvalidFilename, OutOfExtents, OutOfMemory } || DiskImage.EraseError || DirectoryTable.DirectoryError);
+pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool) CopyToImageError!void {
     const cpm_user = user orelse 0;
     const basename = std.fs.path.basename(to_filename);
     var conversion_buf: [CookedDirEntry.filename_max]u8 = undefined;
@@ -793,7 +794,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
         if (force) {
             try image.erase(existing_entry);
         } else {
-            return std.Io.File.OpenError.PathAlreadyExists;
+            return error.PathAlreadyExists;
         }
     }
 

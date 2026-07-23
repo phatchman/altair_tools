@@ -464,6 +464,8 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
         text_mode = .Binary;
     } else if (options.rand_mode) {
         text_mode = .Rand;
+    } else if (options.basic_mode) {
+        text_mode = .BASIC;
     }
 
     var write_buffer: [4096]u8 = undefined;
@@ -471,14 +473,20 @@ fn _getFile(ctx: Context, disk_image: *DiskImage, lookup: FileNameOrCookedDir, o
     defer file_writer.flush() catch |err| {
         printErrorMessage(current_command, .file_copy, .{out_filename}, err);
     };
-    disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| {
-        printErrorMessage(current_command, .file_copy, .{out_filename}, err);
-        if (file_writer.pos == 0) {
-            cwd.deleteFile(ctx.io, safe_filename) catch {
-                log.err("Error deleting empty output file: {s}.", .{safe_filename});
-            };
-        }
-        return error.CommandFailed;
+    disk_image.copyFromImage(dir_entry, &file_writer.interface, text_mode) catch |err| switch (err) {
+        error.UnsupportedTextMode => {
+            printErrorMessage(current_command, .unsupported_text_mode, .{ disk_image.image_type.type_name, text_mode }, err);
+            return error.CommandFailed;
+        },
+        else => {
+            printErrorMessage(current_command, .file_copy, .{out_filename}, err);
+            if (file_writer.pos == 0) {
+                cwd.deleteFile(ctx.io, safe_filename) catch {
+                    log.err("Error deleting empty output file: {s}.", .{safe_filename});
+                };
+            }
+            return error.CommandFailed;
+        },
     };
     log.info("Copied file {s} to {s}", .{ dir_entry.filenameAndExtension(), out_filename });
 }
@@ -545,6 +553,9 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
             error.ReadOnlySupport => {
                 printErrorMessage(current_command, .read_only_support, .{disk_image.image_type.type_id}, err);
                 return error.CommandFailed;
+            },
+            error.UnsupportedTextMode => {
+                printErrorMessage(current_command, .unsupported_text_mode, .{ disk_image.image_type.type_name, text_mode }, err);
             },
             else => {
                 printErrorMessage(current_command, .file_copy, .{basename}, err);
@@ -965,6 +976,7 @@ const ErrorMessage = enum {
     label_not_found,
     directory_list,
     read_only_support,
+    unsupported_text_mode,
 };
 
 const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
@@ -995,6 +1007,7 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
         .label_not_found = "The first directory entry is not a disk label",
         .directory_list = "Error listing directory",
         .read_only_support = "Writing is not supported for format {t}",
+        .unsupported_text_mode = "Format {s} does not support text mode {t}",
     },
 );
 

@@ -566,7 +566,7 @@ const SequentialFileReader = struct {
 };
 
 // TODO: Change these so they log error and return copy failed?
-pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken } || ReadSectorError)!void {
+pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) (error{ InvalidFormat, WriteFailed, InvalidRecordNumber, InvalidToken, UnsupportedTextMode } || ReadSectorError)!void {
     var track_nr: u8 = entry.os.ados.track;
     var sector_nr: u8 = entry.os.ados.sector;
     errdefer out_writer.flush() catch {};
@@ -575,7 +575,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
         .sequential => { // sequential
             var decode_basic_file: bool = false;
             var reader: SequentialFileReader = .init(image, entry, &buffer);
-            if (text_mode == .Text) {
+            if (text_mode == .BASIC) {
                 if (try reader.isBasicFile()) {
                     decode_basic_file = true;
                 } else {
@@ -634,7 +634,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     }
 }
 
-pub const CopyToImageError = (error{ InvalidFilename, InvalidFormat, PathAlreadyExists, OutOfExtents, OutOfAllocs, ReadFailed, StreamTooLong, OutOfMemory, InvalidImageFile } || DiskImage.EraseError);
+pub const CopyToImageError = (error{ UnsupportedTextMode, InvalidFilename, InvalidFormat, PathAlreadyExists, OutOfExtents, OutOfAllocs, ReadFailed, StreamTooLong, OutOfMemory, InvalidImageFile } || DiskImage.EraseError);
 pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: TextMode) CopyToImageError!void {
     var filename_buf: [8]u8 = undefined;
     const ados_filename = try translateFilename(to_filename, &filename_buf);
@@ -649,7 +649,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     var basic_read_buf: [4096]u8 = undefined;
     var basic_reader: basic_file_decoder.BasicTextFileReader = .init(file_reader, &basic_read_buf);
 
-    const reader: *std.Io.Reader = if (text_mode == .Text) &basic_reader.interface else file_reader;
+    const reader: *std.Io.Reader = if (text_mode == .BASIC) &basic_reader.interface else file_reader;
     var extent_nr: u16 = undefined;
     const new_entry = try rawEntryGetFreeInitialized(image, &extent_nr);
     @memcpy(&new_entry.filename, &filename_buf);

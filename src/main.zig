@@ -91,6 +91,7 @@ pub const CommandLineOptions = struct {
     text_mode: bool = false,
     bin_mode: bool = false,
     rand_mode: bool = false,
+    basic_mode: bool = false,
     quiet: bool = false,
     verbose: bool = false,
     very_verbose: bool = false,
@@ -203,7 +204,7 @@ pub fn main(init_args: std.process.Init) !void {
                 },
                 .{
                     .long_name = "text",
-                    .help = "Put or get a file in text mode",
+                    .help = "Put or get a file in text mode (CP/M and ADOS Only)",
                     .short_alias = 't',
                     .value_ref = r.mkRef(&options.text_mode),
                 },
@@ -214,10 +215,16 @@ pub fn main(init_args: std.process.Init) !void {
                     .value_ref = r.mkRef(&options.bin_mode),
                 },
                 .{
-                    .long_name = "rand",
+                    .long_name = "random",
                     .help = "Put or get a random access file (Altair DOS/BASIC only)",
                     .short_alias = 'n',
                     .value_ref = r.mkRef(&options.rand_mode),
+                },
+                .{
+                    .long_name = "basic",
+                    .help = "Put or get a Altair BASIC file as ASCII (Altair DOS/BASIC only)",
+                    .short_alias = 'a',
+                    .value_ref = r.mkRef(&options.basic_mode),
                 },
                 .{
                     .long_name = "user",

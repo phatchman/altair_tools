@@ -525,11 +525,11 @@ const ImageFileReader = struct {
     }
 };
 
-pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: DiskImage.TextMode) (error{ InvalidFormat, InvalidToken, WriteFailed } || ReadSectorError)!void {
+pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: DiskImage.TextMode) (error{ UnsupportedTextMode, InvalidFormat, InvalidToken, WriteFailed } || ReadSectorError)!void {
     var buffer: [256]u8 = undefined;
     var decode_basic_file: bool = false;
     var reader: ImageFileReader = .init(image, entry, &buffer);
-    if (text_mode == .Text) {
+    if (text_mode == .BASIC) {
         if (try reader.isBasicFile()) {
             decode_basic_file = true;
         } else {
@@ -557,7 +557,7 @@ pub fn copyFromImage(image: *DiskImage, entry: *const CookedDirEntry, out_writer
     }
 }
 
-pub const CopyToImageError = (EraseError || error{ PathAlreadyExists, OutOfExtents, OutOfAllocs, OutOfMemory });
+pub const CopyToImageError = (EraseError || error{ UnsupportedTextMode, PathAlreadyExists, OutOfExtents, OutOfAllocs, OutOfMemory });
 pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, force: bool, text_mode: DiskImage.TextMode) CopyToImageError!void {
     const CopyToImage = struct {
         const CopyToImage = @This();
@@ -716,7 +716,7 @@ pub fn copyToImage(image: *DiskImage, file_reader: *std.Io.Reader, to_filename: 
     var basic_read_buf: [4096]u8 = undefined;
     var basic_reader: basic_file_decoder.BasicTextFileReader = .init(file_reader, &basic_read_buf);
 
-    const reader: *std.Io.Reader = if (text_mode == .Text) &basic_reader.interface else file_reader;
+    const reader: *std.Io.Reader = if (text_mode == .BASIC) &basic_reader.interface else file_reader;
     const copy_err = copy.copyFile(reader);
     try copy.flush();
     try writeAllocationBitmap(image);

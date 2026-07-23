@@ -17,7 +17,7 @@ image_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 
 const Self = @This(); // TODO: This should be Commands?
-pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM };
+pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM, BASIC };
 
 pub fn deinit(self: *Self, gpa: std.mem.Allocator, io: std.Io) void {
     freeDirList(gpa, &self.image_directory_list);
@@ -293,12 +293,23 @@ pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator, io: std.Io) ![
     return self.local_directory_list.items;
 }
 
-fn xlateCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
+pub fn xlateFromCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
     return switch (mode) {
         .AUTO => .Auto,
         .ASCII => .Text,
         .BINARY => .Binary,
         .RANDOM => .Rand,
+        .BASIC => .BASIC,
+    };
+}
+
+pub fn xlateToCopyMode2(mode: ad.DiskImage.TextMode) CopyMode {
+    return switch (mode) {
+        .Auto => .AUTO,
+        .Text => .ASCII,
+        .Binary => .BINARY,
+        .Rand => .RANDOM,
+        .BASIC => .BASIC,
     };
 }
 
@@ -314,7 +325,7 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
                 defer out_file.close(io);
                 var write_buffer: [4096]u8 = undefined;
                 var writer = out_file.writer(io, &write_buffer);
-                image.copyFromImage(&cooked_entry, &writer.interface, xlateCopyMode(copy_mode)) catch |err| {
+                image.copyFromImage(&cooked_entry, &writer.interface, xlateFromCopyMode(copy_mode)) catch |err| {
                     try writer.flush();
                     return err;
                 };
@@ -339,7 +350,7 @@ pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u
         var reader = in_file.reader(io, &buf);
         var conv_buf: [std.fs.max_name_bytes]u8 = undefined;
         const basename = host_os.fromSafeHostFilename(std.fs.path.basename(filename), &conv_buf) catch unreachable;
-        try image.copyToImage(&reader.interface, basename, cpm_user, force, xlateCopyMode(copy_mode));
+        try image.copyToImage(&reader.interface, basename, cpm_user, force, xlateFromCopyMode(copy_mode));
     }
 }
 

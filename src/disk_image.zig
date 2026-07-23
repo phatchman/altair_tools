@@ -70,15 +70,16 @@ pub const DiskImage = struct {
         Text,
         Binary,
         Rand,
+        BASIC,
     };
 
     // TODO: We can re-ify this from the underlying errors?
-    pub const CopyFromImageError = (error{ InvalidFormat, InvalidToken, InvalidRecordNumber, WriteFailed } || ReadSectorError);
+    pub const CopyFromImageError = (error{ UnsupportedTextMode, InvalidFormat, InvalidToken, InvalidRecordNumber, WriteFailed } || ReadSectorError);
 
     /// copy a file from the image
     /// Expects a buffered out_writer.
     pub fn copyFromImage(self: *DiskImage, entry: *const CookedDirEntry, out_writer: *std.Io.Writer, text_mode: TextMode) CopyFromImageError!void {
-        //std.debug.assert(out_writer.buffer.len > 0); // Buffered writer required.
+        if (!self.textModeSupported(text_mode)) return error.UnsupportedTextMode;
         try switch (self.image_type.OS) {
             .cpm, .cdos => os_cpm.copyFromImage(self, entry, out_writer, text_mode),
             .ados => os_ados.copyFromImage(self, entry, out_writer, text_mode),
@@ -163,17 +164,40 @@ pub const DiskImage = struct {
         return null;
     }
 
-    pub const CopyToImageError = (error{ InvalidFilename, InvalidFormat, PathAlreadyExists, OutOfExtents, OutOfAllocs, ReadFailed, StreamTooLong, OutOfMemory, InvalidImageFile } || DiskImage.EraseError);
+    pub fn textModesAllSupported(self: *const DiskImage) []const TextMode {
+        return switch (self.image_type.OS) {
+            .cpm, .cdos => &.{ .Auto, .Binary, .Text },
+            .ados => &.{ .Auto, .Rand, .BASIC },
+            .hd_basic => &.{ .Auto, .BASIC },
+        };
+    }
 
+    pub fn textModeSupported(self: *const DiskImage, mode: TextMode) bool {
+        return std.mem.indexOfScalar(TextMode, self.textModesAllSupported(), mode) != null;
+    }
+
+    pub const CopyToImageError = (error{
+        UnsupportedTextMode,
+        InvalidFilename,
+        InvalidFormat,
+        PathAlreadyExists,
+        OutOfExtents,
+        OutOfAllocs,
+        ReadFailed,
+        StreamTooLong,
+        OutOfMemory,
+        InvalidImageFile,
+    } || DiskImage.EraseError);
     /// Copy a file from file_reader to the disk image.
-    pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool, text_mode: TextMode) !void {
+    pub fn copyToImage(self: *DiskImage, file_reader: *std.Io.Reader, to_filename: []const u8, user: ?u8, force: bool, text_mode: TextMode) CopyToImageError!void {
+        if (!self.textModeSupported(text_mode)) return error.UnsupportedTextMode;
         switch (self.image_type.OS) {
             .cpm, .cdos => try os_cpm.copyToImage(self, file_reader, to_filename, user, force),
             .ados => try os_ados.copyToImage(self, file_reader, to_filename, force, text_mode),
             .hd_basic => {
                 if (self.image_type.type_id == .TIMESHARE_BASIC)
                     return error.ReadOnlySupport;
-                return try os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode);
+                try os_hd_basic.copyToImage(self, file_reader, to_filename, force, text_mode);
             },
         }
     }
