@@ -475,7 +475,7 @@ pub const SeekableReader = union(enum) {
             .on_disk => |file| try file.seekTo(offset),
             .in_memory => |mem| {
                 std.debug.assert(offset <= mem.buffer.len);
-                mem.seek = offset;
+                mem.seek = @intCast(offset);
             },
         }
     }
@@ -505,7 +505,7 @@ pub const SeekableWriter = union(enum) {
             .on_disk => |file| try file.seekTo(offset),
             .in_memory => |mem| {
                 std.debug.assert(offset <= mem.buffer.len);
-                mem.end = offset;
+                mem.end = @intCast(offset);
             },
         }
     }
