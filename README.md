@@ -29,7 +29,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 |---|---|---|---|
 | [Get a directory listing](#get-a-directory-listing) | [Format a disk](#format-a-disk) | [Set a disk label](#set-a-disk-label) | [View a disk label](#view-a-disk-label) |
 | [Copy a file from the disk (get)](#copy-a-file-from-the-disk-get) | [Copy a file to the disk (put)](#copy-a-file-to-the-disk-put) | [Copy multiple files from the disk (get multiple)](#copy-multiple-files-from-the-disk-get-multiple) | [Copy multiple files to the disk image (put multiple)](#copy-multiple-files-to-the-disk-image-put-multiple) |
-| [Erase a file](#erase-a-file) | [Erase a multiple files](#erase-a-multiple-files) | [Save CP/M system tracks from bootable disk](#save-cpm-system-tracks-from-bootable-disk) | [Make a bootable disk from previously saved system tracks](#make-a-bootable-disk-from-previously-saved-system-tracks) |
+| [Erase a file](#erase-a-file) | [Erase a multiple files](#erase-a-multiple-files) | [Save system tracks from bootable disk](#save-system-tracks-from-bootable-disk) | [Make a bootable disk from previously saved system tracks](#make-a-bootable-disk-from-previously-saved-system-tracks) |
 | [Fixup Altair Duino 5MB HDSK images](#fixup-altair-duino-5mb-hdsk-images) | [Image Information](#image-information) | [Raw directory listing](#raw-directory-listing) | |
 
 ## LLM Disclosure and Contribution Policy
@@ -86,8 +86,8 @@ Binaries are provided on the Release page for the following architectures:
 | Windows | x86_64  | ✅ | ✅ |
 | Linux   | x86_64  | ✅ | ✅ |
 | MacOS   | x86_64  | ✅ | ❌ |
-| Windows | aarch64 | ✅ | ❌ |
-| Linux   | aarch64 | ✅ | ❌ |
+| Windows | aarch64 | ✅ | ✅ |
+| Linux   | aarch64 | ✅ | ✅ |
 | MacOS   | aarch64 | ✅ | ❌ |
 | Linux   | arm     | ✅ | ❌ |
 
@@ -328,7 +328,7 @@ If the same file exists for multiple users, the -E option will remove the file f
 To remove all files from user 2<br>
 `./altairdsk -E -u 2 CPM.dsk '*'`
 
-### Save CP/M system tracks from bootable disk
+### Save system tracks from bootable disk
 `./altairdsk -x CPM.dsk boot.img`
 
 ### Make a bootable disk from previously saved system tracks
