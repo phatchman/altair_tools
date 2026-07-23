@@ -429,6 +429,9 @@ pub const DiskImage = struct {
                 }
             },
         }
+        if (self.image_type.OS == .hd_basic) {
+            try os_hd_basic.writeAllocationBitmap(self);
+        }
     }
 
     // Read a single sector using the unskewed track and sector

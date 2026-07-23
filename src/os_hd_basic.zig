@@ -360,7 +360,7 @@ pub fn loadDirectory(arena: std.mem.Allocator, dir: *DirectoryTable, image: *Dis
                     // We do want this to trigger in testing, but not fuzz testing.
                     if (!@import("builtin").fuzz) {
                         log.err(
-                            "Allocation validation for {}. disk map is {} directory map is {}\n",
+                            "Allocation validation for {}. disk map is {} directory map is {}",
                             .{ alloc_nr, to_shift & 0x01, 1 - (to_shift & 0x01) },
                         );
                     }
