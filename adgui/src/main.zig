@@ -2,7 +2,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2025 Paul Hatchman
+// Copyright (c) 2026 Paul Hatchman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

@@ -700,7 +700,6 @@ test "erase large file" {
 
     var disk_image = try newFormattedMemoryDiskImage(&image_file, HD_BASIC);
     defer disk_image.deinit();
-    defer saveImage(&image_buf);
 
     const init_free = disk_image.capacityFreeInKB();
     try disk_image.copyToImage(&large_reader, "TEST", null, false, .Auto);
