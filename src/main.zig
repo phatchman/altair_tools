@@ -222,7 +222,7 @@ pub fn main(init_args: std.process.Init) !void {
                 },
                 .{
                     .long_name = "basic",
-                    .help = "Put or get a Altair BASIC file as ASCII (Altair DOS/BASIC only)",
+                    .help = "Put or get a Altair BASIC file as ASCII (Altair DOS/BASIC and HD_BASIC only)",
                     .short_alias = 'a',
                     .value_ref = r.mkRef(&options.basic_mode),
                 },
