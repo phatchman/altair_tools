@@ -134,29 +134,25 @@ OPTIONS:
   -F, --format                      Format existing or create new disk image. Defaults to FDD_8IN
   -g, --get                         Copy file from Altair disk image to host
   -o, --out <outdir>                Out directory for get and get multiple
-  -G, --get-multiple                Copy multiple files from Altair disk image to host. Wildcards * 
-                                    and ? are supported e.g '*.COM'
+  -G, --get-multiple                Copy multiple files from Altair disk image to host. Wildcards * and ? are supported e.g '*.COM'
   -p, --put                         Copy file from host to Altair disk image
   -P, --put-multiple                Copy multiple files from host to Altair disk image
   -e, --erase                       Erase a file
   -E, --erase-multiple              Erase multiple files - wildcards supported
   -t, --text                        Put or get a file in text mode
-  -b, --bin                         Put or get a file in binary mode
-  -n, --rand                        Put or get a random access file (Altair DOS/BASIC only)
+  -b, --bin                         Put or get a file in binary mode  (CP/M and ADOS Only)
+  -n, --random                      Put or get a random access file (Altair DOS/BASIC only)
+  -a, --basic                       Put or get a Altair BASIC file as ASCII (Altair DOS/BASIC and HD_BASIC only)
   -u, --user <user>                 Restrict operation to this user (CP/M and CDOS)
   -x, --extract-os <system_image>   Extract operating system (from a bootable disk image) to a file
-  -s, --write-os <system_image>     Write saved operating system image to disk image (make disk 
-                                    bootable)
+  -s, --write-os <system_image>     Write saved operating system image to disk image (make disk bootable)
   -R, --recover <new_disk_image>    Try to recover a corrupt image
   -T, --type <type>                 Disk image type. Auto-detected if possible. Supported types are:
                                           * FDD_8IN - MITS 8" Floppy Disk (CPM) [Default]
                                           * ADOS_8IN - MITS 8" Floppy Disk (Altair DOS & BASIC)
-                                          * TIMESHARE_BASIC - MITS 8" Floppy Disk (Timeshare BASIC)
-                                          [READ ONLY]
-                                          * ADOS_MINI - MITS 5.25" Data Floppy Disk (Altair DOS & 
-                                          BASIC)
-                                          * ADOS_MINI_BOOT - MITS 5.25" Bootable Floppy Disk (Altair 
-                                          DOS & BASIC)
+                                          * TIMESHARE_BASIC - MITS 8" Floppy Disk (Timeshare BASIC) [READ ONLY]
+                                          * ADOS_MINI - MITS 5.25" Data Floppy Disk (Altair DOS & BASIC)
+                                          * ADOS_MINI_BOOT - MITS 5.25" Bootable Floppy Disk (Altair DOS & BASIC)
                                           * CPM_MINI - MITS 5.25" Floppy Disk (CPM)
                                           * HDD_5MB - MITS 5MB Hard Disk (CPM)
                                           * HDD_5MB_1024 - MITS 5MB, with 1024 directories (CPM)
@@ -176,11 +172,10 @@ OPTIONS:
   -q, --quiet                       Suppress non-fatal error, warning and info messages
   -v, --verbose                     Prints information about operations being performed
   -V, --very-verbose                Additionally prints sector read/write information
-  -L, --label-set <label>           Set the disk label and timestamp on CDOS and HD BASIC disks.
-                                    Format <label>:mm/dd/yy
+  -L, --label-set <label>           Set the disk label and timestamp on CDOS and HD BASIC disks. Format <label>:mm/dd/yy
   -l, --label                       Print the disk label and timestamp from CDOS or HD BASIC disks
   -f, --force                       Force overwrite of existing files with get or put
-  -h, --help                        Show this help output.
+  -h, --help                        Show this help output
       --color <VALUE>               When to use colors (*auto*, never, always).
 ```
 
@@ -195,9 +190,9 @@ OPTIONS:
 | Operating system | Notes |
 |---|---|
 | CP/M | For text files it is important to use <code>--text</code> when copying from image.Otherwise the files will be padded with ^Z to the next 128 byte multiple.<br>Supports <code>--user</code> |
-| Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul> |
+| Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--basic</code> to convert to plain text</li><li>Copying to image: use <code>--basic</code>, for plain text BASIC files or the first character is dropped on load</li></ul> |
 | Timeshare Basic | As per Altair BASIC, but read-only. |
-| Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--text</code> to convert to plain text</li><li>Copying to image: use <code>--text</code>, or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>The creation date contained in the disk label is used as the creation and modification time of any file created by altairdsk. |
+| Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--basic</code> to convert to plain text</li><li>Copying to image: use <code>--basic</code>, for plain text BASIC files or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>The creation date contained in the disk label is used as the creation and modification time of any file created by altairdsk. |
 | Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Supports <code>--user</code><br>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
 | | |
 

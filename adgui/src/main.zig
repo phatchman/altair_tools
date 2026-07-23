@@ -828,7 +828,6 @@ fn makeGridBody(id: GridType) !void {
             switch (e.evt) {
                 .mouse => |me| {
                     const first_displayed_f: f32 = getScrollInfo(id).viewport.y / row_height;
-                    //                    const mouse_p_relative = dvui.parentGet().data().contentRectScale().pointFromPhysical(me.p);
                     const mouse_p_relative = scroll.data().contentRectScale().pointFromPhysical(me.p);
                     const rel_mouse_index_f = mouse_p_relative.y / row_height + first_displayed_f;
                     rel_mouse_index = @intFromFloat(rel_mouse_index_f);
