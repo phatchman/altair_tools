@@ -138,6 +138,7 @@ pub const DirectoryTable = struct {
 
     pub fn init(gpa: std.mem.Allocator, image_type: *const DiskImageType) std.mem.Allocator.Error!DirectoryTable {
         var arena = std.heap.ArenaAllocator.init(gpa);
+        errdefer arena.deinit();
         return .{
             .raw_directories = switch (image_type.OS) {
                 .cpm, .cdos => .{ .cpm = try .initCapacity(arena.allocator(), image_type.directories) },

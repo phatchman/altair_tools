@@ -36,6 +36,7 @@ pub const DiskImage = struct {
     /// closes any files before an error is returned.
     pub fn reinit(self: *DiskImage, gpa: std.mem.Allocator, reader: SeekableReader, writer: SeekableWriter) !void {
         self.deinit();
+        self.allocator = gpa;
         self.reader = reader;
         self.writer = writer;
         self.directory = try .init(gpa, self.image_type);
@@ -359,6 +360,7 @@ pub const DiskImage = struct {
                 try os_cpm.rawEntryWrite(self, 0);
             },
             .hd_basic => {
+                std.debug.assert(self.image_type.OS == .hd_basic);
                 try os_hd_basic.volumeLabelSet(self, label);
             },
             .cpm, .ados => return error.LabelingNotSupported,
@@ -388,7 +390,7 @@ pub const DiskImage = struct {
         switch (self.directory.raw_directories) {
             inline else => |raw_direcories, os| {
                 for (raw_direcories.items, 0..) |*raw_dir, i| {
-                    var saveable = false;
+                    var saveable = true;
                     var valid = false;
                     var delete_related = false;
                     while (saveable and !valid) {
