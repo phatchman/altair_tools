@@ -180,7 +180,7 @@ test "disk filled" {
 
         const cooked_dir = disk_image.directory.findByFilename(filename, null);
         try std.testing.expect(cooked_dir != null);
-        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Binary);
+        try disk_image.copyFromImage(cooked_dir.?, &in_stream, .Auto);
         try std.testing.expectEqualSlices(u8, big_file, in_file);
 
         if (compare_image) |ci| {

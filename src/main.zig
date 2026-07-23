@@ -204,13 +204,13 @@ pub fn main(init_args: std.process.Init) !void {
                 },
                 .{
                     .long_name = "text",
-                    .help = "Put or get a file in text mode (CP/M and ADOS Only)",
+                    .help = "Put or get a file in text mode",
                     .short_alias = 't',
                     .value_ref = r.mkRef(&options.text_mode),
                 },
                 .{
                     .long_name = "bin",
-                    .help = "Put or get a file in binary mode",
+                    .help = "Put or get a file in binary mode  (CP/M and ADOS Only)",
                     .short_alias = 'b',
                     .value_ref = r.mkRef(&options.bin_mode),
                 },
