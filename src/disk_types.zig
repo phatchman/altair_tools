@@ -521,7 +521,7 @@ pub const DiskImageType = struct {
 
     /// Convert a physical track / sector into a seek offset
     pub fn seekOffset(self: *const DiskImageType, location: PhysicalAddress) usize {
-        if (self.sector_size_data0) |sector_size0| {
+        if (self.sector_size_raw0) |sector_size0| {
             return if (location.track == 0)
                 sector_size0 * (location.sector)
             else

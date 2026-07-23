@@ -87,7 +87,7 @@ pub fn dispatch(io: std.Io, gpa: std.mem.Allocator, options: CommandLineOptions)
             };
             if (!unique and !options.quiet) {
                 try Console.stderr().print(
-                    "WARNING: {s} and {s} formats cannot be distinuished with autodection. Assuming {s}. Use -T to set correct image type.\n",
+                    "WARNING: {s} and {s} formats cannot be distinguished with auto-detection. Assuming {s}. Use -T to set correct image type.\n",
                     .{
                         all_disk_type_names[@intFromEnum(DiskImageTypes.HDD_5MB)],
                         all_disk_type_names[@intFromEnum(DiskImageTypes.HDD_5MB_1024)],
@@ -556,6 +556,7 @@ pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, opti
             },
             error.UnsupportedTextMode => {
                 printErrorMessage(current_command, .unsupported_text_mode, .{ disk_image.image_type.type_name, text_mode }, err);
+                return error.CommandFailed;
             },
             else => {
                 printErrorMessage(current_command, .file_copy, .{basename}, err);
@@ -998,7 +999,7 @@ const error_messages = std.EnumArray(ErrorMessage, []const u8).init(
         .file_erase = "Error erasing {s}",
         .file_write = "Error writing to {s}",
         .file_seek = "Error seeking {s}",
-        .extract_cpm = "Error extracting sytem image to {s}",
+        .extract_cpm = "Error extracting system image to {s}",
         .install_cpm = "Error installing system image from {s}",
         .format = "Error formatting {s}",
         .recover = "Error recovering image {s}",

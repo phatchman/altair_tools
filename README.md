@@ -22,9 +22,15 @@ altairdsk allows you to:
 _Note: If you prefer the C version, you can find that under the "legacy" branch. I don't provide support for this version anymore._
 
 ## Example usage ##
+[Go to the gui examples](docs/ADGUI.md)<br>
+[Go to the command line examples](#command-line)
 
-[Go to the command examples](#command-line)<br>
-[Go to the gui examples](docs/ADGUI.md)
+| | | | |
+|---|---|---|---|
+| [Get a directory listing](#get-a-directory-listing) | [Format a disk](#format-a-disk) | [Set a disk label](#set-a-disk-label) | [View a disk label](#view-a-disk-label) |
+| [Copy a file from the disk (get)](#copy-a-file-from-the-disk-get) | [Copy a file to the disk (put)](#copy-a-file-to-the-disk-put) | [Copy multiple files from the disk (get multiple)](#copy-multiple-files-from-the-disk-get-multiple) | [Copy multiple files to the disk image (put multiple)](#copy-multiple-files-to-the-disk-image-put-multiple) |
+| [Erase a file](#erase-a-file) | [Erase a multiple files](#erase-a-multiple-files) | [Save CP/M system tracks from bootable disk](#save-cpm-system-tracks-from-bootable-disk) | [Make a bootable disk from previously saved system tracks](#make-a-bootable-disk-from-previously-saved-system-tracks) |
+| [Fixup Altair Duino 5MB HDSK images](#fixup-altair-duino-5mb-hdsk-images) | [Image Information](#image-information) | [Raw directory listing](#raw-directory-listing) | |
 
 ## LLM Disclosure and Contribution Policy
 * All Zig code and documentation in this repository is human crafted.
@@ -190,7 +196,7 @@ OPTIONS:
 | Operating system | Notes |
 |---|---|
 | CP/M | For text files it is important to use <code>--text</code> when copying from image.Otherwise the files will be padded with ^Z to the next 128 byte multiple.<br>Supports <code>--user</code> |
-| Altair DOS and BASIC | Use <code>--rand</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--basic</code> to convert to plain text</li><li>Copying to image: use <code>--basic</code>, for plain text BASIC files or the first character is dropped on load</li></ul> |
+| Altair DOS and BASIC | Use <code>--random</code> when copying random access files to a disk image<br>BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--basic</code> to convert to plain text</li><li>Copying to image: use <code>--basic</code>, for plain text BASIC files or the first character is dropped on load</li></ul> |
 | Timeshare Basic | As per Altair BASIC, but read-only. |
 | Altair HD BASIC | BASIC files are extracted in encoded form by default:<ul><li>Copying from image: use <code>--basic</code> to convert to plain text</li><li>Copying to image: use <code>--basic</code>, for plain text BASIC files or the first character is dropped on load</li></ul>Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>The creation date contained in the disk label is used as the creation and modification time of any file created by altairdsk. |
 | Cromemco DOS (CDOS) | Supports disk labels.<ul><li>Use <code>--label</code> to view disk label.</li><li>Use <code>--label-set</code> to set disk label.</li><li><code>--label-set</code> can be used with <code>--format</code></li></ul>Supports <code>--user</code><br>Non-standard directory counts are not supported. The image will fail to open with an InvalidFormat error. |
@@ -236,7 +242,7 @@ At is the file attributes which vary per operating system.
 | Operating System | First | Second | 
 |------------------|-------|--------|
 | CP/M / CDOS       | R - Read Only<br>W - Read / Write | S - System |
-| Alatir DOS & BASIC<br>Timeshare BASIC | S - Sequential<br> R - Random Access | | 
+| Altair DOS & BASIC<br>Timeshare BASIC | S - Sequential<br> R - Random Access | | 
 | HD BASIC         |  R - Read Only<br>W - Read / Write | S - Small File<br>L - Large File |
 
 Below is an example for HD BASIC showing the disk label and file dates.<br>
@@ -265,7 +271,9 @@ VOLINIT                    10290B   12K 0 WS 07/20/79 07/20/79
 ### Format a disk
 `./altairdsk -F new.dsk`<br>
 To format for a specific type<br>
-`./altairdsk -F -T HDD_5MB new.dsk`
+`./altairdsk -F -T HDD_5MB new.dsk`<br>
+To add a label (if supported)<br>
+`./altairdsk.exe -F fmt.dsk -T CDOS_LGSSSD -L "disk 01:12/31/79"`
 
 You can generally put options in any order<br>
 `./altairdsk new.dsk -F -T HDD_5MB`<br>
@@ -276,6 +284,13 @@ Label format is \<label\>:mm/dd/yy<br>
 `HDSK01.DSK --label-set "DISK LABEL:01/02/73"`<br>
 Can be combined with --format (-F)<br>
 `./altairdsk -F -T HD_BASIC new.dsk -L ABC:05/06/77`
+
+### View a disk label
+`altairdsk.exe  fmt.dsk -l`
+```
+Label: disk 01 
+Date:  12/31/79 (mm/dd/yy)
+```
 
 ### Copy a file from the disk (get)
 `./altairdsk -g CPM.dsk LADDER.COM`
@@ -348,7 +363,8 @@ Num Dirs:     256
 ```
 
 ### Raw directory listing
-Dumps the CP/M extent information<br>
+Dumps the raw directory information<br>
+#### CP/M
 `./altairdsk -r CPM.dsk`
 ```
 IDX:U:FILENAME:TYP:AT:EXT:REC:[ALLOCATIONS]
@@ -381,9 +397,88 @@ FREE ALLOCATIONS:
 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138
 139 140 141 142 143 144 145 146 147 148 149
 ```
-IDX is the order of the extent on disk<br>
-U is the user number<br>
-AT are the attributes (R - Read only, W - Read/Write, S - System)<br>
-EXT is the extent number for the file<br>
-REC is the number of records controlled by this extent<br>
-ALLOCATIONS is the list of allocations controlled by this extent
+|Field|Description| 
+|-----|-----------| 
+|IDX | The order of the extent on disk |
+|U | The user number |
+|AT | The attributes (R - Read only, W - Read/Write, S - System) |
+|EXT | The extent number for the file |
+|REC | The number of records controlled by this directory entry |
+|ALLOCATIONS | The list of allocations controlled by this directory entry |
+
+#### Altair DOS & BASIC
+```
+FNR:FILENAME:MD:TK:SC
+001:#F80    :02:47:00
+002:FORLBREL:02:43:18
+003:#M80    :02:3d:08
+004:#L80    :02:3b:08
+005:#CREF80 :02:39:00
+008:#COP    :02:38:08
+012:&SYSENT :02:33:08
+013:&ASK    :02:34:18
+014:&AANS   :02:34:10
+015:&CMPB   :02:34:08
+016:&COP    :02:36:00
+017:&TABLE  :02:37:10
+018:#EDIT   :02:27:00
+019:&MOVB   :02:37:08
+021:&LDEM   :02:37:00
+022:&DTYP   :02:38:18
+023:&DN     :02:38:10
+024:&ECHO   :02:29:08
+025:&PRIME  :02:2b:18
+026:#LPT    :02:39:18
+027:#DEBUG  :02:4c:08
+028:#LINK   :02:4b:18
+029:#ASM    :02:4a:10
+030:#PRIME  :02:33:18
+032:#LIBMRG :02:2a:10
+034:#INIT   :02:31:08
+035:#ECHO   :02:4a:08
+FREE DIRECTORIES: (228)
+FREE ALLOCATIONS: (167)
+000 001 002 003 004 005 006 007 008 009 010 011 012 013 014 015 
+etc...
+```
+|Field|Description| 
+|-----|-----------| 
+| FNR | The file number which is the same as the directory index + 1 |
+| MD | The Mode. 02 for Sequential files, 04 for random access files |
+| TK:SK | The first data track and sector for this file. |
+
+#### HD BASIC
+```
+IDX:FILENAME                :CREATE:MODIFY:R:S:NRPGS:LPEOF:NRGPS:LSTGP:[ALLOCATIONS]
+001:VOLUME TABLE            :3173a3:023201:1:1:00003:00000:00001:00000:[0000]
+002:DIRECTORY TABLE         :3173a3:023201:1:1:00256:00000:00032:00055:[0024, 0025, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040, 0041, 0042, 0043, 0044, 0045, 0046, 0047, 0048, 0049, 0050, 0051, 0052, 0053, 0054, 0055]
+003:*COPRND*                :4e0a17:4e0b06:3:1:00023:00000:00003:00058:[0056, 0057, 0058]
+004:*HDCDATA                :4e0a12:4e0a12:3:1:00037:00039:00005:00067:[0063, 0064, 0065, 0066, 0067]
+005:*INSTR                  :4e0a12:4e0a12:3:1:00018:00017:00003:00070:[0068, 0069, 0070]
+006:COP-HF                  :4e0a17:4e0a17:3:1:00017:00227:00003:00075:[0071, 0074, 0075]
+007:DIRLIST                 :4e0a12:4e0a12:3:1:00008:00004:00002:00073:[0072, 0073]
+008:FILECOPY                :4e0a17:4e0a17:3:1:00026:00000:00004:00062:[0059, 0060, 0061, 0062]
+009:HDCOPY                  :000000:000000:3:1:00003:00053:00001:00078:[0078]
+010:HELP                    :4e0b06:4e0b06:3:1:00001:00037:00001:00079:[0079]
+011:HELP.TXT                :4e0a17:4e0a17:3:1:00026:00132:00004:00097:[0080, 0081, 0082, 0097]
+012:STARTREK                :4e0a12:4e0a12:3:1:00021:00049:00003:00085:[0083, 0084, 0085]
+013:VOLINIT                 :4f0714:4f0714:3:1:00040:00050:00006:00091:[0086, 0087, 0088, 0089, 0090, 0091]
+014:ISAM-TWO                :4e0b07:4e0b07:3:1:00024:00004:00004:00098:[0076, 0077, 0092, 0098]
+015:ISAM-T16                :4e0b06:4e0b06:3:1:00024:00026:00004:00096:[0093, 0094, 0095, 0096]
+FREE DIRECTORIES: (497)
+FREE ALLOCATIONS: (2304)
+099 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 
+etc ...
+```
+|Field|Description| 
+|-----|-----------| 
+| IDX | The index of the directory entry + 1 |
+| CREATE | Encoded created time |
+| MODIFY | Encoded modification time  |
+| R | 1 = Read Only, 3 = Read / Write |
+| S | File status. 1 for a small file, 3 or a large file. Anything else means deleted. |
+| NRPGS | The number of pages (sectors) this file takes up |
+| LPEOF | How many bytes of the last page are used for file data |
+| NRGPS | The number of groups/blocks allocated to this file |
+| LSTGP | The last group/block number |
+| ALLOCATIONS | The groups allocated to each file. For large files, this points to one or more blocks  containing the actual file allocations. |
