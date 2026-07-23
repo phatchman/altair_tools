@@ -836,7 +836,8 @@ fn makeGridBody(id: GridType) !void {
                     const abs_mouse_index = to_display.items[rel_mouse_index].index;
 
                     const rs = scroll.data().contentRectScale();
-                    std.log.debug(
+                    // For debugging Mac retina display issue
+                    if (false) std.log.debug(
                         "me.p=({d:.1},{d:.1}) rs.topleft=({d:.1},{d:.1}) rs.s={d:.3} mouse_rel=({d:.1},{d:.1}), viewport.y={d:.1} first_disp={d:.3} rel_idx_f={d:.3} rel_idx={} abs_idx={}\n",
                         .{ me.p.x, me.p.y, rs.r.x, rs.r.y, rs.s, mouse_p_relative.x, mouse_p_relative.y, getScrollInfo(id).viewport.y, first_displayed_f, rel_mouse_index_f, rel_mouse_index, abs_mouse_index },
                     );
