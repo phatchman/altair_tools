@@ -514,7 +514,7 @@ pub fn putFileMultiple(ctx: Context, disk_image: *DiskImage, options: CommandLin
     }
 }
 
-pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, options: CommandLineOptions) !void {
+pub fn _putFile(ctx: Context, disk_image: *DiskImage, filename: []const u8, options: CommandLineOptions) CommandError!void {
     const cpm_user = options.cpm_user orelse 0;
 
     var text_mode: DiskImage.TextMode = .Auto;
