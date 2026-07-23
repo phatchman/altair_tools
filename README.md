@@ -68,14 +68,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 
 (1) Note you need the modified CP/M image to use this format. See https://github.com/ratboy666/hd1024                           
 
-## Operating System - Specific details
-
-
-<!-- 1) The CDOS formats do not currently support a non-standard number of directory entries and the image will fail to open.
-2) FDD_TAR and CDOS_LGSSSD are the same image file size. Normally the correct format can be determined from a disk type label that CDOS places in the first track and sector.
-3) Early CDOS, including images shipped with AltairDuino, don't have a disk type label. As a fallback altairdsk looks to see if the CDOS boot loader is installed on track 0. However, it is still quite possible that CDOS_LGSSSD can be mistakenly identified as FDD_TAR. Please check if the image type is detected correctly using the --info option. -->
-
-While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.
+***While every care has been taken to ensure this utility will not corrupt your disk images, _PLEASE_ make sure you make a backup of any disk images before writing to them.***
 
 ## Releases
 
@@ -109,6 +102,13 @@ Optionally build the GUI.
 
 The executables are placed in the respective zig-out\bin directories.
 There is no install target provided. So copy the executable to your desired install location if you need.
+
+**Note:** Zig is good at filling up your disk with cache files (Eating GBs of space). After you are done building, clear out:
+1) The global cache: run `zig env` and look for the `.global_cache_dir` variable,
+2) Local cache: .zig-cache directory,
+3) Local packahe: zig-pkg directory.
+
+This is especially bad with zig 0.16.0 as there is a bug with "lazy" dependencies, which causes every dependency of every dependency to be downloaded, no matter if that dependency is actually used or not. There are some cache improvements planned, so hoping it is resolved soon.
 
 ## GUI
 
