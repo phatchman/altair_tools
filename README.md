@@ -29,7 +29,7 @@ _Note: If you prefer the C version, you can find that under the "legacy" branch.
 |---|---|---|---|
 | [Get a directory listing](#get-a-directory-listing) | [Format a disk](#format-a-disk) | [Set a disk label](#set-a-disk-label) | [View a disk label](#view-a-disk-label) |
 | [Copy a file from the disk (get)](#copy-a-file-from-the-disk-get) | [Copy a file to the disk (put)](#copy-a-file-to-the-disk-put) | [Copy multiple files from the disk (get multiple)](#copy-multiple-files-from-the-disk-get-multiple) | [Copy multiple files to the disk image (put multiple)](#copy-multiple-files-to-the-disk-image-put-multiple) |
-| [Erase a file](#erase-a-file) | [Erase a multiple files](#erase-a-multiple-files) | [Save system tracks from bootable disk](#save-system-tracks-from-bootable-disk) | [Make a bootable disk from previously saved system tracks](#make-a-bootable-disk-from-previously-saved-system-tracks) |
+| [Erase a file](#erase-a-file) | [Erase multiple files](#erase-multiple-files) | [Save system tracks from bootable disk](#save-system-tracks-from-bootable-disk) | [Make a bootable disk from previously saved system tracks](#make-a-bootable-disk-from-previously-saved-system-tracks) |
 | [Fixup Altair Duino 5MB HDSK images](#fixup-altair-duino-5mb-hdsk-images) | [Image Information](#image-information) | [Raw directory listing](#raw-directory-listing) | |
 
 ## LLM Disclosure and Contribution Policy
@@ -321,7 +321,7 @@ Copy multiple files to user 1<br>
 
 If the same file exists for multiple users, only the first copy of the file will be erased. Use the -E option to erase the file for all users.
 
-### Erase a multiple files
+### Erase multiple files
 `./altairdsk -E CPM.dsk 'asm.*'`
 
 If the same file exists for multiple users, the -E option will remove the file from all users, unless the -u option is specified.<br>
