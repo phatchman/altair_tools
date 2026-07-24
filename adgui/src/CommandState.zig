@@ -46,7 +46,7 @@ pub const Buttons = struct {
     save_file_selector: bool = false,
     /// Request user to supply a filename to open from.
     open_file_selector: bool = false,
-    /// Request user to supplly the image type.
+    /// Request user to supply the image type.
     type_selector: bool = false,
 
     pub const yes_no_all: Buttons = .{ .yes = true, .no = true, .yes_all = true, .no_all = true };
@@ -69,7 +69,10 @@ pub var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
 pub var buttons: Buttons = .{};
 pub var file_selector_buffer: ?[]const u8 = null;
 pub var image_type: ?*const ad.DiskImageType = null;
+pub var label: ?ad.DiskLabel = null;
 pub var prompt: ?[]const u8 = null;
+pub var dialog_choice: usize = 0;
+
 pub var err_message: ?[]const u8 = null;
 pub var initialized = false;
 pub var arena: std.heap.ArenaAllocator = undefined;
@@ -117,6 +120,10 @@ pub fn finishCommand() void {
     current_command = .none;
 }
 
+// TODO: HUH. Not sure what I was thinkign here.
+// Why are we freeing things from the arena? and not
+// just doing it all at once?
+// Huh? Shoudl some of this be GPA and not arean at all?
 pub fn freeResources() void {
     // TODO: Why is this shrink required over just setting capacity to 0?
     processed_files.clearAndFree(arena.allocator());
@@ -125,9 +132,11 @@ pub fn freeResources() void {
         file_selector_buffer = null;
     }
     image_type = null;
+    label = null;
     prompt = null;
     err_message = null;
     initialized = false;
+    dialog_choice = 0;
     _ = arena.reset(.free_all);
 }
 

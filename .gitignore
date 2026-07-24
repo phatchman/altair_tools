@@ -2,6 +2,9 @@
 .zig-cache/
 zig-cli/
 zig-out/
+zig-pkg/
+adgui/zig-pkg/
+out/
 *.exe
 *.pdb
 *.DSK
@@ -10,9 +13,19 @@ zig-out/
 *.DAT
 *.bin
 *.IMG
+*.COM
+*.Z80
+*.ASM
+*.HLP
+*.ps1
+*.bak
+adgui/tst
+cdos/
 tmp/
 legacy/
 release/
 adgui/disks
 .vscode
 adgui/.vscode
+!src/test_disks/*.DSK
+adgui/tst/New folder/8BIT.HEX
