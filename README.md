@@ -189,6 +189,7 @@ OPTIONS:
 * If an invalid filename for the disk format is supplied, for example ABC.COMMMMMM on CP/M, it will be converted to a similar valid  filename; ABC.COM in this example.
 * If the disk contains an invalid format for the host operating system, the invalid characters with be URL-encoded. e.g. \*FILE\* translates to %2AFILE%2A on Windows.
 * The 5MB HDD images that come with the Altair-Duino have an invalid directory table. altairdsk will print an error and refuse to open these images. Use the -R / --recover option to create a clean version of these disk images.
+* If you get tired of seeing the error messages, use the -q / --quiet option.
 * Wildcard expansion is now performed on windows. 
 * Wildcards don't work the same as on CP/M. ./altairdsk xxx.dsk -G '\*' will match everything, including the extension, and get all files. On CP/M you would use '\*.\*'. You can still use '\*.TXT' and 'ABC.\*' and that will work as expected.
 * As mentioned in the usage, if using the HDD_5MB_1024 format with 1024 directory entries, make sure you always use the -T option. You *will* corrupt the image if you don't specify the format.
