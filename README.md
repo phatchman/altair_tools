@@ -4,7 +4,7 @@ A collection of utilities for the Altair 8800
 
 * Altairdsk allows the reading and writing of 8"  Altair 8800 floppy disk disk images.
 * Adgui provides a graphical user interface for most altairdsk operations.
-* *New:* Altairdisk now supports all formats shipped with the Altair Dunino, including support for CP/M, Altair DOS, Altair BASIC, Cromemco CDOS, Timeshare BASIC and Hard Disk BASIC.
+* *New:* Altairdisk now supports all formats shipped with the Altair-Duino, including support for CP/M, Altair DOS, Altair BASIC, Cromemco CDOS, Timeshare BASIC and Hard Disk BASIC.
 
 If you are looking for a utility similar to CP/Mtools, but for the Altair 8800 floppy disk images, then this repository is for you. 
 It has been tested under Windows and Linux, and known to work under MacOS.
