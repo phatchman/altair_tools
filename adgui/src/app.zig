@@ -214,6 +214,9 @@ fn statusBar() ?dvui.App.Result {
     else
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
 
+    if (statusBarButton(@src(), "GET", .g, 1, static.alt_key_pressed)) {
+        button_handlers.get();
+    }
     if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
         if (filter_user) |_| {
             filter_user.? += 1;
@@ -252,7 +255,10 @@ fn statusBarButton(
     var wd: dvui.WidgetData = undefined;
     var box = dvui.box(src, .{}, .{});
     defer box.deinit();
-    var result = dvui.button(src, label, .{}, .{ .data_out = &wd });
+    const result = widgets.buttonWithShortcut(@src(), label, .{
+        .button = .{},
+        .shortcut = shortcut_key,
+    }, .{ .data_out = &wd });
     if (alt_key_pressed) {
         _ = dvui.separator(@src(), .{ .expand = .none, .rect = .{
             .x = x_offset + 3,
@@ -260,19 +266,6 @@ fn statusBarButton(
             .w = char_width,
             .h = 2,
         } });
-        // Treats all shortcut keys as global, regardless of what has focus.
-        for (dvui.events()) |*e| {
-            switch (e.evt) {
-                .key => |ke| {
-                    if (ke.action == .down and ke.code == shortcut_key) {
-                        e.handle(@src(), &wd);
-                        result = true;
-                        break;
-                    }
-                },
-                else => {},
-            }
-        }
     }
     return result;
 }
@@ -559,5 +552,48 @@ const DirectoryGrid = struct {
             grid.moveCursor(0, grid.cursor.row);
         }
         return clicked;
+    }
+};
+
+const button_handlers = struct {
+    pub fn get() void {}
+};
+
+const widgets = struct {
+    pub const ButtonShortCutInitOptions = struct {
+        button: dvui.ButtonWidget.InitOptions,
+        shortcut: dvui.enums.Key,
+    };
+
+    /// Create a button that can also be activated with an alt key combination.
+    /// Note: Treats all shortcut keys as global, regardless of what widget currently has focus.
+    pub fn buttonWithShortcut(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: ButtonShortCutInitOptions, opts: dvui.Options) bool {
+        var bw: dvui.ButtonWidget = undefined;
+        bw.init(src, init_opts.button, opts);
+        bw.processEvents();
+
+        // Check if shortcut was prressed.
+        for (dvui.events()) |*e| {
+            switch (e.evt) {
+                .key => |ke| {
+                    if (ke.action == .down and
+                        ke.code == init_opts.shortcut and
+                        (ke.mod == .none or ke.mod == .lalt or ke.mod == .ralt))
+                    {
+                        e.handle(@src(), bw.data());
+                        bw.click = true;
+                    }
+                },
+                else => {},
+            }
+        }
+        bw.drawBackground();
+
+        const click = bw.clicked();
+
+        dvui.labelNoFmt(@src(), label_str, .{ .align_x = 0.5, .align_y = 0.5 }, opts.strip().override(bw.style()).override(.{ .gravity_x = 0.5, .gravity_y = 0.5 }));
+        bw.deinit();
+
+        return click;
     }
 };
