@@ -214,13 +214,13 @@ fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8) void {
 }
 
 const DirectoryGrid = struct {
-    const SelectAll = enum { none, select_all, select_none };
+    const SelectMode = enum { none, select_all, select_none };
     all_selected: bool,
     shift_key_pressed: bool,
     selection: struct {
         const Selection = @This();
 
-        mode: SelectAll,
+        mode: SelectMode,
         first_idx: ?usize,
         second_idx: ?usize,
 
@@ -237,7 +237,15 @@ const DirectoryGrid = struct {
             }
         }
 
-        fn inRange(self: *Selection, row_index: usize) bool {
+        pub fn setAll(self: *Selection, mode: SelectMode, length: usize) void {
+            self.* = .{
+                .mode = mode,
+                .first_idx = 0,
+                .second_idx = length -| 1,
+            };
+        }
+
+        fn inRange(self: Selection, row_index: usize) bool {
             const start = self.first_idx orelse 0;
             const end = self.second_idx orelse 0;
             if (start <= end) {
@@ -261,7 +269,7 @@ const DirectoryGrid = struct {
     }
 
     fn display(self: *DirectoryGrid) void {
-        const current_focus = dvui.lastFocusedIdInFrame();
+        const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
 
@@ -284,11 +292,7 @@ const DirectoryGrid = struct {
             if (col == 0) {
                 const label = if (self.all_selected) "[X]" else "[ ]";
                 if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .margin = .all(0) })) {
-                    self.selection = .{
-                        .mode = if (self.all_selected) .select_none else .select_all,
-                        .first_idx = 0,
-                        .second_idx = dir_listing.len -| 1,
-                    };
+                    self.selection.setAll(if (self.all_selected) .select_none else .select_all, dir_listing.len);
                 }
             } else {
                 if (cell.headerSortable(column.label, .{ .min_size_content = min_size })) |sort_dir| {
@@ -353,7 +357,7 @@ const DirectoryGrid = struct {
                 dvui.label(@src(), "{}", .{dir_item.user()}, .{ .gravity_x = 0.5 });
             }
         }
-        if (dvui.lastFocusedIdInFrameSince(current_focus)) |wid| {
+        if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
             self.processKbEventsPost(grid, wid, dir_listing.len);
         }
         self.all_selected = true;
@@ -391,14 +395,7 @@ const DirectoryGrid = struct {
                     if (ke.action == .down and ke.matchBind("select_all")) {
                         if (dvui.eventMatch(e, .{ .id = focus_wid, .debug = true, .r = grid.data().borderRectScale().r })) {
                             e.handle(@src(), grid.data());
-                            self.selection = .{
-                                .mode = .select_all,
-                                .first_idx = 0,
-                                .second_idx = nr_rows -| 1,
-                            };
-                            std.debug.print("matching\n", .{});
-                        } else {
-                            std.debug.print("still not matchjing\n", .{});
+                            self.selection.setAll(.select_all, nr_rows);
                         }
                     }
                 },
