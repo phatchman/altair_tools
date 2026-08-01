@@ -60,7 +60,7 @@ pub fn appFrame() !dvui.App.Result {
 
         var box = dvui.box(@src(), .{}, .{ .expand = .both, .style = .window, .background = true });
         defer box.deinit();
-
+        if (statusBar()) |res| return res;
         if (content()) |res| return res;
     }
 
@@ -103,13 +103,13 @@ pub fn content() ?dvui.App.Result {
     var hbox = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .both });
     defer hbox.deinit();
     {
-        var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
+        var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         filenameEntryBox(@src(), "Image:");
         static.image_grid.display();
     }
     {
-        var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
+        var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         filenameEntryBox(@src(), "Local:");
     }
@@ -186,24 +186,96 @@ const static_cols: []const usize = blk: {
     break :blk result[0..fixed_idx];
 };
 
-fn statusBar() void {
-    var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .border = .all(1), .gravity_y = 1 });
+fn statusBar() ?dvui.App.Result {
+    const static = struct {
+        var alt_key_pressed: bool = false;
+    };
+    // Check for .alt key regardless of who has focus
+    for (dvui.events()) |*e| {
+        switch (e.evt) {
+            .key => |ke| {
+                if (ke.code == .left_alt or ke.code == .right_alt) {
+                    static.alt_key_pressed = switch (ke.action) {
+                        .down, .repeat => true,
+                        .up => false,
+                    };
+                }
+            },
+            else => {},
+        }
+    }
+
+    var hbox = panel(@src(), .{ .dir = .horizontal, .equal_space = true }, .{});
     defer hbox.deinit();
-    //statusBarButton("User", 1);
+
+    var label_buf: [32]u8 = undefined;
+    const label = if (filter_user) |user|
+        std.fmt.bufPrint(&label_buf, "USER {d}", .{user}) catch unreachable
+    else
+        std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
+
+    if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
+        if (filter_user) |_| {
+            filter_user.? += 1;
+            if (filter_user == 16) filter_user = null;
+        } else {
+            filter_user = 0;
+        }
+    }
+    if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed)) {
+        return .close;
+    }
+    return null;
 }
 
-// TODO:
-// fn statusBarButton(label: []const u8, shortcut_char_pos: u32) void {
-//     _ = shortcut_char_pos;
-//     if (dvui.button(@src(), label, .{}, .{})) {
-//         if (filter_user) |_| {
-//             filter_user.? += 1;
-//             if (filter_user == 16) filter_user = null;
-//         } else {
-//             filter_user = 0;
-//         }
-//     }
-// }
+fn panel(src: std.builtin.SourceLocation, init_opts: dvui.BoxWidget.InitOptions, opts: dvui.Options) *dvui.BoxWidget {
+    const defaults: dvui.Options = .{
+        .expand = .horizontal,
+        .border = .all(1),
+        .gravity_y = 1,
+        .corners = .round(5),
+    };
+    return dvui.box(src, init_opts, defaults.override(opts));
+}
+
+var filter_user: ?u8 = null;
+
+fn statusBarButton(
+    src: std.builtin.SourceLocation,
+    label: []const u8,
+    shortcut_key: dvui.enums.Key,
+    shortcut_char_pos: u32,
+    alt_key_pressed: bool,
+) bool {
+    const char_width = dvui.themeGet().font_mono.sizeM(1, 1).w;
+    const x_offset: f32 = char_width * @as(f32, @floatFromInt(shortcut_char_pos));
+    var wd: dvui.WidgetData = undefined;
+    var box = dvui.box(src, .{}, .{});
+    defer box.deinit();
+    var result = dvui.button(src, label, .{}, .{ .data_out = &wd });
+    if (alt_key_pressed) {
+        _ = dvui.separator(@src(), .{ .expand = .none, .rect = .{
+            .x = x_offset + 3,
+            .y = wd.contentRect().x + wd.contentRect().h - wd.options.padding.?.h + 4,
+            .w = char_width,
+            .h = 2,
+        } });
+        // Treats all shortcut keys as global, regardless of what has focus.
+        for (dvui.events()) |*e| {
+            switch (e.evt) {
+                .key => |ke| {
+                    if (ke.action == .down and ke.code == shortcut_key) {
+                        e.handle(@src(), &wd);
+                        result = true;
+                        break;
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+    return result;
+}
 
 fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8) void {
     var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
@@ -237,11 +309,11 @@ const DirectoryGrid = struct {
             }
         }
 
-        pub fn setAll(self: *Selection, mode: SelectMode, length: usize) void {
+        pub fn setAll(self: *Selection, mode: SelectMode, count: usize) void {
             self.* = .{
                 .mode = mode,
                 .first_idx = 0,
-                .second_idx = length -| 1,
+                .second_idx = count,
             };
         }
 
@@ -285,6 +357,43 @@ const DirectoryGrid = struct {
             grid.sort_col = GridColumn.colNrFor(.name);
             grid.sort_dir = .ascending;
         }
+
+        var dir_itr = Commands.DirectoryIterator(dir_listing, struct {
+            pub fn selected(entry: *const DirectoryEntry) bool {
+                if (filter_user) |user| {
+                    return entry.user() == user;
+                } else {
+                    return true;
+                }
+            }
+        }.selected);
+
+        const row_count = dir_itr.count();
+        self.displayHeaders(grid, dir_listing, row_count);
+
+        const current_row = grid.cursor.row;
+        const selection_changed = rowHighlight(grid);
+        const cursor_changed = current_row != grid.cursor.row or selection_changed;
+        self.displayBody(grid, &dir_itr, cursor_changed, selection_changed);
+
+        if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
+            self.processKbEventsPost(grid, wid, row_count);
+        }
+        {
+            self.all_selected = row_count != 0;
+            dir_itr.idx = 0;
+            var idx: usize = 0;
+            while (dir_itr.next()) |dir_item| : (idx += 1) {
+                if (self.selection.mode != .none and self.selection.inRange(idx)) {
+                    dir_item.selected = self.selection.mode == .select_all;
+                }
+                if (dir_item.selected == false) self.all_selected = false;
+            }
+        }
+        self.selection.mode = .none;
+    }
+
+    fn displayHeaders(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_listing: []DirectoryEntry, displayed_row_count: usize) void {
         for (grid_columns, 0..) |column, col| {
             const cell = grid.colHeader(col, .{});
             defer cell.deinit();
@@ -292,7 +401,7 @@ const DirectoryGrid = struct {
             if (col == 0) {
                 const label = if (self.all_selected) "[X]" else "[ ]";
                 if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .margin = .all(0) })) {
-                    self.selection.setAll(if (self.all_selected) .select_none else .select_all, dir_listing.len);
+                    self.selection.setAll(if (self.all_selected) .select_none else .select_all, displayed_row_count);
                 }
             } else {
                 if (cell.headerSortable(column.label, .{ .min_size_content = min_size })) |sort_dir| {
@@ -301,11 +410,11 @@ const DirectoryGrid = struct {
                 _ = dvui.separator(@src(), .{ .expand = .vertical, .margin = .{ .y = 5, .h = 5 } });
             }
         }
-        const current_row = grid.cursor.row;
-        const selection_changed = rowHighlight(grid);
-        const row_changed = current_row != grid.cursor.row or selection_changed;
+    }
 
-        for (dir_listing, 0..) |*dir_item, row_idx| {
+    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *Commands.DirIterator, cursor_changed: bool, selection_changed: bool) void {
+        var row_idx: usize = 0;
+        while (dir_itr.next()) |dir_item| : (row_idx += 1) {
             const row_options: dvui.Options =
                 if (grid.cursor.row == row_idx) .{
                     .color_fill = dvui.themeGet().color(.control, .fill_press),
@@ -317,7 +426,7 @@ const DirectoryGrid = struct {
                 defer cell.deinit();
                 const src = @src();
                 const id = dvui.parentGet().extendId(src, 0);
-                if ((row_changed and grid.cursor.row == row_idx) or cell.grid_focus) {
+                if ((cursor_changed and grid.cursor.row == row_idx) or cell.grid_focus) {
                     dvui.focusWidget(id, null, null);
                     if (selection_changed)
                         self.selection.set(row_idx, !dir_item.selected, self.shift_key_pressed);
@@ -357,17 +466,6 @@ const DirectoryGrid = struct {
                 dvui.label(@src(), "{}", .{dir_item.user()}, .{ .gravity_x = 0.5 });
             }
         }
-        if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
-            self.processKbEventsPost(grid, wid, dir_listing.len);
-        }
-        self.all_selected = true;
-        for (dir_listing, 0..) |*dir_item, idx| {
-            if (self.selection.mode != .none and self.selection.inRange(idx)) {
-                dir_item.selected = self.selection.mode == .select_all;
-            }
-            if (dir_item.selected == false) self.all_selected = false;
-        }
-        self.selection.mode = .none;
     }
 
     fn processKbEventsPre(self: *DirectoryGrid) void {
@@ -393,7 +491,7 @@ const DirectoryGrid = struct {
             switch (e.evt) {
                 .key => |ke| {
                     if (ke.action == .down and ke.matchBind("select_all")) {
-                        if (dvui.eventMatch(e, .{ .id = focus_wid, .debug = true, .r = grid.data().borderRectScale().r })) {
+                        if (dvui.eventMatch(e, .{ .id = focus_wid, .r = grid.data().borderRectScale().r })) {
                             e.handle(@src(), grid.data());
                             self.selection.setAll(.select_all, nr_rows);
                         }
@@ -404,6 +502,8 @@ const DirectoryGrid = struct {
         }
     }
 
+    /// Set grid.cursor to the first cell of the highlighted row.
+    /// Return true if there was a mouse click on the row.
     fn rowHighlight(grid: *dvui.GridWidget) bool {
         var clicked = false;
         var cell_hovered: ?dvui.GridWidget.Cell = null;

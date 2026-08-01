@@ -163,12 +163,17 @@ pub const DirIterator = struct {
         return null;
     }
 
-    pub fn peek(self: *DirIterator) ?*DirectoryEntry {
-        if (self.idx == 0 or self.idx > self.collection.len) {
-            return null;
-        } else {
-            return &self.collection[self.idx - 1];
+    /// Count number of items that match filter.
+    /// Note: O(n), walks the entire collection.
+    pub fn count(self: *DirIterator) usize {
+        const orig_idx = self.idx;
+        self.idx = 0;
+        var total: usize = 0;
+        while (self.next()) |_| {
+            total += 1;
         }
+        self.idx = orig_idx;
+        return total;
     }
 };
 
