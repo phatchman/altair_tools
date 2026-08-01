@@ -7,75 +7,104 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .strip = strip_debug_symbols,
-    });
-
     const altair_disk_dep = b.dependency("altair_disk", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
-        .name = "adgui",
-        .root_module = exe_mod,
-        .use_llvm = true,
-    });
-    if (target.result.os.tag == .windows) {
-        exe.win32_manifest = b.path("./src/main.manifest");
-        exe.subsystem = .Windows;
-    }
-
     const dvui_dep = b.dependency("dvui", .{
         .target = target,
         // TODO: This works around a bug in translate-c which won't compile dvui in ReleaseSafe mode
         .optimize = if (optimize == .ReleaseSafe) .ReleaseFast else optimize,
-        .linux_display_backend = .X11,
+        //        .linux_display_backend = .X11,
     });
-    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
-    exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
-    b.installArtifact(exe);
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    // const exe_mod = b.createModule(.{
+    //     .root_source_file = b.path("src/main.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    //     .strip = strip_debug_symbols,
+    // });
+
+    // const exe = b.addExecutable(.{
+    //     .name = "adgui",
+    //     .root_module = exe_mod,
+    //     .use_llvm = true,
+    // });
+    // if (target.result.os.tag == .windows) {
+    //     exe.win32_manifest = b.path("./src/main.manifest");
+    //     exe.subsystem = .Windows;
+    // }
+
+    // exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl2"));
+    // exe.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
+    //b.installArtifact(exe);
+
+    // const run_cmd = b.addRunArtifact(exe);
+    // run_cmd.step.dependOn(b.getInstallStep());
+    // if (b.args) |args| {
+    //     run_cmd.addArgs(args);
+    // }
+
+    const exe_mod2 = b.createModule(.{
+        .root_source_file = b.path("src/app.zig"),
+        .target = target,
+        .optimize = optimize,
+        .strip = strip_debug_symbols,
+    });
+
+    const exe2 = b.addExecutable(.{
+        .name = "adgui2",
+        .root_module = exe_mod2,
+        .use_llvm = true,
+    });
+    if (target.result.os.tag == .windows) {
+        exe2.win32_manifest = b.path("./src/main.manifest");
+        exe2.subsystem = .Windows;
     }
 
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    exe2.root_module.addImport("dvui", dvui_dep.module("dvui_sdl3"));
+    exe2.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
+    //    b.installArtifact(exe);
 
-    const exe_unit_tests = b.addTest(.{
-        .root_module = exe_mod,
-    });
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    // const run_step = b.step("run", "Run the app");
+    // run_step.dependOn(&run_cmd.step);
 
-    const button_handler_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/ButtonHandler.zig"),
-        .target = target,
-    }) });
-    button_handler_tests.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
-    const run_button_handler_tests = b.addRunArtifact(button_handler_tests);
+    // const exe_unit_tests = b.addTest(.{
+    //     .root_module = exe_mod,
+    // });
+    //    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
-    test_step.dependOn(&run_button_handler_tests.step);
+    // const button_handler_tests = b.addTest(.{ .root_module = b.createModule(.{
+    //     .root_source_file = b.path("src/ButtonHandler.zig"),
+    //     .target = target,
+    // }) });
+    // button_handler_tests.root_module.addImport("altair_disk", altair_disk_dep.module("altair_disk"));
+    // const run_button_handler_tests = b.addRunArtifact(button_handler_tests);
 
-    const exe_check = b.addExecutable(.{
-        .name = "adgui",
-        .root_module = exe_mod,
+    // const test_step = b.step("test", "Run unit tests");
+    //  test_step.dependOn(&run_exe_unit_tests.step);
+    //test_step.dependOn(&run_button_handler_tests.step);
+
+    // const exe_check = b.addExecutable(.{
+    //     .name = "adgui",
+    //     .root_module = exe_mod,
+    // });
+    const exe_check2 = b.addExecutable(.{
+        .name = "adgui2",
+        .root_module = exe_mod2,
     });
 
     const check = b.step("check", "Check if adgui compiles");
-    check.dependOn(&exe_check.step);
+    //    check.dependOn(&exe_check.step);
+    check.dependOn(&exe_check2.step);
 
     const no_bin = b.option(bool, "no-bin", "skip emitting binary") orelse false;
     if (no_bin) {
-        b.getInstallStep().dependOn(&exe.step);
+        //      b.getInstallStep().dependOn(&exe.step);
+        b.getInstallStep().dependOn(&exe2.step);
     } else {
-        b.installArtifact(exe);
+        //    b.installArtifact(exe);
+        b.installArtifact(exe2);
     }
 }

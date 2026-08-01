@@ -167,7 +167,7 @@ test "directory list handler" {
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
     };
     for (&directories) |*dir| {
-        dir.checked = true;
+        dir.selected = true;
     }
     const handler = newDirectoryListHandler(
         struct {
@@ -243,7 +243,7 @@ test "directory list handler errors" {
         .init(.{ .local = LocalDirEntry{ .filename = "test2", .extension = "txt", .full_filename = "test2.txt", .size = 999 } }),
     };
     for (&directories) |*dir| {
-        dir.checked = true;
+        dir.selected = true;
     }
 
     const local = struct {
@@ -343,7 +343,7 @@ test "directory list handler confirm errors" {
         .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
     };
     for (&directories) |*dir| {
-        dir.checked = true;
+        dir.selected = true;
     }
 
     const local = struct {
@@ -444,7 +444,7 @@ test "directory list handler cancel errors with skip" {
         .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
     };
     for (&directories) |*dir| {
-        dir.checked = true;
+        dir.selected = true;
     }
 
     const local = struct {
@@ -517,7 +517,7 @@ test "directory list handler cancel errors no skip" {
         .init(.{ .local = LocalDirEntry{ .filename = "test3", .extension = "txt", .full_filename = "test3.txt", .size = 999 } }),
     };
     for (&directories) |*dir| {
-        dir.checked = true;
+        dir.selected = true;
     }
 
     const local = struct {

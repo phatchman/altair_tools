@@ -335,7 +335,7 @@ fn guiFrame() !bool {
                 .expand = .both,
                 .color_border = dvui.themeGet().text,
                 .border = dvui.Rect.all(2),
-                .corner_radius = dvui.Rect.all(5),
+                .corners = .round(5),
                 .background = true, // remove
             });
             defer top_half.deinit();
@@ -363,7 +363,7 @@ fn guiFrame() !bool {
             var bottom_half = dvui.box(@src(), .{}, .{
                 .expand = .both,
                 .border = dvui.Rect.all(2),
-                .corner_radius = dvui.Rect.all(5),
+                .corners = .round(5),
                 .background = true, // remove
             });
             defer bottom_half.deinit();
@@ -406,7 +406,7 @@ fn guiFrame() !bool {
                 .expand = .horizontal,
                 .gravity_y = 0.0,
                 .border = Rect.all(1),
-                .corner_radius = Rect.all(5),
+                .corners = .round(5),
                 .background = true,
             });
             defer stats_box.deinit();
@@ -844,15 +844,15 @@ fn makeGridBody(id: GridType) !void {
                         e.handled = true;
                         var dirs = getDirectoryById(id);
                         if (!shift_held) {
-                            dirs[abs_mouse_index].checked = !dirs[abs_mouse_index].checked;
+                            dirs[abs_mouse_index].selected = !dirs[abs_mouse_index].selected;
                             setLastMouseSelectedIndex(id, abs_mouse_index);
                         } else {
                             const prev_index = getLastMouseSelectedIndex(id);
-                            const prev_checked = dirs[prev_index].checked;
+                            const prev_checked = dirs[prev_index].selected;
                             const first_idx = @min(prev_index, abs_mouse_index);
                             const last_idx = @max(prev_index, abs_mouse_index);
                             for (first_idx..last_idx + 1) |idx| {
-                                dirs[idx].checked = prev_checked;
+                                dirs[idx].selected = prev_checked;
                             }
                         }
                     } else if (selection_mode == .mouse and me.action == .position) {
@@ -890,7 +890,7 @@ fn makeGridBody(id: GridType) !void {
 
         defer row.deinit();
         var buf = std.mem.zeroes([256]u8);
-        const checked_value = if (getDirectoryById(id)[abs_index].checked) "[X]" else "[ ]";
+        const checked_value = if (getDirectoryById(id)[abs_index].selected) "[X]" else "[ ]";
         try makeGridDataRow(@src(), id, 0, rel_idx, checked_value, false);
         try makeGridDataRow(@src(), id, 1, rel_idx, entry.entry.filename(), false);
         try makeGridDataRow(@src(), id, 2, rel_idx, entry.entry.extension(), false);
@@ -932,7 +932,7 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
         .{ .draw_focus = false },
         .{
             .id_extra = num,
-            .corner_radius = Rect{},
+            .corners = .square,
             .margin = Rect{},
             .expand = .horizontal,
             .min_size_content = .{ .h = 1, .w = min_sizes[num] },
@@ -942,13 +942,13 @@ fn makeGridHeading(label: []const u8, num: u32, id: GridType) !void {
             // Select all / none
             var checked = false;
             for (getDirectoryById(id)) |dir| {
-                if (!dir.checked) {
+                if (!dir.selected) {
                     checked = true;
                     break;
                 }
             }
             for (getDirectoryById(id)) |*dir| {
-                dir.checked = checked;
+                dir.selected = checked;
             }
         } else {
             sortDirectories(id, label, true);
@@ -1077,7 +1077,7 @@ fn makeStatusBar() !bool {
         .color_fill_press = dvui.themeGet().fill_hover,
         .expand = .horizontal,
         .margin = Rect{ .x = 2, .w = 2, .y = 2, .h = 0 },
-        .corner_radius = Rect.all(0),
+        .corners = .square,
         .background = true,
     };
 
@@ -1133,7 +1133,7 @@ fn makeStatusBar() !bool {
             if (image_directories) |directories| {
                 for (directories) |*entry| {
                     if (entry.user() != current_user) {
-                        entry.checked = false;
+                        entry.selected = false;
                     }
                 }
             }
@@ -1601,7 +1601,7 @@ pub fn aboutDialogDisplay(id: dvui.Id) !void {
 }
 
 fn sortAsc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
-    if (std.mem.eql(u8, which, "[_]")) return lhs.checked and !rhs.checked;
+    if (std.mem.eql(u8, which, "[_]")) return lhs.selected and !rhs.selected;
     if (std.mem.eql(u8, which, "Name")) return std.mem.order(u8, lhs.filename(), rhs.filename()) == .lt;
     if (std.mem.eql(u8, which, "Ext")) return std.mem.order(u8, lhs.extension(), rhs.extension()) == .lt;
     if (std.mem.eql(u8, which, "Size")) return lhs.fileSizeInB() < rhs.fileSizeInB();
@@ -1612,7 +1612,7 @@ fn sortAsc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
 }
 
 fn sortDesc(which: []const u8, lhs: DirectoryEntry, rhs: DirectoryEntry) bool {
-    if (std.mem.eql(u8, which, "[_]")) return !lhs.checked and rhs.checked;
+    if (std.mem.eql(u8, which, "[_]")) return !lhs.selected and rhs.selected;
     if (std.mem.eql(u8, which, "Name")) return std.mem.order(u8, lhs.filename(), rhs.filename()) == .gt;
     if (std.mem.eql(u8, which, "Ext")) return std.mem.order(u8, lhs.extension(), rhs.extension()) == .gt;
     if (std.mem.eql(u8, which, "Size")) return lhs.fileSizeInB() > rhs.fileSizeInB();
@@ -1966,7 +1966,7 @@ pub fn processEvents() void {
                         var dirs = getDirectoryById(focussed_grid);
                         const current_selection = getKbSelectionIndex(focussed_grid);
                         if (current_selection < dirs.len)
-                            dirs[current_selection].checked = !dirs[current_selection].checked;
+                            dirs[current_selection].selected = !dirs[current_selection].selected;
                     },
                     else => {},
                 }
@@ -2056,7 +2056,7 @@ pub fn processEvents() void {
                         }
                     }
                     for (dir_list) |*entry| {
-                        entry.checked = select_all;
+                        entry.selected = select_all;
                     }
                 }
             },

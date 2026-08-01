@@ -1,4 +1,5 @@
 const dvui = @import("dvui");
+const Font = dvui.Font;
 
 const fill: dvui.Color = .fromHex("#2c3332");
 const text: dvui.Color = .fromHex("#82a29f");
@@ -7,6 +8,8 @@ const border: dvui.Color = .fromHex("#60827d");
 pub const theme: dvui.Theme = blk: {
     @setEvalBranchQuota(4000);
     break :blk .{
+        .embedded_fonts = fonts,
+
         .name = "Terminal",
         .dark = true,
 
@@ -46,4 +49,27 @@ pub const theme: dvui.Theme = blk: {
             .border = .average(.red, border),
         },
     };
+};
+
+const fonts: []const Font.Source = &.{
+    .{
+        .family = Font.array("Vera Sans Mono"),
+        .bytes = @embedFile("fonts/VeraMono.ttf"),
+    },
+    .{
+        .family = Font.array("Vera Sans Mono"),
+        .weight = .bold,
+        .bytes = @embedFile("fonts/VeraMoBd.ttf"),
+    },
+    .{
+        .family = Font.array("Vera Sans Mono"),
+        .style = .italic,
+        .bytes = @embedFile("fonts/VeraMoIt.ttf"),
+    },
+    .{
+        .family = Font.array("Vera Sans Mono"),
+        .weight = .bold,
+        .style = .italic,
+        .bytes = @embedFile("fonts/VeraMoBI.ttf"),
+    },
 };

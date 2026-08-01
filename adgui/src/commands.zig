@@ -16,10 +16,10 @@ current_dir: ?std.Io.Dir = null,
 image_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry) = .empty,
 
-const Self = @This(); // TODO: This should be Commands?
+const Commands = @This();
 pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM, BASIC };
 
-pub fn deinit(self: *Self, gpa: std.mem.Allocator, io: std.Io) void {
+pub fn deinit(self: *Commands, gpa: std.mem.Allocator, io: std.Io) void {
     freeDirList(gpa, &self.image_directory_list);
     freeDirList(gpa, &self.local_directory_list);
     self.closeImage(io);
@@ -64,13 +64,13 @@ pub const DirectoryUnion = union(enum) {
 
 pub const DirectoryEntry = struct {
     entry: DirectoryUnion,
-    checked: bool,
+    selected: bool,
     deleted: bool,
 
     pub fn init(entry: DirectoryUnion) DirectoryEntry {
         return .{
             .entry = entry,
-            .checked = false,
+            .selected = false,
             .deleted = false,
         };
     }
@@ -134,8 +134,8 @@ pub const DirectoryEntry = struct {
         }
     }
 
-    pub fn isSelected(self: *const DirectoryEntry) bool {
-        return self.checked;
+    pub fn toggleSelected(self: *DirectoryEntry) void {
+        self.selected = !self.selected;
     }
 };
 
@@ -172,7 +172,7 @@ pub const DirIterator = struct {
     }
 };
 
-pub fn detectImageType(_: *Self, io: std.Io, filename: []const u8) !?DiskImageTypes {
+pub fn detectImageType(_: *Commands, io: std.Io, filename: []const u8) !?DiskImageTypes {
     var image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
     defer image_file.close(io);
     var is_unique = true;
@@ -183,7 +183,7 @@ pub fn detectImageType(_: *Self, io: std.Io, filename: []const u8) !?DiskImageTy
     }
 }
 
-pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type: DiskImageTypes) !void {
+pub fn openExistingImage(self: *Commands, io: std.Io, filename: []const u8, img_type: DiskImageTypes) !void {
     var cwd = std.Io.Dir.cwd();
 
     self.closeImage(io);
@@ -201,7 +201,20 @@ pub fn openExistingImage(self: *Self, io: std.Io, filename: []const u8, img_type
     };
 }
 
-pub fn closeImage(self: *Self, io: std.Io) void {
+pub fn openTestImage(self: *Commands, io: std.Io) !void {
+    self.closeImage(io);
+    const static = struct {
+        var test_file = @embedFile("test_images/8in_dirs.dsk").*;
+        var reader: std.Io.Reader = undefined;
+        var writer: std.Io.Writer = undefined;
+    };
+    static.reader = .fixed(&static.test_file);
+    static.writer = .fixed(&static.test_file);
+    self.disk_image = try .init(allocator, .{ .in_memory = &static.reader }, .{ .in_memory = &static.writer }, ad.all_disk_types.getPtrConst(.FDD_8IN));
+    try self.disk_image.?.loadDirectories(.full);
+}
+
+pub fn closeImage(self: *Commands, io: std.Io) void {
     if (self.disk_image) |*existing| {
         existing.deinit();
         self.disk_image = null;
@@ -215,7 +228,7 @@ pub fn closeImage(self: *Self, io: std.Io) void {
     self.writer = null;
 }
 
-pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType, label: ?ad.DiskLabel) !void {
+pub fn createNewImage(self: *Commands, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType, label: ?ad.DiskLabel) !void {
     var cwd = std.Io.Dir.cwd();
 
     self.closeImage(io);
@@ -232,15 +245,16 @@ pub fn createNewImage(self: *Self, io: std.Io, filename: []const u8, image_type:
     }
 }
 
-pub fn labelGet(self: *Self, label: *ad.DiskLabel) !void {
+pub fn labelGet(self: *Commands, label: *ad.DiskLabel) !void {
     try self.disk_image.?.labelGet(label);
 }
 
-pub fn directoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEntry {
+// TODO: This should just be cached right? And then freed when the image is closed?
+pub fn directoryListing(self: *Commands, gpa: std.mem.Allocator) ![]DirectoryEntry {
     freeDirList(gpa, &self.image_directory_list);
     if (self.disk_image) |image| {
         for (image.directory.cooked_directories.items) |dir| {
-            if (dir.user <= 15) { // TODO: Should be isDeleted?
+            if (dir.user <= 15) { // TODO: Should be isDeleted? This is not even needed anymore?
                 try self.image_directory_list.append(gpa, DirectoryEntry.init(.{ .image = dir }));
             }
         }
@@ -250,14 +264,14 @@ pub fn directoryListing(self: *Self, gpa: std.mem.Allocator) ![]DirectoryEntry {
     return error.ImageNotOpen;
 }
 
-pub fn dump(self: *Self) void {
+pub fn dump(self: *Commands) void {
     std.debug.print("DUMPING\n", .{});
     for (self.image_directory_list.items) |dir| {
         std.debug.print("dump = {s}.{s}\n", .{ dir.filename(), dir.extensio() });
     }
 }
 
-pub fn openLocalDirectory(self: *Self, io: std.Io, dir_path: []const u8) !void {
+pub fn openLocalDirectory(self: *Commands, io: std.Io, dir_path: []const u8) !void {
     if (self.current_dir) |*current_dir| {
         current_dir.close(io);
         self.current_dir = null;
@@ -265,7 +279,7 @@ pub fn openLocalDirectory(self: *Self, io: std.Io, dir_path: []const u8) !void {
     self.current_dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
 }
 
-pub fn localDirectoryListing(self: *Self, gpa: std.mem.Allocator, io: std.Io) ![]DirectoryEntry {
+pub fn localDirectoryListing(self: *Commands, gpa: std.mem.Allocator, io: std.Io) ![]DirectoryEntry {
     freeDirList(gpa, &self.local_directory_list);
 
     if (self.current_dir) |dir| {
@@ -313,7 +327,7 @@ pub fn xlateToCopyMode2(mode: ad.DiskImage.TextMode) CopyMode {
     };
 }
 
-pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
+pub fn getFile(self: *Commands, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
     if (self.disk_image) |*image| {
         var dir = try std.Io.Dir.cwd().openDir(io, dest_dir, .{});
         defer dir.close(io);
@@ -338,7 +352,7 @@ pub fn getFile(self: *Self, io: std.Io, src: *const DirectoryEntry, dest_dir: []
     }
 }
 
-pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, copy_mode: CopyMode, force: bool) !void {
+pub fn putFile(self: *Commands, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, copy_mode: CopyMode, force: bool) !void {
     const cpm_user = if (user < 16) @as(u8, @intCast(user)) else null;
     if (self.disk_image) |*image| {
         var cwd = try std.Io.Dir.cwd().openDir(io, dirname, .{});
@@ -355,7 +369,7 @@ pub fn putFile(self: *Self, io: std.Io, filename: []const u8, dirname: []const u
 }
 
 // TODO: Check constnesses.
-pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry) !void {
+pub fn eraseFile(self: *Commands, to_erase: *DirectoryEntry) !void {
     if (self.disk_image) |*image| {
         switch (to_erase.entry) {
             .image => |*cooked_entry| {
@@ -366,7 +380,7 @@ pub fn eraseFile(self: *Self, to_erase: *DirectoryEntry) !void {
     }
 }
 
-pub fn getSystem(self: *Self, io: std.Io, out_filename: []const u8) !void {
+pub fn getSystem(self: *Commands, io: std.Io, out_filename: []const u8) !void {
     if (self.disk_image) |*image| {
         var out_file = try std.Io.Dir.cwd().createFile(io, out_filename, .{});
         defer out_file.close(io);
@@ -374,7 +388,7 @@ pub fn getSystem(self: *Self, io: std.Io, out_filename: []const u8) !void {
     }
 }
 
-pub fn putSystem(self: *Self, io: std.Io, in_filename: []const u8) !void {
+pub fn putSystem(self: *Commands, io: std.Io, in_filename: []const u8) !void {
     if (self.disk_image) |*image| {
         var in_file = try std.Io.Dir.cwd().openFile(io, in_filename, .{ .mode = .read_only });
         defer in_file.close(io);
