@@ -45,11 +45,15 @@ pub fn appInit(_: *dvui.Window) !void {
     commands.openTestImage(io) catch |err| {
         std.debug.print("Error opening test image: {t}\n", .{err});
     };
+    // TODO: Make this a proper init;
+    command_state.disk_interface = &commands;
+    command_state.arena = .init(gpa);
 }
 
 // Run as app is shutting down before dvui.Window.deinit()
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
+    command_state.cancelCommand();
     commands.deinit(gpa, io);
 }
 
@@ -63,6 +67,8 @@ pub fn appFrame() !dvui.App.Result {
         if (statusBar()) |res| return res;
         if (content()) |res| return res;
     }
+    command_state.process();
+    dialogs.displayOpen();
 
     return .ok;
 }
@@ -223,6 +229,11 @@ fn statusBar() ?dvui.App.Result {
             if (filter_user == 16) filter_user = null;
         } else {
             filter_user = 0;
+        }
+        if (filter_user) |filter| {
+            for (commands.image_directory_list.items) |*dir_entry| {
+                if (dir_entry.user() != filter) dir_entry.selected = false;
+            }
         }
     }
     if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed)) {
@@ -556,7 +567,9 @@ const DirectoryGrid = struct {
 };
 
 const button_handlers = struct {
-    pub fn get() void {}
+    pub fn get() void {
+        command_state.beginCommand(.get);
+    }
 };
 
 const widgets = struct {
@@ -597,3 +610,237 @@ const widgets = struct {
         return click;
     }
 };
+
+const TransferResult = struct {
+    filename: []const u8,
+    result: enum { ok, err },
+};
+
+const Operation = union(CommandState.OperationType) {
+    none: void,
+    open,
+    close,
+    get: struct {
+        const GetOperation = @This();
+
+        dir_idx: usize,
+        transfer_result: std.ArrayList(TransferResult),
+
+        pub fn init() GetOperation {
+            return .{
+                .dir_idx = 0,
+                .transfer_result = .empty,
+            };
+        }
+
+        pub fn begin(self: *GetOperation, state: *CommandState) void {
+            if (state.disk_interface.image_directory_list.items.len > 0) {
+                self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_directory_list.items.len) catch oom();
+                dialogs.show(.transfer);
+                state.state = .processing;
+            } else {
+                state.state = .completed;
+            }
+        }
+
+        pub fn process(self: *GetOperation, state: *CommandState) void {
+            const directories = state.disk_interface.image_directory_list.items;
+
+            while (self.dir_idx != directories.len) : (self.dir_idx += 1) {
+                if (directories[self.dir_idx].selected) {
+                    //try state.disk_interface.getFile(state.io, directories[self.dir_idx]); // etc.
+                    self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
+                    self.dir_idx += 1;
+                    return;
+                }
+            }
+            state.state = .completed;
+            return;
+        }
+
+        pub fn cancel(self: GetOperation, state: *CommandState) void {
+            _ = self;
+            dialogs.hide(.transfer);
+            state.state = .completed;
+        }
+
+        pub fn err(self: GetOperation, state: *CommandState) void {
+            _ = self;
+            _ = state;
+        }
+    },
+    put,
+    erase,
+    info,
+    format,
+
+    pub fn begin(self: *Operation, state: *CommandState) void {
+        switch (self.*) {
+            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            inline else => |*op| op.begin(state),
+        }
+    }
+
+    pub fn process(self: *Operation, state: *CommandState) void {
+        switch (self.*) {
+            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            inline else => |*op| op.process(state),
+        }
+    }
+
+    pub fn cancel(self: Operation, state: *CommandState) void {
+        switch (self) {
+            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            inline else => |op| op.cancel(state),
+        }
+    }
+
+    pub fn err(self: Operation, state: *CommandState) void {
+        switch (self) {
+            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            inline else => |op| op.err(state),
+        }
+    }
+};
+
+// const CommandOptions = struct {
+//     directories: ?[]DirectoryEntry = null,
+// };
+
+const CommandState = struct {
+    const OperationType = enum { none, open, close, get, put, erase, info, format };
+    const OperationState = enum { init, processing, completed };
+    operation: Operation = .none,
+    state: OperationState = .completed,
+    //    options: CommandOptions,
+    disk_interface: *Commands,
+    arena: std.heap.ArenaAllocator,
+
+    pub fn beginCommand(self: *CommandState, op: OperationType) void {
+        std.debug.assert(op != .none);
+        self.operation = switch (op) {
+            .get => |o| @unionInit(Operation, @tagName(o), .init()),
+            inline else => |o| @unionInit(Operation, @tagName(o), {}),
+        };
+        self.state = .init;
+        // TODO: This needs to be initted differently
+        self.arena = .init(gpa);
+        //        self.options = options;
+    }
+
+    // TODO: Need a complete command??
+    pub fn cancelCommand(self: *CommandState) void {
+        self.operation.cancel(self);
+        // TODO: Best place to update state?
+        self.operation = .none;
+        self.state = .completed;
+        _ = self.arena.reset(.free_all);
+    }
+
+    pub fn process(self: *CommandState) void {
+        if (self.operation != .none) {
+            switch (self.state) {
+                .init => self.operation.begin(self),
+                .processing => self.operation.process(self),
+                .completed => {},
+            }
+        }
+    }
+};
+
+var command_state: CommandState = .{
+    .operation = .none,
+    .disk_interface = undefined,
+    .arena = undefined,
+};
+
+const dialogs = struct {
+    const Dialogs = enum { transfer };
+    const DialogState = struct {
+        open: bool,
+        dialog_fn: *const fn (*CommandState) void,
+
+        pub fn init(dialog_fn: *const fn (*CommandState) void) DialogState {
+            return .{
+                .open = false,
+                .dialog_fn = dialog_fn,
+            };
+        }
+    };
+
+    var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
+        .transfer = .init(transfer),
+    });
+
+    pub fn displayOpen() void {
+        for (all_dialogs.values) |dialog| {
+            if (dialog.open) dialog.dialog_fn(&command_state);
+        }
+    }
+
+    pub fn show(d: Dialogs) void {
+        std.debug.print("show\n", .{});
+        all_dialogs.getPtr(d).open = true;
+    }
+
+    pub fn hide(d: Dialogs) void {
+        std.debug.print("hide\n", .{});
+        all_dialogs.getPtr(d).open = false;
+    }
+
+    fn transfer(
+        state: *CommandState,
+    ) void {
+        if (state.operation != .get) @panic("oop");
+        const dialog_state = all_dialogs.getPtr(.transfer);
+        if (!dialog_state.open) return;
+        const title = switch (state.operation) {
+            .get => "Copy files from disk image",
+            .put => "Copy files to disk image",
+            else => unreachable,
+        };
+        const transfer_results = switch (state.operation) {
+            .get => |op| op.transfer_result.items,
+            else => unreachable,
+        };
+
+        var dialog_win = dvui.floatingWindow(
+            @src(),
+            .{ .modal = true, .open_flag = &dialog_state.open },
+            .{
+                .min_size_content = .{ .w = 500, .h = 500 },
+                .max_size_content = .{ .w = 500, .h = 500 },
+            },
+        );
+        defer dialog_win.deinit();
+        dialog_win.dragAreaSet(dvui.windowHeader(title, "", &dialog_state.open));
+
+        const label = switch (state.state) {
+            .init, .processing => "Cancel",
+            .completed => "Close",
+        };
+        var button_wd: dvui.WidgetData = undefined;
+        if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd })) {
+            state.cancelCommand();
+            return;
+        }
+        if (dvui.dataGet(null, button_wd.id, "focused", bool) == null) {
+            dvui.dataSet(null, button_wd.id, "focused", true);
+            dvui.focusWidget(button_wd.id, null, null);
+        }
+
+        var outer_vbox = dvui.box(@src(), .{}, .{
+            .expand = .both,
+            .min_size_content = .{ .w = 500, .h = 500 },
+            .max_size_content = .{ .w = 500, .h = 500 },
+        });
+        defer outer_vbox.deinit();
+        for (transfer_results, 0..) |result, i| {
+            dvui.label(@src(), "* {s}: {t}", .{ result.filename, result.result }, .{ .id_extra = i });
+        }
+    }
+};
+
+pub fn oom() noreturn {
+    @panic("Out of memory error");
+}
