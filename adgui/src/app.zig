@@ -613,7 +613,10 @@ const widgets = struct {
 
 const TransferResult = struct {
     filename: []const u8,
-    result: enum { ok, err },
+    result: enum { ok, err, err_retryable },
+    err: ?Commands.GetFileError = null,
+    message: []const u8 = "", // TODO: Make this into an init.
+    recovery: enum { skip, retry } = .skip,
 };
 
 const Operation = union(CommandState.OperationType) {
@@ -646,11 +649,38 @@ const Operation = union(CommandState.OperationType) {
         pub fn process(self: *GetOperation, state: *CommandState) void {
             const directories = state.disk_interface.image_directory_list.items;
 
+            // Check if the last transfer was in error and if it needs to be retried.
+            const transfer_results = self.transfer_result.items;
+            const retry = retry: {
+                if (transfer_results.len > 0) {
+                    const result = &transfer_results[transfer_results.len - 1];
+                    if (result.result == .err) {
+                        switch (result.recovery) {
+                            .skip => {
+                                self.dir_idx += 1;
+                                break :retry false;
+                            },
+                            .retry => {
+                                _ = self.transfer_result.pop();
+                                break :retry true;
+                            },
+                        }
+                    }
+                }
+                break :retry false;
+            };
             while (self.dir_idx != directories.len) : (self.dir_idx += 1) {
                 if (directories[self.dir_idx].selected) {
-                    //try state.disk_interface.getFile(state.io, directories[self.dir_idx]); // etc.
-                    self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
-                    self.dir_idx += 1;
+                    // TODO: Would pass -force if the recovery mode is retry.
+                    //                    state.disk_interface.getFile(io, &directories[self.dir_idx], ".", .AUTO, false) catch unreachable;
+
+                    if (self.dir_idx % 3 == 0 and !retry) {
+                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.PathAlreadyExists, .message = "File already exists" });
+                        state.state = .user_input;
+                    } else {
+                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
+                        self.dir_idx += 1;
+                    }
                     return;
                 }
             }
@@ -690,7 +720,8 @@ const Operation = union(CommandState.OperationType) {
 
     pub fn cancel(self: Operation, state: *CommandState) void {
         switch (self) {
-            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            .none => {},
+            .open, .close, .put, .erase, .info, .format => unreachable,
             inline else => |op| op.cancel(state),
         }
     }
@@ -703,13 +734,9 @@ const Operation = union(CommandState.OperationType) {
     }
 };
 
-// const CommandOptions = struct {
-//     directories: ?[]DirectoryEntry = null,
-// };
-
 const CommandState = struct {
     const OperationType = enum { none, open, close, get, put, erase, info, format };
-    const OperationState = enum { init, processing, completed };
+    const OperationState = enum { init, processing, user_input, completed };
     operation: Operation = .none,
     state: OperationState = .completed,
     //    options: CommandOptions,
@@ -742,6 +769,7 @@ const CommandState = struct {
             switch (self.state) {
                 .init => self.operation.begin(self),
                 .processing => self.operation.process(self),
+                .user_input => {},
                 .completed => {},
             }
         }
@@ -791,7 +819,7 @@ const dialogs = struct {
     fn transfer(
         state: *CommandState,
     ) void {
-        if (state.operation != .get) @panic("oop");
+        std.debug.assert(state.operation == .get);
         const dialog_state = all_dialogs.getPtr(.transfer);
         if (!dialog_state.open) return;
         const title = switch (state.operation) {
@@ -816,7 +844,7 @@ const dialogs = struct {
         dialog_win.dragAreaSet(dvui.windowHeader(title, "", &dialog_state.open));
 
         const label = switch (state.state) {
-            .init, .processing => "Cancel",
+            .init, .processing, .user_input => "Cancel",
             .completed => "Close",
         };
         var button_wd: dvui.WidgetData = undefined;
@@ -835,8 +863,134 @@ const dialogs = struct {
             .max_size_content = .{ .w = 500, .h = 500 },
         });
         defer outer_vbox.deinit();
-        for (transfer_results, 0..) |result, i| {
-            dvui.label(@src(), "* {s}: {t}", .{ result.filename, result.result }, .{ .id_extra = i });
+        const yes_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "yes_to_all", bool, false);
+        const no_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "no_to_all", bool, false);
+        var yes_key: bool = false;
+        var no_key: bool = false;
+        var yes_all_key: bool = false;
+        var no_all_key: bool = false;
+
+        for (dvui.events()) |*e| {
+            //            if (!dvui.eventMatchSimple(e, dialog_win.data())) continue;
+            switch (e.evt) {
+                .key => |ke| {
+                    if (ke.action != .down and (ke.mod != .none or !ke.mod.shiftOnly())) continue;
+                    switch (ke.code) {
+                        .y => {
+                            e.handle(@src(), dialog_win.data());
+                            if (ke.mod.shift()) {
+                                yes_all_key = true;
+                            } else {
+                                yes_key = true;
+                            }
+                        },
+                        .n => {
+                            e.handle(@src(), dialog_win.data());
+                            if (ke.mod.shift()) {
+                                no_all_key = true;
+                            } else {
+                                no_key = true;
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+        }
+        for (transfer_results, 0..) |*result, i| {
+            dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
+            // TODO: fix up this condition
+            if (state.state == .user_input and result.result == .err and i == transfer_results.len - 1) switch (result.err.?) {
+                error.PathAlreadyExists => {
+                    var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+                    defer hbox.deinit();
+                    dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{});
+                    var wd: dvui.WidgetData = undefined;
+                    if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
+                        yes_key or
+                        yes_to_all)
+                    {
+                        result.recovery = .retry;
+                        state.state = .processing;
+                        if (yes_key)
+                            dvui.focusWidget(wd.id, null, null);
+                    }
+                    // if (!dvui.dataGetDefault(null, wd.id, "focussed", bool, false)) {
+                    //     dvui.focusWidget(wd.id, null, null);
+                    //     dvui.dataSet(null, wd.id, "focussed", true);
+                    // }
+                    if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd }) or
+                        yes_all_key)
+                    {
+                        result.recovery = .retry;
+                        state.state = .processing;
+                        dvui.dataSet(null, dialog_win.data().id, "yes_to_all", true);
+                        if (yes_all_key)
+                            dvui.focusWidget(wd.id, null, null);
+                    }
+                    if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
+                        no_key or
+                        no_to_all)
+                    {
+                        state.state = .processing;
+                        if (no_key)
+                            dvui.focusWidget(wd.id, null, null);
+                    }
+                    if (dvui.button(@src(), "[N]o to all", .{}, .{ .data_out = &wd }) or
+                        no_all_key)
+                    {
+                        state.state = .processing;
+                        dvui.dataSet(null, dialog_win.data().id, "no_to_all", true);
+                        if (no_all_key)
+                            dvui.focusWidget(wd.id, null, null);
+                    }
+                }, // Prompt for overwrite
+
+                error.UnsupportedTextMode,
+                error.InvalidFormat,
+                error.InvalidToken,
+                error.InvalidRecordNumber,
+                error.InvalidTrack,
+                error.InvalidSector,
+                => {}, // just report this error
+
+                error.NoSpaceLeft,
+                error.PermissionDenied,
+                error.SystemResources,
+                error.Unexpected,
+                error.DiskQuota,
+                error.FileTooBig,
+                error.InputOutput,
+                error.DeviceBusy,
+                error.AccessDenied,
+                error.BrokenPipe,
+                error.NotOpenForWriting,
+                error.LockViolation,
+                error.WouldBlock,
+                error.NoDevice,
+                error.FileBusy,
+                error.Canceled,
+                error.EndOfStream,
+                error.ReadFailed,
+                error.Unseekable,
+                error.IsDir,
+                error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded,
+                error.SymLinkLoop,
+                error.FileNotFound,
+                error.NotDir,
+                error.ReadOnlyFileSystem,
+                error.NetworkNotFound,
+                error.NameTooLong,
+                error.BadPathName,
+                error.PipeBusy,
+                error.AntivirusInterference,
+                error.FileLocksUnsupported,
+                error.WriteFailed,
+                => {}, // Also just report this error?
+
+            };
         }
     }
 };

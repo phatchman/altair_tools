@@ -332,14 +332,15 @@ pub fn xlateToCopyMode2(mode: ad.DiskImage.TextMode) CopyMode {
     };
 }
 
-pub fn getFile(self: *Commands, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) !void {
+pub const GetFileError = (std.Io.Dir.OpenError || std.Io.File.OpenError || std.Io.File.Writer.Error || DiskImage.CopyFromImageError);
+pub fn getFile(self: *Commands, io: std.Io, src: *const DirectoryEntry, dest_dir: []const u8, copy_mode: CopyMode, force: bool) GetFileError!void {
     if (self.disk_image) |*image| {
         var dir = try std.Io.Dir.cwd().openDir(io, dest_dir, .{});
         defer dir.close(io);
         switch (src.entry) {
             .image => |cooked_entry| {
                 var conv_buffer: [std.fs.max_name_bytes]u8 = undefined;
-                const out_filename = try host_os.toSafeHostFilename(cooked_entry.filenameAndExtension(), &conv_buffer);
+                const out_filename = host_os.toSafeHostFilename(cooked_entry.filenameAndExtension(), &conv_buffer) catch unreachable;
                 var out_file = try dir.createFile(io, out_filename, .{ .exclusive = if (force) false else true });
                 defer out_file.close(io);
                 var write_buffer: [4096]u8 = undefined;
