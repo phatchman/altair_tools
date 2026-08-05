@@ -628,11 +628,13 @@ const Operation = union(CommandState.OperationType) {
 
         dir_idx: usize,
         transfer_result: std.ArrayList(TransferResult),
+        changed: bool,
 
         pub fn init() GetOperation {
             return .{
                 .dir_idx = 0,
                 .transfer_result = .empty,
+                .changed = false,
             };
         }
 
@@ -647,6 +649,7 @@ const Operation = union(CommandState.OperationType) {
         }
 
         pub fn process(self: *GetOperation, state: *CommandState) void {
+            self.changed = false;
             const directories = state.disk_interface.image_directory_list.items;
 
             // Check if the last transfer was in error and if it needs to be retried.
@@ -681,6 +684,7 @@ const Operation = union(CommandState.OperationType) {
                         self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
                         self.dir_idx += 1;
                     }
+                    self.changed = true;
                     return;
                 }
             }
@@ -782,6 +786,8 @@ var command_state: CommandState = .{
     .arena = undefined,
 };
 
+//var scroll_info: dvui.ScrollInfo = .{};
+
 const dialogs = struct {
     const Dialogs = enum { transfer };
     const DialogState = struct {
@@ -832,6 +838,11 @@ const dialogs = struct {
             else => unreachable,
         };
 
+        const changed = switch (state.operation) {
+            .get => |op| op.changed,
+            else => unreachable,
+        };
+
         var dialog_win = dvui.floatingWindow(
             @src(),
             .{ .modal = true, .open_flag = &dialog_state.open },
@@ -856,20 +867,30 @@ const dialogs = struct {
             dvui.dataSet(null, button_wd.id, "focused", true);
             dvui.focusWidget(button_wd.id, null, null);
         }
-
-        var outer_vbox = dvui.box(@src(), .{}, .{
+        defer dvui.dataSet(null, dialog_win.data().id, "count", transfer_results.len);
+        var scroll_info = dvui.dataGetDefault(null, dialog_win.data().id, "si", dvui.ScrollInfo, .{});
+        defer dvui.dataSet(null, dialog_win.data().id, "si", scroll_info);
+        var scroll = dvui.scrollArea(@src(), .{ .scroll_info = &scroll_info }, .{
             .expand = .both,
             .min_size_content = .{ .w = 500, .h = 500 },
             .max_size_content = .{ .w = 500, .h = 500 },
         });
-        defer outer_vbox.deinit();
+        defer scroll.deinit();
+
+        defer if (changed) {
+            scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
+            dvui.refresh(null, @src(), null);
+        };
+
         const yes_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "yes_to_all", bool, false);
         const no_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "no_to_all", bool, false);
         var yes_key: bool = false;
         var no_key: bool = false;
         var yes_all_key: bool = false;
         var no_all_key: bool = false;
+        const yes_focused = dvui.dataGetDefault(null, scroll.data().id, "yes_focused", bool, false);
 
+        // TODO: Make this the event loop for the focus group.
         for (dvui.events()) |*e| {
             //            if (!dvui.eventMatchSimple(e, dialog_win.data())) continue;
             switch (e.evt) {
@@ -905,6 +926,9 @@ const dialogs = struct {
                 error.PathAlreadyExists => {
                     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
                     defer hbox.deinit();
+
+                    var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
+                    defer fg.deinit();
                     dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{});
                     var wd: dvui.WidgetData = undefined;
                     if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
@@ -913,13 +937,14 @@ const dialogs = struct {
                     {
                         result.recovery = .retry;
                         state.state = .processing;
-                        if (yes_key)
+                        if (yes_key) {
                             dvui.focusWidget(wd.id, null, null);
+                        }
                     }
-                    // if (!dvui.dataGetDefault(null, wd.id, "focussed", bool, false)) {
-                    //     dvui.focusWidget(wd.id, null, null);
-                    //     dvui.dataSet(null, wd.id, "focussed", true);
-                    // }
+                    if (!yes_focused) {
+                        dvui.focusWidget(wd.id, null, null);
+                        dvui.dataSet(null, scroll.data().id, "yes_focused", true);
+                    }
                     if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd }) or
                         yes_all_key)
                     {
@@ -992,6 +1017,7 @@ const dialogs = struct {
 
             };
         }
+        //        dvui.dataSet(null, dialog_win.data().id, "si", scroll_info);
     }
 };
 
