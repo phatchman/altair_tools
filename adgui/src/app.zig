@@ -864,10 +864,13 @@ const dialogs = struct {
             state.cancelCommand();
             return;
         }
-        // if (dvui.dataGet(null, button_wd.id, "focused", bool) == null) {
-        //     dvui.dataSet(null, button_wd.id, "focused", true);
-        //     dvui.focusWidget(button_wd.id, null, null);
-        // }
+        var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
+        defer dvui.dataSet(null, wid_dialog, "close_focused", close_focused);
+        if (state.state == .completed and !close_focused) {
+            close_focused = true;
+            dvui.focusWidget(button_wd.id, null, null);
+            dvui.refresh(null, @src(), null);
+        }
         var scroll_info = dvui.dataGetDefault(null, wid_dialog, "si", dvui.ScrollInfo, .{});
         defer dvui.dataSet(null, wid_dialog, "si", scroll_info);
         var scroll = dvui.scrollArea(@src(), .{ .scroll_info = &scroll_info }, .{
