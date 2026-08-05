@@ -59,6 +59,7 @@ pub fn appDeinit(win: *dvui.Window) void {
 
 // Run each frame to do normal UI
 pub fn appFrame() !dvui.App.Result {
+    std.debug.print("--- FRAME ---\n", .{});
     {
         if (menu()) |res| return res;
 
@@ -628,13 +629,13 @@ const Operation = union(CommandState.OperationType) {
 
         dir_idx: usize,
         transfer_result: std.ArrayList(TransferResult),
-        changed: bool,
+        dirty: bool,
 
         pub fn init() GetOperation {
             return .{
                 .dir_idx = 0,
                 .transfer_result = .empty,
-                .changed = false,
+                .dirty = false,
             };
         }
 
@@ -649,7 +650,6 @@ const Operation = union(CommandState.OperationType) {
         }
 
         pub fn process(self: *GetOperation, state: *CommandState) void {
-            self.changed = false;
             const directories = state.disk_interface.image_directory_list.items;
 
             // Check if the last transfer was in error and if it needs to be retried.
@@ -684,7 +684,7 @@ const Operation = union(CommandState.OperationType) {
                         self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
                         self.dir_idx += 1;
                     }
-                    self.changed = true;
+                    self.dirty = true;
                     return;
                 }
             }
@@ -838,8 +838,8 @@ const dialogs = struct {
             else => unreachable,
         };
 
-        const changed = switch (state.operation) {
-            .get => |op| op.changed,
+        const dirty = switch (state.operation) {
+            .get => |*op| &op.dirty,
             else => unreachable,
         };
 
@@ -852,6 +852,7 @@ const dialogs = struct {
             },
         );
         defer dialog_win.deinit();
+        const wid_dialog = dialog_win.data().id;
         dialog_win.dragAreaSet(dvui.windowHeader(title, "", &dialog_state.open));
 
         const label = switch (state.state) {
@@ -859,116 +860,131 @@ const dialogs = struct {
             .completed => "Close",
         };
         var button_wd: dvui.WidgetData = undefined;
-        if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd })) {
+        if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
             state.cancelCommand();
             return;
         }
-        if (dvui.dataGet(null, button_wd.id, "focused", bool) == null) {
-            dvui.dataSet(null, button_wd.id, "focused", true);
-            dvui.focusWidget(button_wd.id, null, null);
-        }
-        defer dvui.dataSet(null, dialog_win.data().id, "count", transfer_results.len);
-        var scroll_info = dvui.dataGetDefault(null, dialog_win.data().id, "si", dvui.ScrollInfo, .{});
-        defer dvui.dataSet(null, dialog_win.data().id, "si", scroll_info);
+        // if (dvui.dataGet(null, button_wd.id, "focused", bool) == null) {
+        //     dvui.dataSet(null, button_wd.id, "focused", true);
+        //     dvui.focusWidget(button_wd.id, null, null);
+        // }
+        var scroll_info = dvui.dataGetDefault(null, wid_dialog, "si", dvui.ScrollInfo, .{});
+        defer dvui.dataSet(null, wid_dialog, "si", scroll_info);
         var scroll = dvui.scrollArea(@src(), .{ .scroll_info = &scroll_info }, .{
             .expand = .both,
             .min_size_content = .{ .w = 500, .h = 500 },
             .max_size_content = .{ .w = 500, .h = 500 },
         });
         defer scroll.deinit();
-
-        defer if (changed) {
-            scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
+        var needs_scroll: bool = false;
+        defer if (dirty.* or needs_scroll) {
+            std.debug.print("dirty {}:{}\n", .{ dirty.*, needs_scroll });
             dvui.refresh(null, @src(), null);
+            // TODO: This is a bit of a hack. Need to make a small repro for DV to look at.
+            // Issue is that we scroll to end, but buttons don't show because they are first frame
+            // and scroll area doesn't know how big they are yet. But then we need to remember state to
+            // scroll to end a second time.
+            if (!needs_scroll) {
+                scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
+                dirty.* = false;
+            }
         };
 
-        const yes_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "yes_to_all", bool, false);
-        const no_to_all = dvui.dataGetDefault(null, dialog_win.data().id, "no_to_all", bool, false);
-        var yes_key: bool = false;
-        var no_key: bool = false;
-        var yes_all_key: bool = false;
-        var no_all_key: bool = false;
-        const yes_focused = dvui.dataGetDefault(null, scroll.data().id, "yes_focused", bool, false);
+        var yes_to_all = dvui.dataGetDefault(null, wid_dialog, "yes_to_all", bool, false);
+        defer dvui.dataSet(null, wid_dialog, "yes_to_all", yes_to_all);
+        var no_to_all = dvui.dataGetDefault(null, wid_dialog, "no_to_all", bool, false);
+        defer dvui.dataSet(null, wid_dialog, "no_to_all", no_to_all);
 
+        var yes_focused = dvui.dataGetDefault(null, wid_dialog, "yes_focused", bool, false);
+        defer dvui.dataSet(null, wid_dialog, "yes_focused", yes_focused);
+
+        const focused_id = dvui.lastFocusedIdInFrame();
         // TODO: Make this the event loop for the focus group.
-        for (dvui.events()) |*e| {
-            //            if (!dvui.eventMatchSimple(e, dialog_win.data())) continue;
-            switch (e.evt) {
-                .key => |ke| {
-                    if (ke.action != .down and (ke.mod != .none or !ke.mod.shiftOnly())) continue;
-                    switch (ke.code) {
-                        .y => {
-                            e.handle(@src(), dialog_win.data());
-                            if (ke.mod.shift()) {
-                                yes_all_key = true;
-                            } else {
-                                yes_key = true;
-                            }
-                        },
-                        .n => {
-                            e.handle(@src(), dialog_win.data());
-                            if (ke.mod.shift()) {
-                                no_all_key = true;
-                            } else {
-                                no_key = true;
-                            }
-                        },
-                        else => {},
-                    }
-                },
-                else => {},
-            }
-        }
         for (transfer_results, 0..) |*result, i| {
+            var wid_yes: dvui.Id = .zero;
+            var wid_yesall: dvui.Id = .zero;
+            var wid_no: dvui.Id = .zero;
+            var wid_noall: dvui.Id = .zero;
+
             dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
             // TODO: fix up this condition
             if (state.state == .user_input and result.result == .err and i == transfer_results.len - 1) switch (result.err.?) {
                 error.PathAlreadyExists => {
                     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
                     defer hbox.deinit();
+                    needs_scroll = dvui.firstFrame(hbox.data().id);
 
                     var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
                     defer fg.deinit();
-                    dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{});
+
+                    dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{ .margin = dvui.ButtonWidget.defaults.margin });
                     var wd: dvui.WidgetData = undefined;
                     if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
-                        yes_key or
                         yes_to_all)
                     {
-                        result.recovery = .retry;
-                        state.state = .processing;
-                        if (yes_key) {
-                            dvui.focusWidget(wd.id, null, null);
-                        }
+                        std.debug.print("yes\n", .{});
+                        actions.yes(state, result);
                     }
+                    wid_yes = wd.id;
                     if (!yes_focused) {
                         dvui.focusWidget(wd.id, null, null);
-                        dvui.dataSet(null, scroll.data().id, "yes_focused", true);
+                        yes_focused = true;
                     }
-                    if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd }) or
-                        yes_all_key)
-                    {
-                        result.recovery = .retry;
-                        state.state = .processing;
-                        dvui.dataSet(null, dialog_win.data().id, "yes_to_all", true);
-                        if (yes_all_key)
-                            dvui.focusWidget(wd.id, null, null);
+                    if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd })) {
+                        actions.yes(state, result);
+                        yes_to_all = true;
                     }
+                    wid_yesall = wd.id;
                     if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
-                        no_key or
                         no_to_all)
                     {
-                        state.state = .processing;
-                        if (no_key)
-                            dvui.focusWidget(wd.id, null, null);
+                        actions.no(state);
                     }
-                    if (dvui.button(@src(), "[N]o to all", .{}, .{ .data_out = &wd }) or
-                        no_all_key)
-                    {
-                        state.state = .processing;
-                        dvui.dataSet(null, dialog_win.data().id, "no_to_all", true);
-                        if (no_all_key)
-                            dvui.focusWidget(wd.id, null, null);
+                    wid_no = wd.id;
+                    if (dvui.button(@src(), "[N]o to all", .{}, .{ .data_out = &wd })) {
+                        actions.no(state);
+                        no_to_all = true;
+                    }
+                    wid_noall = wd.id;
+                    if (dvui.lastFocusedIdInFrameSince(focused_id)) |wid| {
+                        for (dvui.events()) |*e| {
+                            if (!dvui.eventMatch(e, .{
+                                .id = fg.data().id,
+                                .r = fg.data().contentRectScale().r,
+                                .focus_id = wid,
+                            })) continue;
+                            switch (e.evt) {
+                                .key => |ke| {
+                                    if (ke.action != .down and (ke.mod != .none or !ke.mod.shiftOnly())) continue;
+                                    switch (ke.code) {
+                                        .y => {
+                                            e.handle(@src(), fg.data());
+                                            if (ke.mod.shift()) {
+                                                yes_to_all = true;
+                                                actions.yes(state, result);
+                                                dvui.focusWidget(wid_yesall, null, e.num);
+                                            } else {
+                                                actions.yes(state, result);
+                                                dvui.focusWidget(wid_yes, null, e.num);
+                                            }
+                                        },
+                                        .n => {
+                                            e.handle(@src(), fg.data());
+                                            if (ke.mod.shift()) {
+                                                no_to_all = true;
+                                                actions.no(state);
+                                                dvui.focusWidget(wid_noall, null, e.num);
+                                            } else {
+                                                actions.no(state);
+                                                dvui.focusWidget(wid_no, null, e.num);
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
                     }
                 }, // Prompt for overwrite
 
@@ -1017,8 +1033,17 @@ const dialogs = struct {
 
             };
         }
-        //        dvui.dataSet(null, dialog_win.data().id, "si", scroll_info);
     }
+
+    const actions = struct {
+        pub fn yes(state: *CommandState, result: *TransferResult) void {
+            result.recovery = .retry;
+            state.state = .processing;
+        }
+        pub fn no(state: *CommandState) void {
+            state.state = .processing;
+        }
+    };
 };
 
 pub fn oom() noreturn {
