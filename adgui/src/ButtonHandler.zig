@@ -158,7 +158,7 @@ fn formatErrorMessage(err: anyerror) []const u8 {
 }
 
 test "directory list handler" {
-    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    const LocalDirEntry = @import("DiskInterface.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
     defer CommandState.freeResources();
 
@@ -234,7 +234,7 @@ test "prompt for file handler" {
 }
 
 test "directory list handler errors" {
-    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    const LocalDirEntry = @import("DiskInterface.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
     defer CommandState.freeResources();
 
@@ -333,7 +333,7 @@ test "prompt for file handler errors" {
 }
 
 test "directory list handler confirm errors" {
-    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    const LocalDirEntry = @import("DiskInterface.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
     defer CommandState.freeResources();
 
@@ -434,7 +434,7 @@ test "prompt for file handler cancel" {
 }
 
 test "directory list handler cancel errors with skip" {
-    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    const LocalDirEntry = @import("DiskInterface.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
     defer CommandState.freeResources();
 
@@ -507,7 +507,7 @@ test "directory list handler cancel errors with skip" {
 }
 
 test "directory list handler cancel errors no skip" {
-    const LocalDirEntry = @import("commands.zig").LocalDirEntry;
+    const LocalDirEntry = @import("DiskInterface.zig").LocalDirEntry;
     CommandState.init(std.testing.allocator);
     defer CommandState.freeResources();
 
@@ -581,6 +581,6 @@ test "directory list handler cancel errors no skip" {
 }
 
 const std = @import("std");
-const DirectoryEntry = @import("commands.zig").DirectoryEntry;
+const DirectoryEntry = @import("DiskInterface.zig").DirectoryEntry;
 const CommandState = @import("CommandState.zig");
 const FileStatus = CommandState.FileStatus;

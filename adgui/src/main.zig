@@ -2625,7 +2625,8 @@ const Rect = dvui.Rect;
 const Options = dvui.Options;
 const ad = @import("altair_disk");
 const DiskImage = ad.DiskImage;
-const Commands = @import("commands.zig");
+// TODO: Rename this.
+const Commands = @import("DiskInterface.zig");
 const DirectoryEntry = Commands.DirectoryEntry;
 const CopyMode = Commands.CopyMode;
 const Backend = dvui.backend;

@@ -3,11 +3,11 @@ const builtin = @import("builtin");
 const dvui = @import("dvui");
 
 const window_icon_png = @embedFile("zig-favicon.png");
-const Commands = @import("commands.zig");
-const DirectoryEntry = Commands.DirectoryEntry;
+const DiskInterface = @import("DiskInterface.zig");
+const DirectoryEntry = DiskInterface.DirectoryEntry;
 const GridWidget = dvui.GridWidget;
 
-var commands: Commands = .{};
+var disk_interface: DiskInterface = undefined;
 
 pub const dvui_app: dvui.App = .{
     .config = .{
@@ -28,6 +28,7 @@ pub const dvui_app: dvui.App = .{
 pub const main = dvui.App.main;
 var io: std.Io = undefined;
 var gpa: std.mem.Allocator = undefined;
+var arena: std.mem.Allocator = undefined;
 pub const panic = dvui.App.panic;
 pub const std_options: std.Options = .{
     .logFn = dvui.App.logFn,
@@ -36,17 +37,18 @@ pub const std_options: std.Options = .{
 pub fn appInit(_: *dvui.Window) !void {
     io = dvui.App.main_init.?.io;
     gpa = dvui.App.main_init.?.gpa;
-    const arena = dvui.App.main_init.?.arena.allocator();
+    arena = dvui.App.main_init.?.arena.allocator();
+
     const args = try dvui.App.main_init.?.minimal.args.toSlice(arena);
     if (args.len == 2 and std.mem.eql(u8, args[1], "--debug")) {
         dvui.debug.open = true;
     }
-
-    commands.openTestImage(io) catch |err| {
+    disk_interface = .init(gpa);
+    disk_interface.openTestImage(io) catch |err| {
         std.debug.print("Error opening test image: {t}\n", .{err});
     };
     // TODO: Make this a proper init;
-    command_state.disk_interface = &commands;
+    command_state.disk_interface = &disk_interface;
     command_state.arena = .init(gpa);
 }
 
@@ -54,7 +56,7 @@ pub fn appInit(_: *dvui.Window) !void {
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
     command_state.cancelCommand();
-    commands.deinit(gpa, io);
+    disk_interface.deinit(io);
 }
 
 // Run each frame to do normal UI
@@ -232,11 +234,18 @@ fn statusBar() ?dvui.App.Result {
             filter_user = 0;
         }
         if (filter_user) |filter| {
-            for (commands.image_directory_list.items) |*dir_entry| {
+            for (disk_interface.image_directory_list.items) |*dir_entry| {
                 if (dir_entry.user() != filter) dir_entry.selected = false;
             }
         }
     }
+    if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
+        command_state.beginCommand(.open);
+    }
+    if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed)) {
+        command_state.beginCommand(.close);
+    }
+
     if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed)) {
         return .close;
     }
@@ -350,11 +359,7 @@ const DirectoryGrid = struct {
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
 
-        // TODO: This is a hack for now
-        const dir_listing: []DirectoryEntry = if (dvui.firstFrame(grid.data().id))
-            commands.directoryListing(gpa) catch @panic("TODO")
-        else
-            commands.image_directory_list.items;
+        const dir_listing = disk_interface.image_directory_list.items;
 
         self.processKbEventsPre();
 
@@ -363,7 +368,7 @@ const DirectoryGrid = struct {
             grid.sort_dir = .ascending;
         }
 
-        var dir_itr = Commands.DirectoryIterator(dir_listing, struct {
+        var dir_itr = DiskInterface.DirectoryIterator(dir_listing, struct {
             pub fn selected(entry: *const DirectoryEntry) bool {
                 if (filter_user) |user| {
                     return entry.user() == user;
@@ -417,7 +422,7 @@ const DirectoryGrid = struct {
         }
     }
 
-    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *Commands.DirIterator, cursor_changed: bool, selection_changed: bool) void {
+    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DiskInterface.DirIterator, cursor_changed: bool, selection_changed: bool) void {
         var row_idx: usize = 0;
         while (dir_itr.next()) |dir_item| : (row_idx += 1) {
             const row_options: dvui.Options =
@@ -470,6 +475,11 @@ const DirectoryGrid = struct {
                 defer cell.deinit();
                 dvui.label(@src(), "{}", .{dir_item.user()}, .{ .gravity_x = 0.5 });
             }
+        }
+        // HMM. TODO: This won't work when we go to multiple grids :(
+        if (command_state.disk_interface.image_directory_changed) {
+            grid.autoSize(.{ .auto = .cols });
+            command_state.disk_interface.image_directory_changed = false;
         }
     }
 
@@ -615,15 +625,73 @@ const widgets = struct {
 const TransferResult = struct {
     filename: []const u8,
     result: enum { ok, err, err_retryable },
-    err: ?Commands.GetFileError = null,
+    err: ?DiskInterface.GetFileError = null,
     message: []const u8 = "", // TODO: Make this into an init.
     recovery: enum { skip, retry } = .skip,
 };
 
 const Operation = union(CommandState.OperationType) {
     none: void,
-    open,
-    close,
+    open: struct {
+        const OpenOperation = @This();
+        image_path: ?[:0]const u8 = null,
+
+        pub fn begin(self: *OpenOperation, state: *CommandState) void {
+            _ = self;
+            std.debug.print("showing open\n", .{});
+            dialogs.show(.open);
+            state.state = .user_input;
+        }
+
+        pub fn process(self: *OpenOperation, state: *CommandState) void {
+            self.processFallible(state) catch |err| {
+                const message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch oom();
+                defer state.arena.allocator().free(message);
+                dvui.dialog(
+                    @src(),
+                    .{},
+                    .{
+                        .title = "Open Image",
+                        .message = message,
+                        .modal = true,
+                    },
+                );
+            };
+            state.state = .completed;
+        }
+
+        fn processFallible(self: *OpenOperation, state: *CommandState) !void {
+            const image_type = try state.disk_interface.detectImageType(io, self.image_path.?);
+            if (image_type) |it| {
+                try state.disk_interface.openExistingImage(io, self.image_path.?, it);
+            } else {
+                return error.UnknownImageType;
+            }
+        }
+
+        pub fn cancel(self: *OpenOperation, state: *CommandState) void {
+            if (self.image_path) |image_path|
+                gpa.free(image_path);
+            dialogs.hide(.open);
+            state.state = .completed;
+        }
+    },
+    close: struct {
+        const CloseOperation = @This();
+
+        pub fn begin(_: *CloseOperation, state: *CommandState) void {
+            state.disk_interface.closeImage(io);
+            state.state = .completed;
+        }
+
+        pub fn process(_: *CloseOperation, _: *CommandState) void {
+            unreachable;
+        }
+
+        pub fn cancel(_: *CloseOperation, state: *CommandState) void {
+            state.state = .completed;
+        }
+    },
     get: struct {
         const GetOperation = @This();
 
@@ -680,6 +748,9 @@ const Operation = union(CommandState.OperationType) {
                     if (self.dir_idx % 3 == 0 and !retry) {
                         self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.PathAlreadyExists, .message = "File already exists" });
                         state.state = .user_input;
+                    } else if (self.dir_idx % 5 == 0 and !retry) {
+                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.DiskQuota, .message = "Disk quota" });
+                        self.dir_idx += 1;
                     } else {
                         self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
                         self.dir_idx += 1;
@@ -710,30 +781,23 @@ const Operation = union(CommandState.OperationType) {
 
     pub fn begin(self: *Operation, state: *CommandState) void {
         switch (self.*) {
-            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            .none, .put, .erase, .info, .format => unreachable,
             inline else => |*op| op.begin(state),
         }
     }
 
     pub fn process(self: *Operation, state: *CommandState) void {
         switch (self.*) {
-            .none, .open, .close, .put, .erase, .info, .format => unreachable,
+            .none, .put, .erase, .info, .format => unreachable,
             inline else => |*op| op.process(state),
         }
     }
 
-    pub fn cancel(self: Operation, state: *CommandState) void {
-        switch (self) {
+    pub fn cancel(self: *Operation, state: *CommandState) void {
+        switch (self.*) {
             .none => {},
-            .open, .close, .put, .erase, .info, .format => unreachable,
-            inline else => |op| op.cancel(state),
-        }
-    }
-
-    pub fn err(self: Operation, state: *CommandState) void {
-        switch (self) {
-            .none, .open, .close, .put, .erase, .info, .format => unreachable,
-            inline else => |op| op.err(state),
+            .put, .erase, .info, .format => unreachable,
+            inline else => |*op| op.cancel(state),
         }
     }
 };
@@ -744,13 +808,16 @@ const CommandState = struct {
     operation: Operation = .none,
     state: OperationState = .completed,
     //    options: CommandOptions,
-    disk_interface: *Commands,
+    disk_interface: *DiskInterface,
     arena: std.heap.ArenaAllocator,
 
+    // TODO: Pass in Operation here instead? That way it can be initialised with whatever it needs?
     pub fn beginCommand(self: *CommandState, op: OperationType) void {
         std.debug.assert(op != .none);
         self.operation = switch (op) {
+            // TODO: Make this more generic.
             .get => |o| @unionInit(Operation, @tagName(o), .init()),
+            inline .close, .open => |o| @unionInit(Operation, @tagName(o), .{}),
             inline else => |o| @unionInit(Operation, @tagName(o), {}),
         };
         self.state = .init;
@@ -789,12 +856,12 @@ var command_state: CommandState = .{
 //var scroll_info: dvui.ScrollInfo = .{};
 
 const dialogs = struct {
-    const Dialogs = enum { transfer };
+    const Dialogs = enum { transfer, open };
     const DialogState = struct {
         open: bool,
-        dialog_fn: *const fn (*CommandState) void,
+        dialog_fn: *const fn (self: *DialogState, *CommandState) void,
 
-        pub fn init(dialog_fn: *const fn (*CommandState) void) DialogState {
+        pub fn init(dialog_fn: *const fn (self: *DialogState, *CommandState) void) DialogState {
             return .{
                 .open = false,
                 .dialog_fn = dialog_fn,
@@ -804,11 +871,12 @@ const dialogs = struct {
 
     var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
         .transfer = .init(transfer),
+        .open = .init(open),
     });
 
     pub fn displayOpen() void {
-        for (all_dialogs.values) |dialog| {
-            if (dialog.open) dialog.dialog_fn(&command_state);
+        for (&all_dialogs.values) |*dialog| {
+            if (dialog.open) dialog.dialog_fn(dialog, &command_state);
         }
     }
 
@@ -822,12 +890,26 @@ const dialogs = struct {
         all_dialogs.getPtr(d).open = false;
     }
 
-    fn transfer(
-        state: *CommandState,
-    ) void {
+    fn open(self: *DialogState, state: *CommandState) void {
+        std.debug.assert(state.operation == .open);
+        if (!self.open) return;
+
+        const operation = &state.operation.open;
+
+        if (state.state == .user_input) {
+            // TODO: Move the gpa into CommandState.
+            operation.image_path = dvui.native_dialogs.Native.open(gpa, .{
+                .filter_description = "Disk image files",
+                .filters = &.{ "*.dsk", "*.img" },
+                .title = "Open disk image",
+            }) catch oom();
+            state.state = .processing;
+        }
+    }
+
+    fn transfer(self: *DialogState, state: *CommandState) void {
         std.debug.assert(state.operation == .get);
-        const dialog_state = all_dialogs.getPtr(.transfer);
-        if (!dialog_state.open) return;
+        if (!self.open) return;
         const title = switch (state.operation) {
             .get => "Copy files from disk image",
             .put => "Copy files to disk image",
@@ -845,7 +927,7 @@ const dialogs = struct {
 
         var dialog_win = dvui.floatingWindow(
             @src(),
-            .{ .modal = true, .open_flag = &dialog_state.open },
+            .{ .modal = true, .open_flag = &self.open },
             .{
                 .min_size_content = .{ .w = 500, .h = 500 },
                 .max_size_content = .{ .w = 500, .h = 500 },
@@ -853,7 +935,7 @@ const dialogs = struct {
         );
         defer dialog_win.deinit();
         const wid_dialog = dialog_win.data().id;
-        dialog_win.dragAreaSet(dvui.windowHeader(title, "", &dialog_state.open));
+        dialog_win.dragAreaSet(dvui.windowHeader(title, "", &self.open));
 
         const label = switch (state.state) {
             .init, .processing, .user_input => "Cancel",
@@ -902,7 +984,6 @@ const dialogs = struct {
         defer dvui.dataSet(null, wid_dialog, "yes_focused", yes_focused);
 
         const focused_id = dvui.lastFocusedIdInFrame();
-        // TODO: Make this the event loop for the focus group.
         for (transfer_results, 0..) |*result, i| {
             var wid_yes: dvui.Id = .zero;
             var wid_yesall: dvui.Id = .zero;
@@ -910,7 +991,7 @@ const dialogs = struct {
             var wid_noall: dvui.Id = .zero;
 
             dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
-            // TODO: fix up this condition
+
             if (state.state == .user_input and result.result == .err and i == transfer_results.len - 1) switch (result.err.?) {
                 error.PathAlreadyExists => {
                     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
@@ -929,15 +1010,15 @@ const dialogs = struct {
                         actions.yes(state, result);
                     }
                     wid_yes = wd.id;
-                    if (!yes_focused) {
-                        dvui.focusWidget(wd.id, null, null);
-                        yes_focused = true;
-                    }
                     if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd })) {
                         actions.yes(state, result);
                         yes_to_all = true;
                     }
                     wid_yesall = wd.id;
+                    if (!yes_focused) {
+                        dvui.focusWidget(wd.id, null, null);
+                        yes_focused = true;
+                    }
                     if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
                         no_to_all)
                     {
@@ -997,7 +1078,7 @@ const dialogs = struct {
                 error.InvalidRecordNumber,
                 error.InvalidTrack,
                 error.InvalidSector,
-                => {}, // just report this error
+                => actions.no(state), // just report these AltairDiskLib errors
 
                 error.NoSpaceLeft,
                 error.PermissionDenied,
@@ -1032,8 +1113,7 @@ const dialogs = struct {
                 error.AntivirusInterference,
                 error.FileLocksUnsupported,
                 error.WriteFailed,
-                => {}, // Also just report this error?
-
+                => actions.no(state),
             };
         }
     }

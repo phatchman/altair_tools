@@ -64,7 +64,7 @@ pub var state: State = .processing;
 pub var current_command: CommandList = .none;
 pub var prev_command: CommandList = .none;
 pub var confirm_all: ConfirmAllState = .none;
-var itr: ?Commands.DirIterator = null;
+var itr: ?DiskInterface.DirIterator = null;
 pub var processed_files: std.ArrayListUnmanaged(FileStatus) = .empty;
 pub var buttons: Buttons = .{};
 pub var file_selector_buffer: ?[]const u8 = null;
@@ -81,9 +81,9 @@ pub fn init(allocator: std.mem.Allocator) void {
     arena = .init(allocator);
 }
 
-pub fn directoryEntryIterator(entries: []DirectoryEntry) *Commands.DirIterator {
+pub fn directoryEntryIterator(entries: []DirectoryEntry) *DiskInterface.DirIterator {
     if (itr == null) {
-        itr = Commands.DirectoryIterator(entries, DirectoryEntry.isSelected);
+        itr = DiskInterface.DirectoryIterator(entries, DirectoryEntry.isSelected);
     }
     return &itr.?;
 }
@@ -141,6 +141,6 @@ pub fn freeResources() void {
 }
 
 const std = @import("std");
-const Commands = @import("commands.zig");
+const DiskInterface = @import("DiskInterface.zig");
 const ad = @import("altair_disk");
-const DirectoryEntry = Commands.DirectoryEntry;
+const DirectoryEntry = DiskInterface.DirectoryEntry;
