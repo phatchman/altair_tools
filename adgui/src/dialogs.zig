@@ -1,9 +1,9 @@
 const Dialogs = enum { transfer, open, new };
 const DialogState = struct {
     open: bool,
-    dialog_fn: *const fn (self: *DialogState, *CommandState) void,
+    dialog_fn: *const fn (self: *DialogState, *OperationState) void,
 
-    pub fn init(dialog_fn: *const fn (self: *DialogState, *CommandState) void) DialogState {
+    pub fn init(dialog_fn: *const fn (self: *DialogState, *OperationState) void) DialogState {
         return .{
             .open = false,
             .dialog_fn = dialog_fn,
@@ -17,7 +17,7 @@ var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
     .new = .init(new),
 });
 
-pub fn displayOpen(state: *CommandState) void {
+pub fn displayOpen(state: *OperationState) void {
     for (&all_dialogs.values) |*dialog| {
         if (dialog.open) dialog.dialog_fn(dialog, state);
     }
@@ -33,7 +33,7 @@ pub fn hide(d: Dialogs) void {
     all_dialogs.getPtr(d).open = false;
 }
 
-fn open(self: *DialogState, state: *CommandState) void {
+fn open(self: *DialogState, state: *OperationState) void {
     std.debug.assert(state.operation == .open);
     if (!self.open) return;
 
@@ -50,7 +50,7 @@ fn open(self: *DialogState, state: *CommandState) void {
     }
 }
 
-fn transfer(self: *DialogState, state: *CommandState) void {
+fn transfer(self: *DialogState, state: *OperationState) void {
     std.debug.assert(state.operation == .get);
     if (!self.open) return;
     const title = switch (state.operation) {
@@ -86,7 +86,7 @@ fn transfer(self: *DialogState, state: *CommandState) void {
     };
     var button_wd: dvui.WidgetData = undefined;
     if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-        state.endCommand();
+        state.endOperation();
         return;
     }
     var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
@@ -121,11 +121,11 @@ fn transfer(self: *DialogState, state: *CommandState) void {
     defer dvui.dataSet(null, wid_dialog, "yes_focused", yes_focused);
 
     const actions = struct {
-        pub fn yes(s: *CommandState, result: *TransferResult) void {
+        pub fn yes(s: *OperationState, result: *TransferResult) void {
             result.recovery = .retry;
             s.state = .processing;
         }
-        pub fn no(s: *CommandState) void {
+        pub fn no(s: *OperationState) void {
             s.state = .processing;
         }
     };
@@ -264,7 +264,7 @@ fn transfer(self: *DialogState, state: *CommandState) void {
     }
 }
 
-pub fn new(self: *DialogState, state: *CommandState) void {
+pub fn new(self: *DialogState, state: *OperationState) void {
     std.debug.assert(state.operation == .new);
     const op = &state.operation.new;
 
@@ -289,7 +289,7 @@ pub fn new(self: *DialogState, state: *CommandState) void {
     };
     var button_wd: dvui.WidgetData = undefined;
     if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-        state.endCommand();
+        state.endOperation();
         return;
     }
     var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
@@ -370,7 +370,7 @@ pub fn new(self: *DialogState, state: *CommandState) void {
             state.state = .processing;
         } else if (no) {
             std.debug.print("no\n", .{});
-            state.endCommand();
+            state.endOperation();
         }
     }
 }
@@ -380,8 +380,9 @@ pub fn oom() noreturn {
 }
 
 const app = @import("app.zig");
-const CommandState = app.CommandState;
-const TransferResult = app.TransferResult;
+const operations = @import("operations.zig");
+const OperationState = operations.OperationState;
+const TransferResult = operations.TransferResult;
 const std = @import("std");
 const dvui = @import("dvui");
 const DiskInterface = @import("DiskInterface.zig");

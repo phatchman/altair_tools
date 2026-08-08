@@ -7,8 +7,11 @@ const DiskInterface = @import("DiskInterface.zig");
 const DirectoryEntry = DiskInterface.DirectoryEntry;
 const GridWidget = dvui.GridWidget;
 const dialogs = @import("dialogs.zig");
+const operations = @import("operations.zig");
+const OperationState = operations.OperationState;
 
 var disk_interface: DiskInterface = undefined;
+var operation_state: OperationState = undefined;
 
 pub const dvui_app: dvui.App = .{
     .config = .{
@@ -48,15 +51,13 @@ pub fn appInit(_: *dvui.Window) !void {
     disk_interface.openTestImage(io) catch |err| {
         std.debug.print("Error opening test image: {t}\n", .{err});
     };
-    // TODO: Make this a proper init;
-    command_state.disk_interface = &disk_interface;
-    command_state.arena = .init(gpa);
+    operation_state = .init(io, gpa, &disk_interface);
 }
 
 // Run as app is shutting down before dvui.Window.deinit()
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
-    command_state.endCommand();
+    operation_state.endOperation();
     disk_interface.deinit(io);
 }
 
@@ -71,8 +72,8 @@ pub fn appFrame() !dvui.App.Result {
         if (statusBar()) |res| return res;
         if (content()) |res| return res;
     }
-    command_state.process();
-    dialogs.displayOpen(&command_state);
+    operation_state.process();
+    dialogs.displayOpen(&operation_state);
 
     return .ok;
 }
@@ -225,7 +226,7 @@ fn statusBar() ?dvui.App.Result {
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
 
     if (statusBarButton(@src(), "GET", .g, 1, static.alt_key_pressed)) {
-        button_handlers.get();
+        operation_state.beginOperation(.{ .get = .init });
     }
     if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
         if (filter_user) |_| {
@@ -241,15 +242,15 @@ fn statusBar() ?dvui.App.Result {
         }
     }
     if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
-        command_state.beginCommand(.{ .open = .init });
+        operation_state.beginOperation(.{ .open = .init });
     }
 
     if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed)) {
-        command_state.beginCommand(.{ .new = .init });
+        operation_state.beginOperation(.{ .new = .init });
     }
 
     if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed)) {
-        command_state.beginCommand(.close);
+        operation_state.beginOperation(.close);
     }
 
     if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed)) {
@@ -491,9 +492,9 @@ const DirectoryGrid = struct {
             }
         }
         // HMM. TODO: This won't work when we go to multiple grids :(
-        if (command_state.disk_interface.image_directory_changed) {
+        if (operation_state.disk_interface.image_directory_changed) {
             grid.autoSize(.{ .auto = .cols });
-            command_state.disk_interface.image_directory_changed = false;
+            operation_state.disk_interface.image_directory_changed = false;
         }
     }
 
@@ -591,12 +592,6 @@ const DirectoryGrid = struct {
     }
 };
 
-const button_handlers = struct {
-    pub fn get() void {
-        command_state.beginCommand(.{ .get = .init });
-    }
-};
-
 const widgets = struct {
     pub const ButtonShortCutInitOptions = struct {
         button: dvui.ButtonWidget.InitOptions,
@@ -604,7 +599,7 @@ const widgets = struct {
     };
 
     /// Create a button that can also be activated with an alt key combination.
-    /// Note: Treats all shortcut keys as global, regardless of what widget currently has focus.
+    /// Note: Treats all shortcut keys as global, regardless of which widget currently has focus.
     pub fn buttonWithShortcut(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: ButtonShortCutInitOptions, opts: dvui.Options) bool {
         var bw: dvui.ButtonWidget = undefined;
         bw.init(src, init_opts.button, opts);
@@ -635,312 +630,6 @@ const widgets = struct {
         return click;
     }
 };
-
-pub const TransferResult = struct {
-    filename: []const u8,
-    result: enum { ok, err, err_retryable },
-    err: ?DiskInterface.GetFileError = null,
-    message: []const u8 = "", // TODO: Make this into an init.
-    recovery: enum { skip, retry } = .skip,
-};
-
-const Operation = union(enum) {
-    none: void,
-    open: struct {
-        const OpenOperation = @This();
-        image_path: ?[:0]const u8,
-
-        pub const init: OpenOperation = .{ .image_path = null };
-
-        pub fn begin(self: *OpenOperation, state: *CommandState) void {
-            _ = self;
-            dialogs.show(.open);
-            state.state = .user_input;
-        }
-
-        pub fn process(self: *OpenOperation, state: *CommandState) void {
-            self.processFallible(state) catch |err| {
-                state.err = .{
-                    .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch oom(),
-                    .err = err,
-                };
-            };
-            state.endCommand();
-        }
-
-        fn processFallible(self: *OpenOperation, state: *CommandState) !void {
-            const image_type = try state.disk_interface.detectImageType(io, self.image_path.?);
-            if (image_type) |it| {
-                try state.disk_interface.openExistingImage(io, self.image_path.?, it);
-            } else {
-                return error.UnknownImageType;
-            }
-        }
-
-        pub fn cancel(_: *OpenOperation, _: *CommandState) void {
-            dialogs.hide(.open);
-        }
-    },
-    close: struct {
-        const CloseOperation = @This();
-
-        pub fn begin(_: *CloseOperation, state: *CommandState) void {
-            state.disk_interface.closeImage(io);
-            state.endCommand();
-        }
-
-        pub fn process(_: *CloseOperation, _: *CommandState) void {
-            unreachable;
-        }
-
-        pub fn cancel(_: *CloseOperation, _: *CommandState) void {}
-    },
-    get: struct {
-        const GetOperation = @This();
-
-        dir_idx: usize,
-        transfer_result: std.ArrayList(TransferResult),
-        dirty: bool,
-
-        pub const init: GetOperation = .{
-            .dir_idx = 0,
-            .transfer_result = .empty,
-            .dirty = false,
-        };
-
-        pub fn begin(self: *GetOperation, state: *CommandState) void {
-            state.state = .processing;
-            const selected_count = count: {
-                var selected_count: usize = 0;
-                for (state.disk_interface.image_directory_list.items) |*dir| {
-                    if (dir.selected) selected_count += 1;
-                }
-                break :count selected_count;
-            };
-            if (selected_count > 0) {
-                self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_directory_list.items.len) catch oom();
-                dialogs.show(.transfer);
-            } else {
-                state.err = .{
-                    .message = "Select at least one image file to get",
-                    .err = error.User,
-                };
-            }
-        }
-
-        pub fn process(self: *GetOperation, state: *CommandState) void {
-            const directories = state.disk_interface.image_directory_list.items;
-
-            // Check if the last transfer was in error and if it needs to be retried.
-            const transfer_results = self.transfer_result.items;
-            const retry = retry: {
-                if (transfer_results.len > 0) {
-                    const result = &transfer_results[transfer_results.len - 1];
-                    if (result.result == .err) {
-                        switch (result.recovery) {
-                            .skip => {
-                                self.dir_idx += 1;
-                                break :retry false;
-                            },
-                            .retry => {
-                                _ = self.transfer_result.pop();
-                                break :retry true;
-                            },
-                        }
-                    }
-                }
-                break :retry false;
-            };
-            while (self.dir_idx != directories.len) : (self.dir_idx += 1) {
-                if (directories[self.dir_idx].selected) {
-                    // TODO: Would pass -force if the recovery mode is retry.
-                    //                    state.disk_interface.getFile(io, &directories[self.dir_idx], ".", .AUTO, false) catch unreachable;
-
-                    if (self.dir_idx % 3 == 0 and !retry) {
-                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.PathAlreadyExists, .message = "File already exists" });
-                        state.state = .user_input;
-                    } else if (self.dir_idx % 5 == 0 and !retry) {
-                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.DiskQuota, .message = "Disk quota" });
-                        self.dir_idx += 1;
-                    } else {
-                        self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
-                        self.dir_idx += 1;
-                    }
-                    self.dirty = true;
-                    return;
-                }
-            }
-            state.state = .completed;
-            return;
-        }
-
-        pub fn cancel(_: GetOperation, _: *CommandState) void {
-            dialogs.hide(.transfer);
-        }
-    },
-    put,
-    erase,
-    info,
-    new: struct {
-        const NewOperation = @This();
-
-        image_path: ?[]const u8 = null,
-        image_type: ?*const DiskInterface.DiskImageType = null,
-
-        pub const init: NewOperation = .{
-            .image_path = null,
-            .image_type = null,
-        };
-
-        pub fn begin(_: *NewOperation, state: *CommandState) void {
-            dialogs.show(.new);
-            state.state = .user_input;
-        }
-
-        pub fn process(self: *NewOperation, state: *CommandState) void {
-            // TODO: Labeling.
-            std.debug.print("new operation: process\n", .{});
-            state.disk_interface.createNewImage(io, self.image_path.?, self.image_type.?, null) catch |err| {
-                state.err = .{
-                    .message = std.fmt.allocPrint(
-                        state.arena.allocator(),
-                        "Error creating new disk image: {t}",
-                        .{err},
-                    ) catch oom(),
-                    .err = err,
-                };
-                return;
-            };
-            state.disk_interface.openExistingImage(io, self.image_path.?, self.image_type.?.type_id) catch |err| {
-                state.err = .{
-                    .message = std.fmt.allocPrint(
-                        state.arena.allocator(),
-                        "Error creating new disk image: {t}",
-                        .{err},
-                    ) catch oom(),
-                    .err = err,
-                };
-            };
-
-            state.state = .completed;
-        }
-
-        pub fn cancel(_: *NewOperation, _: *CommandState) void {
-            dialogs.hide(.new);
-        }
-    },
-
-    pub fn begin(self: *Operation, state: *CommandState) void {
-        switch (self.*) {
-            .none, .put, .erase, .info => unreachable,
-            inline else => |*op| op.begin(state),
-        }
-    }
-
-    pub fn process(self: *Operation, state: *CommandState) void {
-        switch (self.*) {
-            .none, .put, .erase, .info => unreachable,
-            inline else => |*op| op.process(state),
-        }
-    }
-
-    pub fn cancel(self: *Operation, state: *CommandState) void {
-        switch (self.*) {
-            .none => {},
-            .put, .erase, .info => unreachable,
-            inline else => |*op| op.cancel(state),
-        }
-    }
-};
-
-var first: bool = true;
-
-pub const CommandState = struct {
-    //    const OperationType = enum { none, open, close, get, put, erase, info, new };
-    const OperationState = enum { processing, user_input, completed };
-    operation: Operation = .none,
-    state: OperationState = .completed,
-    //    options: CommandOptions,
-    disk_interface: *DiskInterface,
-    arena: std.heap.ArenaAllocator,
-    err: ?struct {
-        message: []const u8,
-        err: anyerror, // TODO: Make this a restricted error set in future.
-    },
-
-    // TODO: Pass in Operation here instead? That way it can be initialised with whatever it needs?
-    pub fn beginCommand(self: *CommandState, operation: Operation) void {
-        std.debug.assert(operation != .none);
-        // self.operation = switch (op) {
-        //     // TODO: Make this more generic.
-        //     .get => |o| @unionInit(Operation, @tagName(o), .init()),
-        //     inline .close, .open, .new => |o| @unionInit(Operation, @tagName(o), .{}),
-        //     inline else => |o| @unionInit(Operation, @tagName(o), {}),
-        // };
-        self.operation = operation;
-        // TODO: This needs to be initted differently
-        self.arena = .init(gpa);
-        switch (self.operation) {
-            .none => unreachable,
-            .put, .erase, .info => {},
-            inline else => |*op| {
-                op.begin(self);
-            },
-        }
-        const state = self.state;
-        std.debug.assert(state == .processing or state == .user_input or state == .completed);
-    }
-
-    // TODO: Need a complete command??
-    pub fn endCommand(self: *CommandState) void {
-        self.operation.cancel(self);
-        self.operation = .none;
-        self.state = .completed;
-        self.err = null;
-        _ = self.arena.reset(.free_all);
-    }
-
-    pub fn process(self: *CommandState) void {
-        //        std.debug.print("op = {}, state = {}\n", .{ self.operation, self.state });
-        if (self.operation != .none) {
-            if (self.err) |err| {
-                dvui.dialog(@src(), .{}, .{
-                    .title = "Error!",
-                    .message = err.message,
-                    .modal = true,
-                    .default = .ok,
-                });
-                self.endCommand();
-            } else {
-                switch (self.state) {
-                    .processing => self.operation.process(self),
-                    .user_input, .completed => {},
-                }
-            }
-        }
-    }
-};
-
-// TODO: Make this undefined and add an init.
-var command_state: CommandState = .{
-    .operation = .none,
-    .disk_interface = undefined,
-    .arena = undefined,
-    .err = null,
-};
-
-//var scroll_info: dvui.ScrollInfo = .{};
-
-// fn errorDialog(fmt: []const u8, args: anytype) void {
-
-//     const err = switch(operation) {
-//         inline else => | op | op.err,
-//     };
-//     dvui.dialog(@src(), .{}, .{
-//         .title = "Error!",
-//         .message =
-//     })
-// }
 
 pub fn oom() noreturn {
     @panic("Out of memory error");
