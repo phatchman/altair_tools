@@ -8,6 +8,38 @@ const allocator = @import("main.zig").allocator;
 pub const all_disk_types = ad.all_disk_types;
 pub const all_disk_type_names = ad.all_disk_type_names;
 
+const DirectoryListing = struct {
+    directory_list: std.ArrayListUnmanaged(DirectoryEntry),
+    changed: bool,
+    arena: std.heap.ArenaAllocator,
+    path_buf: []u8,
+    path: []u8,
+
+    pub fn init(gpa: std.mem.Allocator, initial_path: ?[:0]const u8) DirectoryListing {
+        const arena: std.heap.ArenaAllocator = .init(gpa);
+        const path_buf = gpa.alloc(u8, std.fs.max_path_bytes) catch |err| oom(err);
+        @memset(path_buf, 0);
+
+        return .{
+            .directory_list = .empty,
+            .changed = false,
+            .arena = arena,
+            .path_buf = path_buf,
+            .path = path: {
+                if (initial_path) |path| {
+                    @memcpy(path_buf[0..path.len], path);
+                    break :path path_buf[0..path.len];
+                }
+                break :path path_buf[0..0];
+            },
+        };
+    }
+
+    pub fn deinit(self: *DirectoryListing, gpa: std.mem.Allocator) void {
+        gpa.free(self.path_buf);
+    }
+};
+
 disk_image: ?ad.DiskImage,
 // Only valid when disk_image is not null;
 image_file: ?std.Io.File,
@@ -15,13 +47,8 @@ reader: ?std.Io.File.Reader,
 writer: ?std.Io.File.Writer,
 
 current_dir: ?std.Io.Dir,
-// TODO: Wrap this into this own struct.. with changed and arena and path names.
-image_directory_list: std.ArrayListUnmanaged(DirectoryEntry),
-image_directory_changed: bool,
-local_directory_list: std.ArrayListUnmanaged(DirectoryEntry),
-local_directory_changed: bool,
-image_arena: std.heap.ArenaAllocator,
-local_arena: std.heap.ArenaAllocator,
+image_dir: DirectoryListing,
+local_dir: DirectoryListing,
 
 const DiskInterface = @This();
 pub const CopyMode = enum { AUTO, ASCII, BINARY, RANDOM, BASIC };
@@ -33,22 +60,20 @@ pub fn init(gpa: std.mem.Allocator) DiskInterface {
         .reader = null,
         .writer = null,
         .current_dir = null,
-        .image_directory_list = .empty,
-        .local_directory_list = .empty,
-        .image_directory_changed = false,
-        .local_directory_changed = false,
-        .image_arena = .init(gpa),
-        .local_arena = .init(gpa),
+        .image_dir = .init(gpa, null),
+        .local_dir = .init(gpa, "."),
     };
 }
 
-pub fn deinit(self: *DiskInterface, io: std.Io) void {
-    _ = self.local_arena.reset(.free_all);
+pub fn deinit(self: *DiskInterface, io: std.Io, gpa: std.mem.Allocator) void {
+    _ = self.local_dir.arena.reset(.free_all);
     self.closeImage(io);
     if (self.current_dir) |*current_dir| {
         current_dir.close(io);
         self.current_dir = null;
     }
+    self.local_dir.deinit(gpa);
+    self.image_dir.deinit(gpa);
 }
 
 pub const LocalDirEntry = struct {
@@ -227,8 +252,8 @@ pub fn openTestImage(self: *DiskInterface, io: std.Io) !void {
 }
 
 pub fn closeImage(self: *DiskInterface, io: std.Io) void {
-    self.image_directory_list = .empty;
-    _ = self.image_arena.reset(.free_all);
+    self.image_dir.directory_list = .empty;
+    _ = self.image_dir.arena.reset(.free_all);
     if (self.disk_image) |*existing| {
         existing.deinit();
         self.disk_image = null;
@@ -270,9 +295,9 @@ pub fn loadImageDirectory(self: *DiskInterface) !void {
     if (self.disk_image) |image| {
         for (image.directory.cooked_directories.items) |dir| {
             // TODO: The < 15 user check was here.
-            try self.image_directory_list.append(self.image_arena.allocator(), DirectoryEntry.init(.{ .image = dir }));
+            try self.image_dir.directory_list.append(self.image_dir.arena.allocator(), DirectoryEntry.init(.{ .image = dir }));
         }
-        self.image_directory_changed = true;
+        self.image_dir.changed = true;
         return;
     }
     return error.ImageNotOpen;
@@ -295,8 +320,8 @@ pub fn openLocalDirectory(self: *DiskInterface, io: std.Io, dir_path: []const u8
 }
 
 fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
-    self.local_directory_list = .empty;
-    _ = self.local_arena.reset(.free_all);
+    self.local_dir.directory_list = .empty;
+    _ = self.local_dir.arena.reset(.free_all);
     if (self.current_dir) |dir| {
         var itr = dir.iterate();
         while (try itr.next(io)) |entry| {
@@ -307,10 +332,10 @@ fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
                     };
                     break :size stat.size;
                 };
-                try self.local_directory_list.append(
-                    self.local_arena.allocator(),
+                try self.local_dir.directory_list.append(
+                    self.local_dir.arena.allocator(),
                     DirectoryEntry.init(.{ .local = try LocalDirEntry.init(
-                        self.local_arena.allocator(),
+                        self.local_dir.arena.allocator(),
                         if (self.disk_image) |disk_image| disk_image.image_type.OS else .cpm,
                         entry.name,
                         @truncate(size),
@@ -319,7 +344,7 @@ fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
             }
         }
     }
-    self.local_directory_changed = true;
+    self.local_dir.changed = true;
 }
 
 pub fn xlateFromCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
@@ -410,6 +435,10 @@ pub fn putSystem(self: *DiskInterface, io: std.Io, in_filename: []const u8) !voi
         defer in_file.close(io);
         try image.installOperatingSystem(io, in_file);
     }
+}
+
+pub fn oom(_: error{OutOfMemory}) noreturn {
+    @panic("Out of memory error");
 }
 
 comptime {

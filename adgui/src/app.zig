@@ -8,13 +8,12 @@ const DirectoryEntry = DiskInterface.DirectoryEntry;
 const GridWidget = dvui.GridWidget;
 const dialogs = @import("dialogs.zig");
 const operations = @import("operations.zig");
+const Operation = operations.Operation;
 const OperationState = operations.OperationState;
 
 const UIState = struct {
     disk_interface: DiskInterface,
     operation_state: OperationState,
-    image_file_path: []const u8,
-    local_dir_path: []const u8,
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
@@ -29,8 +28,6 @@ const UIState = struct {
                 break :init disk_interface;
             },
             .operation_state = .init(io, gpa, &self.disk_interface),
-            .image_file_path = "",
-            .local_dir_path = ".",
             .gpa = gpa,
             .arena = arena,
             .io = io,
@@ -81,7 +78,7 @@ pub fn appInit(_: *dvui.Window) !void {
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
     global_ui_state.operation_state.endOperation();
-    global_ui_state.disk_interface.deinit(global_ui_state.io);
+    global_ui_state.disk_interface.deinit(global_ui_state.io, global_ui_state.gpa);
 }
 
 // Run each frame to do normal UI
@@ -141,16 +138,24 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        filenameEntryBox(@src(), ui_state, "Image:");
-        static.image_grid.display(ui_state, disk_interface.image_directory_list.items, disk_interface.local_directory_changed);
-        disk_interface.local_directory_changed = false;
+        switch (filenameEntryBox(@src(), ui_state, "Image:", .image, ui_state.disk_interface.image_dir.path_buf)) {
+            .enter => ui_state.operation_state.beginOperation(.{ .open_image = .init(ui_state.disk_interface.image_dir.path, ui_state.disk_interface.image_dir.path_buf) }),
+            .button => ui_state.operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) }),
+            .none => {},
+        }
+        static.image_grid.display(ui_state, disk_interface.image_dir.directory_list.items, disk_interface.local_dir.changed);
+        disk_interface.local_dir.changed = false;
     }
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        filenameEntryBox(@src(), ui_state, "Local:");
-        static.local_grid.display(ui_state, disk_interface.local_directory_list.items, disk_interface.local_directory_changed);
-        disk_interface.local_directory_changed = false;
+        switch (filenameEntryBox(@src(), ui_state, "Local:", .local, ui_state.disk_interface.local_dir.path_buf)) {
+            .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(ui_state.disk_interface.local_dir.path, ui_state.disk_interface.local_dir.path_buf) }),
+            .button => ui_state.operation_state.beginOperation(.{ .open_local = .init(null, ui_state.disk_interface.local_dir.path_buf) }),
+            .none => {},
+        }
+        static.local_grid.display(ui_state, disk_interface.local_dir.directory_list.items, disk_interface.local_dir.changed);
+        disk_interface.local_dir.changed = false;
     }
 
     return null;
@@ -264,14 +269,14 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
             filter_user = 0;
         }
         if (filter_user) |filter| {
-            for (ui_state.disk_interface.image_directory_list.items) |*dir_entry| {
+            for (ui_state.disk_interface.image_dir.directory_list.items) |*dir_entry| {
                 if (dir_entry.user() != filter) dir_entry.selected = false;
             }
         }
     }
     const operation_state = &ui_state.operation_state;
     if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
-        operation_state.beginOperation(.{ .open = .init });
+        operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) });
     }
 
     if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed)) {
@@ -327,15 +332,26 @@ fn statusBarButton(
     return result;
 }
 
-fn filenameEntryBox(src: std.builtin.SourceLocation, ui_state: *UIState, label: []const u8) void {
+// TODO: This should return a bool which triggers the begin operation above.
+// also pass in path as a param or the whole DirectoryListing?
+const FilenameEntryResult = enum { none, enter, button };
+fn filenameEntryBox(src: std.builtin.SourceLocation, ui_state: *UIState, label: []const u8, style: enum { image, local }, buffer: []u8) FilenameEntryResult {
+    var result: FilenameEntryResult = .none;
     var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
     defer hbox.deinit();
     dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
-    var te = dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
-    defer te.deinit();
-    if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{})) {
-        ui_state.operation_state.beginOperation(.{ .open = .init });
+    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = buffer } }, .{ .expand = .horizontal });
+    switch (style) {
+        .local => ui_state.disk_interface.local_dir.path = @as([:0]u8, @ptrCast(te.textGet())),
+        .image => ui_state.disk_interface.image_dir.path = @as([:0]u8, @ptrCast(te.textGet())),
     }
+    if (te.enter_pressed)
+        result = .enter;
+    te.deinit();
+    if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{})) {
+        result = .button;
+    }
+    return result;
 }
 
 const DirectoryGrid = struct {

@@ -1,4 +1,7 @@
-const Dialogs = enum { transfer, open, new };
+// TODO: In the middle of updating the text box with the file path selector.
+// It's being stored in disk_interface right now. I don't think that is right???
+// but migh be ok?
+const Dialogs = enum { transfer, open_image, open_local, new };
 const DialogState = struct {
     open: bool,
     dialog_fn: *const fn (self: *DialogState, *OperationState) void,
@@ -13,7 +16,8 @@ const DialogState = struct {
 
 var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
     .transfer = .init(transfer),
-    .open = .init(open),
+    .open_image = .init(openImage),
+    .open_local = .init(openLocal),
     .new = .init(new),
 });
 
@@ -33,21 +37,45 @@ pub fn hide(d: Dialogs) void {
     all_dialogs.getPtr(d).open = false;
 }
 
-fn open(self: *DialogState, state: *OperationState) void {
-    std.debug.assert(state.operation == .open);
+fn openImage(self: *DialogState, state: *OperationState) void {
+    std.debug.assert(state.operation == .open_image);
     if (!self.open) return;
 
-    const operation = &state.operation.open;
+    const operation = &state.operation.open_image;
 
-    if (state.state == .user_input) {
-        // TODO: Move the gpa into CommandState.
-        operation.image_path = dvui.native_dialogs.Native.open(state.arena.allocator(), .{
-            .filter_description = "Disk image files",
-            .filters = &.{ "*.dsk", "*.img" },
-            .title = "Open disk image",
-        }) catch oom();
-        state.state = .processing;
-    }
+    const image_path = dvui.native_dialogs.Native.open(state.arena.allocator(), .{
+        .filter_description = "Disk image files",
+        .filters = &.{ "*.dsk", "*.img" },
+        .title = "Open disk image",
+    }) catch |err| oom(err) orelse {
+        state.endOperation();
+        return;
+    };
+    @memset(operation.path_buf, 0);
+    @memcpy(operation.path_buf[0..image_path.len], image_path);
+    operation.image_path = operation.path_buf[0..image_path.len];
+    state.state = .processing;
+}
+
+fn openLocal(self: *DialogState, state: *OperationState) void {
+    std.debug.assert(state.operation == .open_local);
+    std.debug.assert(state.state == .user_input);
+    if (!self.open) return;
+
+    const operation = &state.operation.open_local;
+
+    const folder = dvui.native_dialogs.Native.folderSelect(state.arena.allocator(), .{
+        .title = "Open local directory",
+        .path = operation.initial_path,
+    }) catch |err| oom(err) orelse {
+        state.endOperation();
+        return;
+    };
+
+    @memset(operation.path_buffer, 0);
+    @memcpy(operation.path_buffer[0..folder.len], folder);
+    operation.path = operation.path_buffer[0..folder.len];
+    state.state = .processing;
 }
 
 fn transfer(self: *DialogState, state: *OperationState) void {
@@ -375,7 +403,7 @@ pub fn new(self: *DialogState, state: *OperationState) void {
     }
 }
 
-pub fn oom() noreturn {
+pub fn oom(_: error{OutOfMemory}) noreturn {
     @panic("Out of memory error");
 }
 

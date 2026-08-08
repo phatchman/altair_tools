@@ -64,9 +64,10 @@ pub const OperationState = struct {
     }
 };
 
-const Operation = union(enum) {
+pub const Operation = union(enum) {
     none: void,
-    open: OpenOperation,
+    open_image: OpenImageOperation,
+    open_local: OpenLocalOperation,
     close: CloseOperation,
     get: GetOperation,
     put,
@@ -97,28 +98,37 @@ const Operation = union(enum) {
     }
 };
 
-const OpenOperation = struct {
-    image_path: ?[:0]const u8,
+const OpenImageOperation = struct {
+    image_path: ?[]const u8,
+    path_buf: []u8,
 
-    pub const init: OpenOperation = .{ .image_path = null };
-
-    pub fn begin(self: *OpenOperation, state: *OperationState) void {
-        _ = self;
-        dialogs.show(.open);
-        state.state = .user_input;
+    pub fn init(path: ?[]u8, path_buf: []u8) OpenImageOperation {
+        return .{
+            .image_path = path,
+            .path_buf = path_buf,
+        };
     }
 
-    pub fn process(self: *OpenOperation, state: *OperationState) void {
+    pub fn begin(self: *OpenImageOperation, state: *OperationState) void {
+        if (self.image_path) |_| {
+            state.state = .processing;
+        } else {
+            dialogs.show(.open_image);
+            state.state = .user_input;
+        }
+    }
+
+    pub fn process(self: *OpenImageOperation, state: *OperationState) void {
         self.processFallible(state) catch |err| {
             state.err = .{
-                .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch oom(),
+                .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch |e| oom(e),
                 .err = err,
             };
         };
         state.endOperation();
     }
 
-    fn processFallible(self: *OpenOperation, state: *OperationState) !void {
+    fn processFallible(self: *OpenImageOperation, state: *OperationState) !void {
         const image_type = try state.disk_interface.detectImageType(state.io, self.image_path.?);
         if (image_type) |it| {
             try state.disk_interface.openExistingImage(state.io, self.image_path.?, it);
@@ -127,8 +137,48 @@ const OpenOperation = struct {
         }
     }
 
-    pub fn end(_: *OpenOperation, _: *OperationState) void {
-        dialogs.hide(.open);
+    pub fn end(_: *OpenImageOperation, _: *OperationState) void {
+        dialogs.hide(.open_image);
+    }
+};
+
+// TODO: Fix issue with initial path.
+const OpenLocalOperation = struct {
+    initial_path: ?[]const u8,
+    path_buffer: []u8,
+    path: []const u8,
+
+    pub fn init(init_path: ?[]const u8, path_buffer: []u8) OpenLocalOperation {
+        return .{
+            .initial_path = init_path,
+            .path_buffer = path_buffer,
+            .path = init_path orelse "",
+        };
+    }
+
+    pub fn begin(self: *OpenLocalOperation, state: *OperationState) void {
+        if (self.initial_path) |_| {
+            state.state = .processing;
+        } else {
+            dialogs.show(.open_local);
+            state.state = .user_input;
+        }
+    }
+
+    pub fn process(_: *OpenLocalOperation, state: *OperationState) void {
+        std.debug.assert(state.operation == .open_local);
+        const operation = &state.operation.open_local;
+        state.disk_interface.openLocalDirectory(state.io, operation.path) catch |err| {
+            state.err = .{
+                .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening directory {s}: {t}", .{ operation.path, err }) catch |e| oom(e),
+                .err = err,
+            };
+        };
+        state.endOperation();
+    }
+
+    pub fn end(_: *OpenLocalOperation, _: *OperationState) void {
+        dialogs.hide(.open_local);
     }
 };
 
@@ -168,7 +218,7 @@ pub const NewOperation = struct {
                     state.arena.allocator(),
                     "Error creating new disk image: {t}",
                     .{err},
-                ) catch oom(),
+                ) catch |e| oom(e),
                 .err = err,
             };
             return;
@@ -179,7 +229,7 @@ pub const NewOperation = struct {
                     state.arena.allocator(),
                     "Error creating new disk image: {t}",
                     .{err},
-                ) catch oom(),
+                ) catch |e| oom(e),
                 .err = err,
             };
         };
@@ -216,13 +266,13 @@ pub const GetOperation = struct {
         state.state = .processing;
         const selected_count = count: {
             var selected_count: usize = 0;
-            for (state.disk_interface.image_directory_list.items) |*dir| {
+            for (state.disk_interface.image_dir.directory_list.items) |*dir| {
                 if (dir.selected) selected_count += 1;
             }
             break :count selected_count;
         };
         if (selected_count > 0) {
-            self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_directory_list.items.len) catch oom();
+            self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_dir.directory_list.items.len) catch |err| oom(err);
             dialogs.show(.transfer);
         } else {
             state.err = .{
@@ -233,7 +283,7 @@ pub const GetOperation = struct {
     }
 
     pub fn process(self: *GetOperation, state: *OperationState) void {
-        const directories = state.disk_interface.image_directory_list.items;
+        const directories = state.disk_interface.image_dir.directory_list.items;
 
         // Check if the last transfer was in error and if it needs to be retried.
         const transfer_results = self.transfer_result.items;
@@ -283,7 +333,7 @@ pub const GetOperation = struct {
     }
 };
 
-pub fn oom() noreturn {
+pub fn oom(_: error{OutOfMemory}) noreturn {
     @panic("Out of memory error");
 }
 
