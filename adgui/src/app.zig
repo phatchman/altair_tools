@@ -55,7 +55,7 @@ pub fn appInit(_: *dvui.Window) !void {
 // Run as app is shutting down before dvui.Window.deinit()
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
-    command_state.cancelCommand();
+    command_state.completeCommand();
     disk_interface.deinit(io);
 }
 
@@ -389,7 +389,10 @@ const DirectoryGrid = struct {
         const current_row = grid.cursor.row;
         const selection_changed = rowHighlight(grid);
         const cursor_changed = current_row != grid.cursor.row or selection_changed;
-        self.displayBody(grid, &dir_itr, cursor_changed, selection_changed);
+        if (disk_interface.disk_image != null)
+            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed)
+        else
+            self.displayBodyClosed(grid);
 
         if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
             self.processKbEventsPost(grid, wid, row_count);
@@ -425,6 +428,11 @@ const DirectoryGrid = struct {
                 _ = dvui.separator(@src(), .{ .expand = .vertical, .margin = .{ .y = 5, .h = 5 } });
             }
         }
+    }
+
+    fn displayBodyClosed(_: *DirectoryGrid, grid: *dvui.GridWidget) void {
+        grid.ensureBodyScroll();
+        dvui.labelNoFmt(@src(), "Open a disk image.", .{}, .{});
     }
 
     fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DiskInterface.DirIterator, cursor_changed: bool, selection_changed: bool) void {
@@ -649,19 +657,12 @@ const Operation = union(CommandState.OperationType) {
 
         pub fn process(self: *OpenOperation, state: *CommandState) void {
             self.processFallible(state) catch |err| {
-                const message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch oom();
-                defer state.arena.allocator().free(message);
-                dvui.dialog(
-                    @src(),
-                    .{},
-                    .{
-                        .title = "Open Image",
-                        .message = message,
-                        .modal = true,
-                    },
-                );
+                state.err = .{
+                    .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch oom(),
+                    .err = err,
+                };
             };
-            state.state = .completed;
+            state.completeCommand();
         }
 
         fn processFallible(self: *OpenOperation, state: *CommandState) !void {
@@ -673,11 +674,8 @@ const Operation = union(CommandState.OperationType) {
             }
         }
 
-        pub fn cancel(self: *OpenOperation, state: *CommandState) void {
-            if (self.image_path) |image_path|
-                gpa.free(image_path);
+        pub fn cancel(_: *OpenOperation, _: *CommandState) void {
             dialogs.hide(.open);
-            state.state = .completed;
         }
     },
     close: struct {
@@ -685,16 +683,14 @@ const Operation = union(CommandState.OperationType) {
 
         pub fn begin(_: *CloseOperation, state: *CommandState) void {
             state.disk_interface.closeImage(io);
-            state.state = .completed;
+            state.completeCommand();
         }
 
         pub fn process(_: *CloseOperation, _: *CommandState) void {
             unreachable;
         }
 
-        pub fn cancel(_: *CloseOperation, state: *CommandState) void {
-            state.state = .completed;
-        }
+        pub fn cancel(_: *CloseOperation, _: *CommandState) void {}
     },
     get: struct {
         const GetOperation = @This();
@@ -773,14 +769,12 @@ const Operation = union(CommandState.OperationType) {
                     return;
                 }
             }
-            state.state = .completed;
+            state.completeCommand();
             return;
         }
 
-        pub fn cancel(self: GetOperation, state: *CommandState) void {
-            _ = self;
+        pub fn cancel(_: GetOperation, _: *CommandState) void {
             dialogs.hide(.transfer);
-            state.state = .completed;
         }
     },
     put,
@@ -822,12 +816,11 @@ const Operation = union(CommandState.OperationType) {
                 };
             };
 
-            state.state = .completed;
+            state.completeCommand();
         }
 
-        pub fn cancel(_: *NewOperation, state: *CommandState) void {
+        pub fn cancel(_: *NewOperation, _: *CommandState) void {
             dialogs.hide(.new);
-            state.state = .completed;
         }
     },
 
@@ -883,7 +876,7 @@ const CommandState = struct {
     }
 
     // TODO: Need a complete command??
-    pub fn cancelCommand(self: *CommandState) void {
+    pub fn completeCommand(self: *CommandState) void {
         self.operation.cancel(self);
         // TODO: Best place to update state?
         self.operation = .none;
@@ -905,7 +898,7 @@ const CommandState = struct {
                             std.debug.print("After!!\n", .{});
                             // TODO: This uses the global var.
                             command_state.err = null;
-                            command_state.cancelCommand();
+                            command_state.completeCommand();
                         }
                     }.after,
                 });
@@ -975,7 +968,7 @@ const dialogs = struct {
 
         if (state.state == .user_input) {
             // TODO: Move the gpa into CommandState.
-            operation.image_path = dvui.native_dialogs.Native.open(gpa, .{
+            operation.image_path = dvui.native_dialogs.Native.open(state.arena.allocator(), .{
                 .filter_description = "Disk image files",
                 .filters = &.{ "*.dsk", "*.img" },
                 .title = "Open disk image",
@@ -1020,7 +1013,7 @@ const dialogs = struct {
         };
         var button_wd: dvui.WidgetData = undefined;
         if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-            state.cancelCommand();
+            state.completeCommand();
             return;
         }
         var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
@@ -1213,7 +1206,7 @@ const dialogs = struct {
         };
         var button_wd: dvui.WidgetData = undefined;
         if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-            state.cancelCommand();
+            state.completeCommand();
             return;
         }
         var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
@@ -1294,7 +1287,7 @@ const dialogs = struct {
                 state.state = .processing;
             } else if (no) {
                 std.debug.print("no\n", .{});
-                state.cancelCommand();
+                state.completeCommand();
             }
         }
     }
