@@ -1,10 +1,12 @@
 const std = @import("std");
 const ad = @import("altair_disk");
 const host_os = ad.host_os;
-const DiskImage = ad.DiskImage;
-const DiskImageType = ad.DiskImageType;
-const DiskImageTypes = ad.DiskImageTypes;
+pub const DiskImage = ad.DiskImage;
+pub const DiskImageType = ad.DiskImageType;
+pub const DiskImageTypes = ad.DiskImageTypes;
 const allocator = @import("main.zig").allocator;
+pub const all_disk_types = ad.all_disk_types;
+pub const all_disk_type_names = ad.all_disk_type_names;
 
 disk_image: ?ad.DiskImage,
 // Only valid when disk_image is not null;
@@ -13,6 +15,7 @@ reader: ?std.Io.File.Reader,
 writer: ?std.Io.File.Writer,
 
 current_dir: ?std.Io.Dir,
+// TODO: Wrap this into this own struct.. with changed and arena and path names.
 image_directory_list: std.ArrayListUnmanaged(DirectoryEntry),
 image_directory_changed: bool,
 local_directory_list: std.ArrayListUnmanaged(DirectoryEntry),
@@ -195,6 +198,7 @@ pub fn detectImageType(_: *DiskInterface, io: std.Io, filename: []const u8) !?Di
     }
 }
 
+// TODO: Some APIs need the image type. hile others use the TYpeId... Standardize on one of the other.
 pub fn openExistingImage(self: *DiskInterface, io: std.Io, filename: []const u8, img_type: DiskImageTypes) !void {
     var cwd = std.Io.Dir.cwd();
 

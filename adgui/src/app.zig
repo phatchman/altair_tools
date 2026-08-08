@@ -242,6 +242,11 @@ fn statusBar() ?dvui.App.Result {
     if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
         command_state.beginCommand(.open);
     }
+
+    if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed)) {
+        command_state.beginCommand(.new);
+    }
+
     if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed)) {
         command_state.beginCommand(.close);
     }
@@ -602,7 +607,7 @@ const widgets = struct {
                 .key => |ke| {
                     if (ke.action == .down and
                         ke.code == init_opts.shortcut and
-                        (ke.mod == .none or ke.mod == .lalt or ke.mod == .ralt))
+                        (ke.mod == .lalt or ke.mod == .ralt))
                     {
                         e.handle(@src(), bw.data());
                         bw.click = true;
@@ -638,7 +643,6 @@ const Operation = union(CommandState.OperationType) {
 
         pub fn begin(self: *OpenOperation, state: *CommandState) void {
             _ = self;
-            std.debug.print("showing open\n", .{});
             dialogs.show(.open);
             state.state = .user_input;
         }
@@ -708,12 +712,22 @@ const Operation = union(CommandState.OperationType) {
         }
 
         pub fn begin(self: *GetOperation, state: *CommandState) void {
-            if (state.disk_interface.image_directory_list.items.len > 0) {
+            state.state = .processing;
+            const selected_count = count: {
+                var selected_count: usize = 0;
+                for (state.disk_interface.image_directory_list.items) |*dir| {
+                    if (dir.selected) selected_count += 1;
+                }
+                break :count selected_count;
+            };
+            if (selected_count > 0) {
                 self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_directory_list.items.len) catch oom();
                 dialogs.show(.transfer);
-                state.state = .processing;
             } else {
-                state.state = .completed;
+                state.err = .{
+                    .message = "Select at least one image file to get",
+                    .err = error.User,
+                };
             }
         }
 
@@ -768,27 +782,65 @@ const Operation = union(CommandState.OperationType) {
             dialogs.hide(.transfer);
             state.state = .completed;
         }
-
-        pub fn err(self: GetOperation, state: *CommandState) void {
-            _ = self;
-            _ = state;
-        }
     },
     put,
     erase,
     info,
-    format,
+    new: struct {
+        const NewOperation = @This();
+
+        image_path: ?[]const u8 = null,
+        image_type: ?*const DiskInterface.DiskImageType = null,
+
+        pub fn begin(_: *NewOperation, state: *CommandState) void {
+            dialogs.show(.new);
+            state.state = .user_input;
+        }
+
+        pub fn process(self: *NewOperation, state: *CommandState) void {
+            // TODO: Labeling.
+            std.debug.print("new operation: process\n", .{});
+            state.disk_interface.createNewImage(io, self.image_path.?, self.image_type.?, null) catch |err| {
+                state.err = .{
+                    .message = std.fmt.allocPrint(
+                        state.arena.allocator(),
+                        "Error creating new disk image: {t}",
+                        .{err},
+                    ) catch oom(),
+                    .err = err,
+                };
+                return;
+            };
+            state.disk_interface.openExistingImage(io, self.image_path.?, self.image_type.?.type_id) catch |err| {
+                state.err = .{
+                    .message = std.fmt.allocPrint(
+                        state.arena.allocator(),
+                        "Error creating new disk image: {t}",
+                        .{err},
+                    ) catch oom(),
+                    .err = err,
+                };
+            };
+
+            state.state = .completed;
+        }
+
+        pub fn cancel(_: *NewOperation, state: *CommandState) void {
+            dialogs.hide(.new);
+            state.state = .completed;
+        }
+    },
 
     pub fn begin(self: *Operation, state: *CommandState) void {
         switch (self.*) {
-            .none, .put, .erase, .info, .format => unreachable,
+            .none, .put, .erase, .info => unreachable,
             inline else => |*op| op.begin(state),
         }
     }
 
     pub fn process(self: *Operation, state: *CommandState) void {
         switch (self.*) {
-            .none, .put, .erase, .info, .format => unreachable,
+            .none, .put, .erase, .info => unreachable,
             inline else => |*op| op.process(state),
         }
     }
@@ -796,20 +848,24 @@ const Operation = union(CommandState.OperationType) {
     pub fn cancel(self: *Operation, state: *CommandState) void {
         switch (self.*) {
             .none => {},
-            .put, .erase, .info, .format => unreachable,
+            .put, .erase, .info => unreachable,
             inline else => |*op| op.cancel(state),
         }
     }
 };
 
 const CommandState = struct {
-    const OperationType = enum { none, open, close, get, put, erase, info, format };
+    const OperationType = enum { none, open, close, get, put, erase, info, new };
     const OperationState = enum { init, processing, user_input, completed };
     operation: Operation = .none,
     state: OperationState = .completed,
     //    options: CommandOptions,
     disk_interface: *DiskInterface,
     arena: std.heap.ArenaAllocator,
+    err: ?struct {
+        message: []const u8,
+        err: anyerror, // TODO: Make this a restricted error set in future.
+    },
 
     // TODO: Pass in Operation here instead? That way it can be initialised with whatever it needs?
     pub fn beginCommand(self: *CommandState, op: OperationType) void {
@@ -817,7 +873,7 @@ const CommandState = struct {
         self.operation = switch (op) {
             // TODO: Make this more generic.
             .get => |o| @unionInit(Operation, @tagName(o), .init()),
-            inline .close, .open => |o| @unionInit(Operation, @tagName(o), .{}),
+            inline .close, .open, .new => |o| @unionInit(Operation, @tagName(o), .{}),
             inline else => |o| @unionInit(Operation, @tagName(o), {}),
         };
         self.state = .init;
@@ -832,31 +888,51 @@ const CommandState = struct {
         // TODO: Best place to update state?
         self.operation = .none;
         self.state = .completed;
+        self.err = null;
         _ = self.arena.reset(.free_all);
     }
 
     pub fn process(self: *CommandState) void {
         if (self.operation != .none) {
-            switch (self.state) {
-                .init => self.operation.begin(self),
-                .processing => self.operation.process(self),
-                .user_input => {},
-                .completed => {},
+            if (self.err) |err| {
+                dvui.dialog(@src(), .{}, .{
+                    .title = "Error!",
+                    .message = err.message,
+                    .modal = true,
+                    .default = .ok,
+                    .callafterFn = struct {
+                        fn after(_: dvui.Id, _: dvui.enums.DialogResponse) !void {
+                            std.debug.print("After!!\n", .{});
+                            // TODO: This uses the global var.
+                            command_state.err = null;
+                            command_state.cancelCommand();
+                        }
+                    }.after,
+                });
+            } else {
+                switch (self.state) {
+                    .init => self.operation.begin(self),
+                    .processing => self.operation.process(self),
+                    .user_input => {},
+                    .completed => {},
+                }
             }
         }
     }
 };
 
+// TODO: Make this undefined and add an init.
 var command_state: CommandState = .{
     .operation = .none,
     .disk_interface = undefined,
     .arena = undefined,
+    .err = null,
 };
 
 //var scroll_info: dvui.ScrollInfo = .{};
 
 const dialogs = struct {
-    const Dialogs = enum { transfer, open };
+    const Dialogs = enum { transfer, open, new };
     const DialogState = struct {
         open: bool,
         dialog_fn: *const fn (self: *DialogState, *CommandState) void,
@@ -872,6 +948,7 @@ const dialogs = struct {
     var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
         .transfer = .init(transfer),
         .open = .init(open),
+        .new = .init(new),
     });
 
     pub fn displayOpen() void {
@@ -960,20 +1037,14 @@ const dialogs = struct {
             .min_size_content = .{ .w = 500, .h = 500 },
             .max_size_content = .{ .w = 500, .h = 500 },
         });
-        defer scroll.deinit();
-        var needs_scroll: bool = false;
-        defer if (dirty.* or needs_scroll) {
-            std.debug.print("dirty {}:{}\n", .{ dirty.*, needs_scroll });
-            dvui.refresh(null, @src(), null);
-            // TODO: This is a bit of a hack. Need to make a small repro for DV to look at.
-            // Issue is that we scroll to end, but buttons don't show because they are first frame
-            // and scroll area doesn't know how big they are yet. But then we need to remember state to
-            // scroll to end a second time.
-            if (!needs_scroll) {
+        defer {
+            // Scroll to bottom must be done after deinit() so it applies next frame.
+            scroll.deinit();
+            if (dirty.*) {
                 scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
                 dirty.* = false;
             }
-        };
+        }
 
         var yes_to_all = dvui.dataGetDefault(null, wid_dialog, "yes_to_all", bool, false);
         defer dvui.dataSet(null, wid_dialog, "yes_to_all", yes_to_all);
@@ -996,7 +1067,6 @@ const dialogs = struct {
                 error.PathAlreadyExists => {
                     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
                     defer hbox.deinit();
-                    needs_scroll = dvui.firstFrame(hbox.data().id);
 
                     var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
                     defer fg.deinit();
@@ -1006,19 +1076,18 @@ const dialogs = struct {
                     if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
                         yes_to_all)
                     {
-                        std.debug.print("yes\n", .{});
                         actions.yes(state, result);
                     }
                     wid_yes = wd.id;
+                    if (!yes_focused) {
+                        dvui.focusWidget(wid_yes, null, null);
+                        yes_focused = true;
+                    }
                     if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd })) {
                         actions.yes(state, result);
                         yes_to_all = true;
                     }
                     wid_yesall = wd.id;
-                    if (!yes_focused) {
-                        dvui.focusWidget(wd.id, null, null);
-                        yes_focused = true;
-                    }
                     if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
                         no_to_all)
                     {
@@ -1072,6 +1141,7 @@ const dialogs = struct {
                     }
                 }, // Prompt for overwrite
 
+                // TODO: Turn all of these into nicer errors
                 error.UnsupportedTextMode,
                 error.InvalidFormat,
                 error.InvalidToken,
@@ -1118,6 +1188,117 @@ const dialogs = struct {
         }
     }
 
+    pub fn new(self: *DialogState, state: *CommandState) void {
+        std.debug.assert(state.operation == .new);
+        const op = &state.operation.new;
+
+        // TODO: START OF COMMON DIALOG STUFF
+        if (!self.open) return;
+
+        var dialog_win = dvui.floatingWindow(
+            @src(),
+            .{ .modal = true, .open_flag = &self.open },
+            .{
+                .min_size_content = .{ .w = 500, .h = 500 },
+                .max_size_content = .{ .w = 500, .h = 500 },
+            },
+        );
+        defer dialog_win.deinit();
+        const wid_dialog = dialog_win.data().id;
+        dialog_win.dragAreaSet(dvui.windowHeader("Create new disk image", "", &self.open));
+
+        const label = switch (state.state) {
+            .init, .processing, .user_input => "Cancel",
+            .completed => "Close",
+        };
+        var button_wd: dvui.WidgetData = undefined;
+        if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
+            state.cancelCommand();
+            return;
+        }
+        var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
+        defer dvui.dataSet(null, wid_dialog, "close_focused", close_focused);
+        if (state.state == .completed and !close_focused) {
+            close_focused = true;
+            dvui.focusWidget(button_wd.id, null, null);
+            dvui.refresh(null, @src(), null);
+        }
+        // TODO: END OF COMMON DIALOG STUFF
+        var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
+        defer vbox.deinit();
+        {
+            var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+            defer hbox.deinit();
+            var fmt_choice = dvui.dataGetDefault(null, wid_dialog, "fmt_choice", usize, 0);
+            defer dvui.dataSet(null, wid_dialog, "fmt_choice", fmt_choice);
+
+            dvui.labelNoFmt(@src(), "Image type:", .{}, .{});
+            if (dvui.dropdown(@src(), &DiskInterface.all_disk_type_names, .{ .choice = &fmt_choice }, .{}, .{})) {
+                op.image_type = &DiskInterface.all_disk_types.values[fmt_choice];
+            }
+            // TODO: Put the proper path in there.
+            if (op.image_path == null)
+                op.image_path = "c:\\temp\\new.dsk";
+        }
+        {
+            var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+            defer hbox.deinit();
+            dvui.labelNoFmt(@src(), "Create Image?", .{}, .{});
+            const last_focus = dvui.lastFocusedIdInFrame();
+            var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
+            defer fg.deinit();
+            var wd: dvui.WidgetData = undefined;
+            var yes = dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd });
+            var no = dvui.button(@src(), "[n]o", .{}, .{});
+            if (dvui.firstFrame(hbox.data().id)) {
+                dvui.focusWidget(wd.id, null, null);
+                op.image_type = &DiskInterface.all_disk_types.values[0];
+            }
+
+            for (dvui.events()) |*e| {
+                switch (e.evt) {
+                    .key => |ke| {
+                        if (dvui.eventMatch(e, .{
+                            .id = fg.data().id,
+                            .r = fg.data().borderRectScale().r,
+                            .focus_id = dvui.lastFocusedIdInFrameSince(last_focus),
+                            .debug = true,
+                        })) {
+                            switch (ke.code) {
+                                .y => {
+                                    if (ke.action == .down and ke.mod == .none) {
+                                        e.handle(@src(), fg.data());
+                                        yes = true;
+                                    }
+                                },
+                                .n => {
+                                    std.debug.print("N KEY: {}\n", .{ke});
+                                    if (ke.action == .down and ke.mod == .none) {
+                                        e.handle(@src(), fg.data());
+                                        std.debug.print("no is true\n", .{});
+                                        no = true;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            std.debug.print("{}:{}\n", .{ yes, no });
+            if (yes) {
+                std.debug.print("yes\n", .{});
+                self.open = false;
+                state.state = .processing;
+            } else if (no) {
+                std.debug.print("no\n", .{});
+                state.cancelCommand();
+            }
+        }
+    }
+
     const actions = struct {
         pub fn yes(state: *CommandState, result: *TransferResult) void {
             result.recovery = .retry;
@@ -1128,6 +1309,17 @@ const dialogs = struct {
         }
     };
 };
+
+// fn errorDialog(fmt: []const u8, args: anytype) void {
+
+//     const err = switch(operation) {
+//         inline else => | op | op.err,
+//     };
+//     dvui.dialog(@src(), .{}, .{
+//         .title = "Error!",
+//         .message =
+//     })
+// }
 
 pub fn oom() noreturn {
     @panic("Out of memory error");
