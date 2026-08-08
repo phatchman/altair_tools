@@ -270,7 +270,7 @@ pub fn loadImageDirectory(self: *DiskInterface) !void {
     if (self.disk_image) |image| {
         for (image.directory.cooked_directories.items) |dir| {
             // TODO: The < 15 user check was here.
-            try self.image_directory_list.append(self.local_arena.allocator(), DirectoryEntry.init(.{ .image = dir }));
+            try self.image_directory_list.append(self.image_arena.allocator(), DirectoryEntry.init(.{ .image = dir }));
         }
         self.image_directory_changed = true;
         return;
@@ -291,9 +291,10 @@ pub fn openLocalDirectory(self: *DiskInterface, io: std.Io, dir_path: []const u8
         self.current_dir = null;
     }
     self.current_dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
+    try self.loadLocalDirectory(io);
 }
 
-fn loadLocalDirectory(self: *DiskInterface, io: std.Io) void {
+fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
     self.local_directory_list = .empty;
     _ = self.local_arena.reset(.free_all);
     if (self.current_dir) |dir| {

@@ -51,6 +51,9 @@ pub fn appInit(_: *dvui.Window) !void {
     disk_interface.openTestImage(io) catch |err| {
         std.debug.print("Error opening test image: {t}\n", .{err});
     };
+    disk_interface.openLocalDirectory(io, ".") catch |err| {
+        std.debug.print("Error opening local directory: {t}\n", .{err});
+    };
     operation_state = .init(io, gpa, &disk_interface);
 }
 
@@ -110,6 +113,7 @@ pub fn menu() ?dvui.App.Result {
 pub fn content() ?dvui.App.Result {
     const static = struct {
         var image_grid: DirectoryGrid = .init();
+        var local_grid: DirectoryGrid = .init();
     };
     var hbox = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .both });
     defer hbox.deinit();
@@ -117,12 +121,15 @@ pub fn content() ?dvui.App.Result {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         filenameEntryBox(@src(), "Image:");
-        static.image_grid.display();
+        static.image_grid.display(disk_interface.image_directory_list.items, disk_interface.local_directory_changed);
+        disk_interface.local_directory_changed = false;
     }
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         filenameEntryBox(@src(), "Local:");
+        static.local_grid.display(disk_interface.local_directory_list.items, disk_interface.local_directory_changed);
+        disk_interface.local_directory_changed = false;
     }
 
     return null;
@@ -361,12 +368,10 @@ const DirectoryGrid = struct {
         };
     }
 
-    fn display(self: *DirectoryGrid) void {
+    fn display(self: *DirectoryGrid, dir_listing: []DirectoryEntry, auto_size: bool) void {
         const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
-
-        const dir_listing = disk_interface.image_directory_list.items;
 
         self.processKbEventsPre();
 
@@ -392,7 +397,7 @@ const DirectoryGrid = struct {
         const selection_changed = rowHighlight(grid);
         const cursor_changed = current_row != grid.cursor.row or selection_changed;
         if (disk_interface.disk_image != null)
-            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed)
+            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, auto_size)
         else
             self.displayBodyClosed(grid);
 
@@ -437,7 +442,7 @@ const DirectoryGrid = struct {
         dvui.labelNoFmt(@src(), "Open a disk image.", .{}, .{});
     }
 
-    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DiskInterface.DirIterator, cursor_changed: bool, selection_changed: bool) void {
+    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DiskInterface.DirIterator, cursor_changed: bool, selection_changed: bool, auto_size: bool) void {
         var row_idx: usize = 0;
         while (dir_itr.next()) |dir_item| : (row_idx += 1) {
             const row_options: dvui.Options =
@@ -491,10 +496,8 @@ const DirectoryGrid = struct {
                 dvui.label(@src(), "{}", .{dir_item.user()}, .{ .gravity_x = 0.5 });
             }
         }
-        // HMM. TODO: This won't work when we go to multiple grids :(
-        if (operation_state.disk_interface.image_directory_changed) {
+        if (auto_size) {
             grid.autoSize(.{ .auto = .cols });
-            operation_state.disk_interface.image_directory_changed = false;
         }
     }
 
