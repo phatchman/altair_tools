@@ -10,8 +10,34 @@ const dialogs = @import("dialogs.zig");
 const operations = @import("operations.zig");
 const OperationState = operations.OperationState;
 
-var disk_interface: DiskInterface = undefined;
-var operation_state: OperationState = undefined;
+const UIState = struct {
+    disk_interface: DiskInterface,
+    operation_state: OperationState,
+    image_file_path: []const u8,
+    local_dir_path: []const u8,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    io: std.Io,
+
+    pub fn init(self: *UIState, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) void {
+        self.* = .{
+            .disk_interface = init: {
+                var disk_interface: DiskInterface = .init(gpa);
+                disk_interface.openTestImage(io) catch |err| {
+                    std.debug.print("Error opening test image: {t}\n", .{err});
+                };
+                break :init disk_interface;
+            },
+            .operation_state = .init(io, gpa, &self.disk_interface),
+            .image_file_path = "",
+            .local_dir_path = ".",
+            .gpa = gpa,
+            .arena = arena,
+            .io = io,
+        };
+    }
+};
+var global_ui_state: UIState = undefined;
 
 pub const dvui_app: dvui.App = .{
     .config = .{
@@ -30,38 +56,32 @@ pub const dvui_app: dvui.App = .{
     .deinitFn = appDeinit,
 };
 pub const main = dvui.App.main;
-var io: std.Io = undefined;
-var gpa: std.mem.Allocator = undefined;
-var arena: std.mem.Allocator = undefined;
+// var io: std.Io = undefined;
+// var gpa: std.mem.Allocator = undefined;
+// var arena: std.mem.Allocator = undefined;
 pub const panic = dvui.App.panic;
 pub const std_options: std.Options = .{
     .logFn = dvui.App.logFn,
 };
 
 pub fn appInit(_: *dvui.Window) !void {
-    io = dvui.App.main_init.?.io;
-    gpa = dvui.App.main_init.?.gpa;
-    arena = dvui.App.main_init.?.arena.allocator();
+    const io = dvui.App.main_init.?.io;
+    const gpa = dvui.App.main_init.?.gpa;
+    const arena = dvui.App.main_init.?.arena.allocator();
 
     const args = try dvui.App.main_init.?.minimal.args.toSlice(arena);
     if (args.len == 2 and std.mem.eql(u8, args[1], "--debug")) {
         dvui.debug.open = true;
     }
-    disk_interface = .init(gpa);
-    disk_interface.openTestImage(io) catch |err| {
-        std.debug.print("Error opening test image: {t}\n", .{err});
-    };
-    disk_interface.openLocalDirectory(io, ".") catch |err| {
-        std.debug.print("Error opening local directory: {t}\n", .{err});
-    };
-    operation_state = .init(io, gpa, &disk_interface);
+
+    global_ui_state.init(io, gpa, arena);
 }
 
 // Run as app is shutting down before dvui.Window.deinit()
 pub fn appDeinit(win: *dvui.Window) void {
     _ = win;
-    operation_state.endOperation();
-    disk_interface.deinit(io);
+    global_ui_state.operation_state.endOperation();
+    global_ui_state.disk_interface.deinit(global_ui_state.io);
 }
 
 // Run each frame to do normal UI
@@ -72,11 +92,11 @@ pub fn appFrame() !dvui.App.Result {
 
         var box = dvui.box(@src(), .{}, .{ .expand = .both, .style = .window, .background = true });
         defer box.deinit();
-        if (statusBar()) |res| return res;
-        if (content()) |res| return res;
+        if (statusBar(&global_ui_state)) |res| return res;
+        if (content(&global_ui_state)) |res| return res;
     }
-    operation_state.process();
-    dialogs.displayOpen(&operation_state);
+    global_ui_state.operation_state.process();
+    dialogs.displayOpen(&global_ui_state.operation_state);
 
     return .ok;
 }
@@ -110,7 +130,8 @@ pub fn menu() ?dvui.App.Result {
     return null;
 }
 
-pub fn content() ?dvui.App.Result {
+pub fn content(ui_state: *UIState) ?dvui.App.Result {
+    const disk_interface = &ui_state.disk_interface;
     const static = struct {
         var image_grid: DirectoryGrid = .init();
         var local_grid: DirectoryGrid = .init();
@@ -120,15 +141,15 @@ pub fn content() ?dvui.App.Result {
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        filenameEntryBox(@src(), "Image:");
-        static.image_grid.display(disk_interface.image_directory_list.items, disk_interface.local_directory_changed);
+        filenameEntryBox(@src(), ui_state, "Image:");
+        static.image_grid.display(ui_state, disk_interface.image_directory_list.items, disk_interface.local_directory_changed);
         disk_interface.local_directory_changed = false;
     }
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        filenameEntryBox(@src(), "Local:");
-        static.local_grid.display(disk_interface.local_directory_list.items, disk_interface.local_directory_changed);
+        filenameEntryBox(@src(), ui_state, "Local:");
+        static.local_grid.display(ui_state, disk_interface.local_directory_list.items, disk_interface.local_directory_changed);
         disk_interface.local_directory_changed = false;
     }
 
@@ -204,7 +225,7 @@ const static_cols: []const usize = blk: {
     break :blk result[0..fixed_idx];
 };
 
-fn statusBar() ?dvui.App.Result {
+fn statusBar(ui_state: *UIState) ?dvui.App.Result {
     const static = struct {
         var alt_key_pressed: bool = false;
     };
@@ -233,7 +254,7 @@ fn statusBar() ?dvui.App.Result {
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
 
     if (statusBarButton(@src(), "GET", .g, 1, static.alt_key_pressed)) {
-        operation_state.beginOperation(.{ .get = .init });
+        ui_state.operation_state.beginOperation(.{ .get = .init });
     }
     if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
         if (filter_user) |_| {
@@ -243,11 +264,12 @@ fn statusBar() ?dvui.App.Result {
             filter_user = 0;
         }
         if (filter_user) |filter| {
-            for (disk_interface.image_directory_list.items) |*dir_entry| {
+            for (ui_state.disk_interface.image_directory_list.items) |*dir_entry| {
                 if (dir_entry.user() != filter) dir_entry.selected = false;
             }
         }
     }
+    const operation_state = &ui_state.operation_state;
     if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
         operation_state.beginOperation(.{ .open = .init });
     }
@@ -305,12 +327,15 @@ fn statusBarButton(
     return result;
 }
 
-fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8) void {
+fn filenameEntryBox(src: std.builtin.SourceLocation, ui_state: *UIState, label: []const u8) void {
     var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
     defer hbox.deinit();
     dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
     var te = dvui.textEntry(@src(), .{}, .{ .expand = .horizontal });
     defer te.deinit();
+    if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{})) {
+        ui_state.operation_state.beginOperation(.{ .open = .init });
+    }
 }
 
 const DirectoryGrid = struct {
@@ -368,7 +393,7 @@ const DirectoryGrid = struct {
         };
     }
 
-    fn display(self: *DirectoryGrid, dir_listing: []DirectoryEntry, auto_size: bool) void {
+    fn display(self: *DirectoryGrid, ui_state: *UIState, dir_listing: []DirectoryEntry, auto_size: bool) void {
         const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
@@ -396,7 +421,7 @@ const DirectoryGrid = struct {
         const current_row = grid.cursor.row;
         const selection_changed = rowHighlight(grid);
         const cursor_changed = current_row != grid.cursor.row or selection_changed;
-        if (disk_interface.disk_image != null)
+        if (ui_state.disk_interface.disk_image != null)
             self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, auto_size)
         else
             self.displayBodyClosed(grid);
