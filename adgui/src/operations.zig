@@ -8,6 +8,7 @@ pub const OperationState = struct {
     err: ?struct {
         message: []const u8,
         err: anyerror, // TODO: Make this a restricted error set in future.
+        // TODO: We can prob get rid of err and do all of the fancy printing elsewhere?
     },
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator, disk_interface: *DiskInterface) OperationState {
@@ -144,7 +145,6 @@ const OpenImageOperation = struct {
     }
 };
 
-// TODO: Fix issue with initial path.
 const OpenLocalOperation = struct {
     path_buffer: []u8,
     path: []const u8,

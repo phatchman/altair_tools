@@ -135,6 +135,8 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
         var image_grid: DirectoryGrid = .init();
         var local_grid: DirectoryGrid = .init();
     };
+    usagePanel(ui_state);
+
     var hbox = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .both });
     defer hbox.deinit();
     {
@@ -145,8 +147,8 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
             .button => ui_state.operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) }),
             .none => {},
         }
-        static.image_grid.display(ui_state, disk_interface.image_dir.directory_list.items, disk_interface.local_dir.changed);
-        disk_interface.local_dir.changed = false;
+        static.image_grid.display(ui_state, disk_interface.image_dir.directory_list.items, disk_interface.image_dir.changed);
+        disk_interface.image_dir.changed = false;
     }
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
@@ -167,6 +169,81 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     }
 
     return null;
+}
+
+fn usagePanel(ui_state: *UIState) void {
+    var usage_panel = panel(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .gravity_y = 1.0 });
+    defer usage_panel.deinit();
+    capacityGraph(ui_state);
+    directoriesGraph(ui_state);
+}
+
+fn capacityGraph(ui_state: *UIState) void {
+    dvui.labelNoFmt(@src(), "Capacity: ", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+    {
+        var files_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+            .border = .all(1),
+            .background = true,
+            .min_size_content = .{ .h = 20, .w = 250 },
+            .margin = .all(5),
+        });
+        defer files_box.deinit();
+
+        if (ui_state.disk_interface.disk_image) |disk_image| {
+            const max_directories = disk_image.image_type.directories;
+            const free_directories = disk_image.directory.rawEntryFreeCount();
+            const used_directories = max_directories - free_directories;
+            const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
+            const width = percentage * 250;
+
+            var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .color_fill = dvui.themeGet().fill_hover,
+                .background = true,
+                .rect = .{ .x = 0, .y = 0, .h = 20, .w = width },
+            });
+            used_box.deinit();
+            var msg_buf: [256]u8 = undefined;
+            const message = std.fmt.bufPrint(&msg_buf, "{:>7} used {:>7} remain ", .{ used_directories, free_directories }) catch unreachable;
+
+            dvui.labelNoFmt(@src(), message, .{}, .{
+                .padding = .all(2),
+            });
+        }
+    }
+}
+
+fn directoriesGraph(ui_state: *UIState) void {
+    dvui.labelNoFmt(@src(), "Directories: ", .{ .align_y = 0.5 }, .{ .expand = .vertical });
+    {
+        var files_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+            .border = .all(1),
+            .background = true,
+            .min_size_content = .{ .h = 20, .w = 250 },
+            .margin = .all(5),
+        });
+        defer files_box.deinit();
+
+        if (ui_state.disk_interface.disk_image) |disk_image| {
+            const total_space = disk_image.capacityTotalInKB();
+            const free_space = disk_image.capacityFreeInKB();
+            const used_space = total_space -| free_space;
+            const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
+            const width = percentage * 250;
+
+            var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .color_fill = dvui.themeGet().fill_hover,
+                .background = true,
+                .rect = .{ .x = 0, .y = 0, .h = 20, .w = width },
+            });
+            used_box.deinit();
+            var msg_buf: [256]u8 = undefined;
+            const message = std.fmt.bufPrint(&msg_buf, "{:>6}K used {:>6}K remain ", .{ used_space, free_space }) catch unreachable;
+
+            dvui.labelNoFmt(@src(), message, .{}, .{
+                .padding = .all(2),
+            });
+        }
+    }
 }
 
 const GridColumn = struct {
@@ -546,6 +623,7 @@ const DirectoryGrid = struct {
             }
         }
         if (auto_size) {
+            std.debug.print("auto sizing\n", .{});
             grid.autoSize(.{ .auto = .cols });
         }
     }

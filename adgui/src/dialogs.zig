@@ -96,34 +96,10 @@ fn transfer(self: *DialogState, state: *OperationState) void {
         else => unreachable,
     };
 
-    var dialog_win = dvui.floatingWindow(
-        @src(),
-        .{ .modal = true, .open_flag = &self.open },
-        .{
-            .min_size_content = .{ .w = 500, .h = 500 },
-            .max_size_content = .{ .w = 500, .h = 500 },
-        },
-    );
+    var dialog_win = dialogWindow(@src(), title, self, state, .{ .w = 500, .h = 500 });
     defer dialog_win.deinit();
     const wid_dialog = dialog_win.data().id;
-    dialog_win.dragAreaSet(dvui.windowHeader(title, "", &self.open));
 
-    const label = switch (state.state) {
-        .processing, .user_input => "Cancel",
-        .completed => "Close",
-    };
-    var button_wd: dvui.WidgetData = undefined;
-    if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-        state.endOperation();
-        return;
-    }
-    var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
-    defer dvui.dataSet(null, wid_dialog, "close_focused", close_focused);
-    if (state.state == .completed and !close_focused) {
-        close_focused = true;
-        dvui.focusWidget(button_wd.id, null, null);
-        dvui.refresh(null, @src(), null);
-    }
     var scroll_info = dvui.dataGetDefault(null, wid_dialog, "si", dvui.ScrollInfo, .{});
     defer dvui.dataSet(null, wid_dialog, "si", scroll_info);
     var scroll = dvui.scrollArea(@src(), .{ .scroll_info = &scroll_info }, .{
@@ -299,35 +275,9 @@ pub fn new(self: *DialogState, state: *OperationState) void {
     // TODO: START OF COMMON DIALOG STUFF
     if (!self.open) return;
 
-    var dialog_win = dvui.floatingWindow(
-        @src(),
-        .{ .modal = true, .open_flag = &self.open },
-        .{
-            .min_size_content = .{ .w = 500, .h = 500 },
-            .max_size_content = .{ .w = 500, .h = 500 },
-        },
-    );
+    var dialog_win = dialogWindow(@src(), "Create new disk image", self, state, .{ .w = 500, .h = 500 });
     defer dialog_win.deinit();
     const wid_dialog = dialog_win.data().id;
-    dialog_win.dragAreaSet(dvui.windowHeader("Create new disk image", "", &self.open));
-
-    const label = switch (state.state) {
-        .processing, .user_input => "Cancel",
-        .completed => "Close",
-    };
-    var button_wd: dvui.WidgetData = undefined;
-    if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
-        state.endOperation();
-        return;
-    }
-    var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
-    defer dvui.dataSet(null, wid_dialog, "close_focused", close_focused);
-    if (state.state == .completed and !close_focused) {
-        close_focused = true;
-        dvui.focusWidget(button_wd.id, null, null);
-        dvui.refresh(null, @src(), null);
-    }
-    // TODO: END OF COMMON DIALOG STUFF
     var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
     defer vbox.deinit();
     {
@@ -401,6 +351,37 @@ pub fn new(self: *DialogState, state: *OperationState) void {
             state.endOperation();
         }
     }
+}
+
+fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *DialogState, state: *OperationState, size: dvui.Size) *dvui.FloatingWindowWidget {
+    var dialog_win = dvui.floatingWindow(
+        src,
+        .{ .modal = true, .open_flag = &self.open },
+        .{
+            .min_size_content = size,
+            .max_size_content = .cast(size),
+        },
+    );
+    const wid_dialog = dialog_win.data().id;
+    dialog_win.dragAreaSet(dvui.windowHeader(title, "", &self.open));
+
+    const label = switch (state.state) {
+        .processing, .user_input => "Cancel",
+        .completed => "Close",
+    };
+    var button_wd: dvui.WidgetData = undefined;
+    if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
+        state.endOperation();
+        return dialog_win;
+    }
+    var close_focused = dvui.dataGetDefault(null, wid_dialog, "close_focused", bool, false);
+    defer dvui.dataSet(null, wid_dialog, "close_focused", close_focused);
+    if (state.state == .completed and !close_focused) {
+        close_focused = true;
+        dvui.focusWidget(button_wd.id, null, null);
+        dvui.refresh(null, @src(), null);
+    }
+    return dialog_win;
 }
 
 pub fn oom(_: error{OutOfMemory}) noreturn {
