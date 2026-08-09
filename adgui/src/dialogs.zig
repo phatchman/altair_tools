@@ -1,6 +1,6 @@
 // TODO: Fix when enter an invalid path or image name, it reverts to the old one
 // Also do that when losing focus.
-const Dialogs = enum { transfer, open_image, open_local, new };
+pub const Dialogs = enum { transfer, open_image, open_local, new, shortcuts };
 const DialogState = struct {
     open: bool,
     dialog_fn: *const fn (self: *DialogState, *OperationState) void,
@@ -18,6 +18,7 @@ var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
     .open_image = .init(openImage),
     .open_local = .init(openLocal),
     .new = .init(new),
+    .shortcuts = .init(shortcutKeys),
 });
 
 pub fn displayOpen(state: *OperationState) void {
@@ -351,13 +352,91 @@ pub fn new(self: *DialogState, state: *OperationState) void {
     }
 }
 
-fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *DialogState, state: *OperationState, size: dvui.Size) *dvui.FloatingWindowWidget {
+fn shortcutKeys(self: *DialogState, state: *OperationState) void {
+    const Shortcuts = struct {
+        const Category = enum { command, file, selection };
+        category: Category,
+        shortcut: []const u8,
+        button: ?[]const u8,
+        help_text: []const u8,
+    };
+
+    const shortcuts = [_]Shortcuts{
+        .{ .category = .command, .shortcut = "ALT-A", .button = "AUTO", .help_text = "Change transfer mode for get." },
+        .{ .category = .command, .shortcut = "ALT-C", .button = "CLOSE", .help_text = "Close image file." },
+        .{ .category = .command, .shortcut = "ALT-E", .button = "ERASE", .help_text = "Erase selected files." },
+        .{ .category = .command, .shortcut = "ALT-F", .button = "INFO", .help_text = "Show technical disk information." },
+        .{ .category = .command, .shortcut = "ALT-G", .button = "GET", .help_text = "Get file from image." },
+        .{ .category = .command, .shortcut = "ALT-N", .button = "NEW", .help_text = "Create a new disk image." },
+        .{ .category = .command, .shortcut = "ALT-P", .button = "PUT", .help_text = "Put file to image." },
+        .{ .category = .command, .shortcut = "ALT-R", .button = "ORIENT", .help_text = "Change grid orientation." },
+        .{ .category = .command, .shortcut = "ALT-S", .button = "GET SYS", .help_text = "Save CPM operating system tracks." },
+        .{ .category = .command, .shortcut = "ALT-U", .button = "USER", .help_text = "Filter by CPM User number." },
+        .{ .category = .command, .shortcut = "ALT-X", .button = "EXIT", .help_text = "Exit the application." },
+        .{ .category = .selection, .shortcut = "TAB", .button = null, .help_text = "Switch between grids." },
+        .{ .category = .selection, .shortcut = "CTRL-A", .button = null, .help_text = "Select / unselect all." },
+        .{ .category = .selection, .shortcut = "SPACE", .button = null, .help_text = "Select highlighted file." },
+        .{ .category = .selection, .shortcut = "UP", .button = null, .help_text = "Highlight prevous file." },
+        .{ .category = .selection, .shortcut = "DOWN", .button = null, .help_text = "Highlight next file." },
+        .{ .category = .selection, .shortcut = "PGUP", .button = null, .help_text = "Scroll grid up." },
+        .{ .category = .selection, .shortcut = "PGDN", .button = null, .help_text = "Scroll grid down." },
+        .{ .category = .file, .shortcut = "ALT-I", .button = null, .help_text = "Type image file name." },
+        .{ .category = .file, .shortcut = "ALT-M", .button = null, .help_text = "Browse for image file." },
+        .{ .category = .file, .shortcut = "ALT-O", .button = null, .help_text = "Browse for local directory." },
+        .{ .category = .file, .shortcut = "ALT-L", .button = null, .help_text = "Type local directory name." },
+        .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filenames to clipboard." },
+    };
+    var dialog_win = dialogWindow(@src(), "Keyboard shortcuts", self, state, null);
+    defer dialog_win.deinit();
+
+    // var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = .all(5) });
+    // defer vbox.deinit();
+    var idx: usize = 0;
+    {
+        var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .vertical, .gravity_x = 0.5 });
+        defer inner_vbox.deinit();
+        dvui.labelNoFmt(@src(), "Menu Shortcuts", .{}, .{ .font = .theme(.title), .gravity_x = 0.5 });
+        while (shortcuts[idx].category == .command) : (idx += 1) {
+            const s = &shortcuts[idx];
+            dvui.label(@src(), "{s:<10}{s:<10}{s}", .{ s.shortcut, s.button orelse "", s.help_text }, .{ .id_extra = idx, .padding = .all(2) });
+        }
+    }
+    {
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .both });
+        defer hbox.deinit();
+        {
+            var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = .all(5) });
+            defer inner_vbox.deinit();
+
+            dvui.labelNoFmt(@src(), "Navigation Shortcuts", .{}, .{ .font = .theme(.title), .gravity_x = 0.5 });
+            while (idx != shortcuts.len and shortcuts[idx].category == .selection) : (idx += 1) {
+                const s = &shortcuts[idx];
+                dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = .all(2) });
+            }
+        }
+        {
+            var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = .all(5) });
+            defer inner_vbox.deinit();
+            dvui.labelNoFmt(@src(), "File Shortcuts", .{}, .{ .font = .theme(.title), .gravity_x = 0.5 });
+            while (idx != shortcuts.len and shortcuts[idx].category == .file) : (idx += 1) {
+                const s = &shortcuts[idx];
+                dvui.label(@src(), "{s:<10}{s}", .{ s.shortcut, s.help_text }, .{ .id_extra = idx, .padding = .all(2) });
+            }
+        }
+    }
+    // _ = dvui.separator(@src(), .{ .expand = .horizontal });
+    // if (buttonFocussed(@src(), "Close", .{}, .{ .gravity_x = 0.5 })) {
+    //     show_shortcuts = false;
+    // }
+}
+
+fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *DialogState, state: *OperationState, size: ?dvui.Size) *dvui.FloatingWindowWidget {
     var dialog_win = dvui.floatingWindow(
         src,
         .{ .modal = true, .open_flag = &self.open },
         .{
             .min_size_content = size,
-            .max_size_content = .cast(size),
+            .max_size_content = if (size) |s| .cast(s) else null,
         },
     );
     const wid_dialog = dialog_win.data().id;

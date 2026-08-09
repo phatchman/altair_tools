@@ -44,7 +44,6 @@ pub const OperationState = struct {
         self.state = .completed;
         self.err = null;
         _ = self.arena.reset(.free_all);
-        //   std.debug.print("arean reset\n", .{});
     }
 
     pub fn process(self: *OperationState) void {
@@ -78,6 +77,7 @@ pub const Operation = union(enum) {
     erase,
     info,
     new: NewOperation,
+    show_dialog: ShowDialogOperation,
 
     pub fn begin(self: *Operation, state: *OperationState) void {
         switch (self.*) {
@@ -360,15 +360,36 @@ pub const GetOperation = struct {
     }
 
     pub fn end(self: *GetOperation, state: *OperationState) void {
-        // TODO: Somethis is using transfer results after we free it
+        // TODO: Something is using transfer results after we free it
         // For some reason the transfer dialog was still being shown and causing a seg fault?
         self.transfer_result = .empty;
-        std.debug.print("ending get\n", .{});
         for (state.disk_interface.image_dir.directory_list.items) |*dir| {
             dir.selected = false;
         }
-        std.debug.print("hiding transfer\n", .{});
         dialogs.hide(.transfer);
+    }
+};
+
+pub const ShowDialogOperation = struct {
+    dialog_to_show: dialogs.Dialogs,
+
+    pub fn init(dialog_to_show: dialogs.Dialogs) ShowDialogOperation {
+        return .{
+            .dialog_to_show = dialog_to_show,
+        };
+    }
+
+    pub fn begin(self: *ShowDialogOperation, state: *OperationState) void {
+        dialogs.show(self.dialog_to_show);
+        state.state = .completed;
+    }
+
+    pub fn process(_: *ShowDialogOperation, _: *OperationState) void {
+        unreachable;
+    }
+
+    pub fn end(self: *ShowDialogOperation, _: *OperationState) void {
+        dialogs.hide(self.dialog_to_show);
     }
 };
 

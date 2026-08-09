@@ -34,6 +34,9 @@ const UIState = struct {
             .io = io,
             .filter_user = null,
         };
+        self.disk_interface.openLocalDirectory(io, ".") catch |err| {
+            std.debug.print("Error opening current directory: {t}\n", .{err});
+        };
     }
 };
 var global_ui_state: UIState = undefined;
@@ -89,7 +92,7 @@ pub fn appFrame() !dvui.App.Result {
     std.debug.print("--- FRAME [{d}]---\n", .{frame_count});
     defer frame_count += 1;
     {
-        if (menu()) |res| return res;
+        if (menu(&global_ui_state)) |res| return res;
 
         var box = dvui.box(@src(), .{}, .{ .expand = .both, .style = .window, .background = true });
         defer box.deinit();
@@ -102,7 +105,7 @@ pub fn appFrame() !dvui.App.Result {
     return .ok;
 }
 
-pub fn menu() ?dvui.App.Result {
+pub fn menu(ui_state: *UIState) ?dvui.App.Result {
     var m = dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
     defer m.deinit();
 
@@ -122,6 +125,7 @@ pub fn menu() ?dvui.App.Result {
 
         if (dvui.menuItemLabel(@src(), "Shortcuts", .{}, .{}) != null) {
             m.close();
+            ui_state.operation_state.beginOperation(.{ .show_dialog = .init(.shortcuts) });
         }
 
         if (dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
@@ -139,9 +143,16 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     };
     usagePanel(ui_state);
 
-    var hbox = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .both });
-    defer hbox.deinit();
-    {
+    var paned = dvui.paned(@src(), .{
+        .direction = .horizontal,
+        .collapsed_size = 0,
+        .handle_size = 6,
+        .handle_dynamic = .{ .handle_size_max = 6 },
+    }, .{ .expand = .both });
+    defer paned.deinit();
+    // var hbox = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .both });
+    // defer hbox.deinit();
+    if (paned.showFirst()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         const result = filenameEntryBox(@src(), "Image:", ui_state.disk_interface.image_dir.path_buf, ui_state.disk_interface.image_dir.changed);
@@ -153,7 +164,7 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
         static.image_grid.display(ui_state, disk_interface.image_dir.directory_list.items, disk_interface.image_dir.changed);
         disk_interface.image_dir.changed = false;
     }
-    {
+    if (paned.showSecond()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         const result = filenameEntryBox(@src(), "Local:", ui_state.disk_interface.local_dir.path_buf, ui_state.disk_interface.local_dir.changed);
@@ -535,7 +546,7 @@ const DirectoryGrid = struct {
 
     fn display(self: *DirectoryGrid, ui_state: *UIState, dir_listing: []DirectoryEntry, listing_changed: bool) void {
         const last_focus = dvui.lastFocusedIdInFrame();
-        var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
+        var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols, .scroll_opts = .{ .horizontal = .auto } }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
 
         self.processKbEventsPre();
@@ -645,12 +656,12 @@ const DirectoryGrid = struct {
             { // Size
                 var cell = grid.cell(.{ .col = 3, .row = row_idx }, row_options);
                 defer cell.deinit();
-                dvui.label(@src(), "{}B", .{dir_item.fileSizeInB()}, .{ .gravity_x = 1 });
+                dvui.label(@src(), "{f}B", .{fmtCommas(dir_item.fileSizeInB())}, .{ .gravity_x = 1 });
             }
             { // Used
                 var cell = grid.cell(.{ .col = 4, .row = row_idx }, row_options);
                 defer cell.deinit();
-                dvui.label(@src(), "{}K", .{dir_item.fileUsedInKB()}, .{ .gravity_x = 1 });
+                dvui.label(@src(), "{f}K", .{fmtCommas(dir_item.fileUsedInKB())}, .{ .gravity_x = 1 });
             }
             { // At
                 var cell = grid.cell(.{ .col = 5, .row = row_idx }, row_options);
@@ -760,6 +771,37 @@ const DirectoryGrid = struct {
             grid.moveCursor(0, grid.cursor.row);
         }
         return clicked;
+    }
+
+    pub fn fmtCommas(number: usize) std.fmt.Alt(usize, formatNumberCommas) {
+        return .{ .data = number };
+    }
+
+    fn formatNumberCommas(raw: usize, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        var num = raw;
+        var nr_decs = if (num > 0) std.math.log10(num) + 1 else 1;
+        var leading: bool = true;
+
+        if (nr_decs > 3) {
+            const start = if (nr_decs % 3 == 0) 3 else nr_decs % 3;
+            var divisor = std.math.pow(usize, 10, nr_decs - start);
+            while (nr_decs > 3) : ({
+                nr_decs -= 3;
+                divisor /= 1000;
+            }) {
+                const val = num / divisor;
+                if (leading)
+                    try w.print("{d},", .{val})
+                else
+                    try w.print("{d:03},", .{val});
+                num -= val * divisor;
+                leading = false;
+            }
+        }
+        if (leading)
+            try w.print("{d}", .{num})
+        else
+            try w.print("{d:03}", .{num});
     }
 };
 
