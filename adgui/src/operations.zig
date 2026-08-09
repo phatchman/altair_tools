@@ -359,10 +359,8 @@ pub const GetOperation = struct {
         return;
     }
 
-    pub fn end(self: *GetOperation, state: *OperationState) void {
-        // TODO: Something is using transfer results after we free it
-        // For some reason the transfer dialog was still being shown and causing a seg fault?
-        self.transfer_result = .empty;
+    pub fn end(_: *GetOperation, state: *OperationState) void {
+        std.debug.print("unselecting\n", .{});
         for (state.disk_interface.image_dir.directory_list.items) |*dir| {
             dir.selected = false;
         }

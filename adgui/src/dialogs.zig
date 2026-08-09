@@ -1,5 +1,3 @@
-// TODO: Fix when enter an invalid path or image name, it reverts to the old one
-// Also do that when losing focus.
 pub const Dialogs = enum { transfer, open_image, open_local, new, shortcuts };
 const DialogState = struct {
     open: bool,
@@ -22,7 +20,9 @@ var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
 });
 
 pub fn displayOpen(state: *OperationState) void {
+    std.debug.print("Display Open\n", .{});
     for (&all_dialogs.values) |*dialog| {
+        std.debug.print("displaying state = {t}\n", .{state.state});
         if (dialog.open) dialog.dialog_fn(dialog, state);
     }
 }
@@ -97,6 +97,9 @@ fn transfer(self: *DialogState, state: *OperationState) void {
 
     var dialog_win = dialogWindow(@src(), title, self, state, .{ .w = 500, .h = 500 });
     defer dialog_win.deinit();
+    // TODO: This is a trap.. if the window closes, the operations is sended and the arena gets pulled down, so need to return.
+    if (!self.open) return;
+
     const wid_dialog = dialog_win.data().id;
 
     var scroll_info = dvui.dataGetDefault(null, wid_dialog, "si", dvui.ScrollInfo, .{});
@@ -271,11 +274,12 @@ pub fn new(self: *DialogState, state: *OperationState) void {
     std.debug.assert(state.operation == .new);
     const op = &state.operation.new;
 
-    // TODO: START OF COMMON DIALOG STUFF
     if (!self.open) return;
 
     var dialog_win = dialogWindow(@src(), "Create new disk image", self, state, .{ .w = 500, .h = 500 });
     defer dialog_win.deinit();
+    if (!self.open) return;
+
     const wid_dialog = dialog_win.data().id;
     var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
     defer vbox.deinit();
@@ -388,6 +392,7 @@ fn shortcutKeys(self: *DialogState, state: *OperationState) void {
     };
     var dialog_win = dialogWindow(@src(), "Keyboard shortcuts", self, state, null);
     defer dialog_win.deinit();
+    if (!self.open) return;
 
     // var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = .all(5) });
     // defer vbox.deinit();
@@ -448,6 +453,7 @@ fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *Dialo
     };
     var button_wd: dvui.WidgetData = undefined;
     if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
+        self.open = false;
         state.endOperation();
         return dialog_win;
     }

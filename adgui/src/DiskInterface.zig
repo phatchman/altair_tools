@@ -158,7 +158,7 @@ pub const DirectoryEntry = struct {
     pub fn fileUsedInKB(self: *const DirectoryEntry) usize {
         return switch (self.entry) {
             .image => |*dir| dir.used_in_kbytes,
-            .local => |*dir| dir.size / 1024,
+            .local => |*dir| (dir.size + 1023) / 1024,
         };
     }
 
