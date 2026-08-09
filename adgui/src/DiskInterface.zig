@@ -174,43 +174,48 @@ pub const DirectoryEntry = struct {
     }
 };
 
-pub fn DirectoryIterator(to_iterate: []DirectoryEntry, element_selector: fn (entry: *const DirectoryEntry) bool) DirIterator {
-    return .{
-        .collection = to_iterate,
-        .selector = element_selector,
-        .idx = 0,
+pub fn DirectoryIterator(Context: type) type {
+    return struct {
+        const DirIterator = @This();
+        collection: []DirectoryEntry,
+        selector: *const fn (Context, entry: *const DirectoryEntry) bool,
+        idx: usize,
+        ctx: Context,
+
+        pub fn init(to_iterate: []DirectoryEntry, context: Context, element_selector: *const fn (Context, entry: *const DirectoryEntry) bool) DirIterator {
+            return .{
+                .collection = to_iterate,
+                .selector = element_selector,
+                .idx = 0,
+                .ctx = context,
+            };
+        }
+
+        pub fn next(self: *DirIterator) ?*DirectoryEntry {
+            while (self.idx < self.collection.len) : (self.idx += 1) {
+                const value = &self.collection[self.idx];
+                if (self.selector(self.ctx, value)) {
+                    self.idx += 1;
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        /// Count number of items that match filter.
+        /// Note: O(n), walks the entire collection.
+        pub fn count(self: *DirIterator) usize {
+            const orig_idx = self.idx;
+            self.idx = 0;
+            var total: usize = 0;
+            while (self.next()) |_| {
+                total += 1;
+            }
+            self.idx = orig_idx;
+            return total;
+        }
     };
 }
-
-pub const DirIterator = struct {
-    collection: []DirectoryEntry,
-    selector: *const fn (entry: *const DirectoryEntry) bool,
-    idx: usize,
-
-    pub fn next(self: *DirIterator) ?*DirectoryEntry {
-        while (self.idx < self.collection.len) : (self.idx += 1) {
-            const value = &self.collection[self.idx];
-            if (self.selector(value)) {
-                self.idx += 1;
-                return value;
-            }
-        }
-        return null;
-    }
-
-    /// Count number of items that match filter.
-    /// Note: O(n), walks the entire collection.
-    pub fn count(self: *DirIterator) usize {
-        const orig_idx = self.idx;
-        self.idx = 0;
-        var total: usize = 0;
-        while (self.next()) |_| {
-            total += 1;
-        }
-        self.idx = orig_idx;
-        return total;
-    }
-};
 
 pub fn detectImageType(_: *DiskInterface, io: std.Io, filename: []const u8) !?DiskImageTypes {
     var image_file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });

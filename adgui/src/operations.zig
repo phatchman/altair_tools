@@ -103,7 +103,7 @@ const OpenImageOperation = struct {
     image_path: ?[]const u8,
     path_buf: []u8,
 
-    pub fn init(path: ?[]u8, path_buf: []u8) OpenImageOperation {
+    pub fn init(path: ?[]const u8, path_buf: []u8) OpenImageOperation {
         return .{
             .image_path = path,
             .path_buf = path_buf,
@@ -128,6 +128,10 @@ const OpenImageOperation = struct {
             state.state = .completed;
             return;
         };
+        const image_dir = &state.disk_interface.image_dir;
+        @memset(image_dir.path_buf, 0);
+        @memcpy(image_dir.path_buf[0..self.image_path.?.len], self.image_path.?);
+        image_dir.path = image_dir.path_buf[0..self.image_path.?.len];
         state.endOperation();
     }
 
@@ -183,7 +187,7 @@ const OpenLocalOperation = struct {
         }
     }
 
-    pub fn process(_: *OpenLocalOperation, state: *OperationState) void {
+    pub fn process(self: *OpenLocalOperation, state: *OperationState) void {
         std.debug.assert(state.operation == .open_local);
         const operation = &state.operation.open_local;
         state.disk_interface.openLocalDirectory(state.io, operation.path) catch |err| {
@@ -194,6 +198,10 @@ const OpenLocalOperation = struct {
             state.state = .completed;
             return;
         };
+        const local_dir = &state.disk_interface.local_dir;
+        @memset(local_dir.path_buf, 0);
+        @memcpy(local_dir.path_buf[0..self.path.len], self.path);
+        local_dir.path = local_dir.path_buf[0..self.path.len];
         state.endOperation();
     }
 

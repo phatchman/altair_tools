@@ -17,6 +17,7 @@ const UIState = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
+    filter_user: ?u8,
 
     pub fn init(self: *UIState, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) void {
         self.* = .{
@@ -31,6 +32,7 @@ const UIState = struct {
             .gpa = gpa,
             .arena = arena,
             .io = io,
+            .filter_user = null,
         };
     }
 };
@@ -132,8 +134,8 @@ pub fn menu() ?dvui.App.Result {
 pub fn content(ui_state: *UIState) ?dvui.App.Result {
     const disk_interface = &ui_state.disk_interface;
     const static = struct {
-        var image_grid: DirectoryGrid = .init();
-        var local_grid: DirectoryGrid = .init();
+        var image_grid: DirectoryGrid = .init(.image);
+        var local_grid: DirectoryGrid = .init(.local);
     };
     usagePanel(ui_state);
 
@@ -142,8 +144,9 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        switch (filenameEntryBox(@src(), ui_state, "Image:", .image, ui_state.disk_interface.image_dir.path_buf)) {
-            .enter => ui_state.operation_state.beginOperation(.{ .open_image = .init(ui_state.disk_interface.image_dir.path, ui_state.disk_interface.image_dir.path_buf) }),
+        const result = filenameEntryBox(@src(), "Image:", ui_state.disk_interface.image_dir.path_buf, ui_state.disk_interface.image_dir.changed);
+        switch (result.response) {
+            .enter => ui_state.operation_state.beginOperation(.{ .open_image = .init(result.path, ui_state.disk_interface.image_dir.path_buf) }),
             .button => ui_state.operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) }),
             .none => {},
         }
@@ -153,9 +156,10 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        switch (filenameEntryBox(@src(), ui_state, "Local:", .local, ui_state.disk_interface.local_dir.path_buf)) {
+        const result = filenameEntryBox(@src(), "Local:", ui_state.disk_interface.local_dir.path_buf, ui_state.disk_interface.local_dir.changed);
+        switch (result.response) {
             .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(
-                .{ .given = ui_state.disk_interface.local_dir.path },
+                .{ .given = result.path },
                 ui_state.disk_interface.local_dir.path_buf,
             ) }),
             .button => ui_state.operation_state.beginOperation(.{ .open_local = .init(
@@ -338,7 +342,7 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
     defer hbox.deinit();
 
     var label_buf: [32]u8 = undefined;
-    const label = if (filter_user) |user|
+    const label = if (ui_state.filter_user) |user|
         std.fmt.bufPrint(&label_buf, "USER {d}", .{user}) catch unreachable
     else
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
@@ -347,13 +351,13 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         ui_state.operation_state.beginOperation(.{ .get = .init });
     }
     if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
-        if (filter_user) |_| {
-            filter_user.? += 1;
-            if (filter_user == 16) filter_user = null;
+        if (ui_state.filter_user) |_| {
+            ui_state.filter_user.? += 1;
+            if (ui_state.filter_user == 16) ui_state.filter_user = null;
         } else {
-            filter_user = 0;
+            ui_state.filter_user = 0;
         }
-        if (filter_user) |filter| {
+        if (ui_state.filter_user) |filter| {
             for (ui_state.disk_interface.image_dir.directory_list.items) |*dir_entry| {
                 if (dir_entry.user() != filter) dir_entry.selected = false;
             }
@@ -388,8 +392,6 @@ fn panel(src: std.builtin.SourceLocation, init_opts: dvui.BoxWidget.InitOptions,
     return dvui.box(src, init_opts, defaults.override(opts));
 }
 
-var filter_user: ?u8 = null;
-
 fn statusBarButton(
     src: std.builtin.SourceLocation,
     label: []const u8,
@@ -419,30 +421,47 @@ fn statusBarButton(
 
 // TODO: This should return a bool which triggers the begin operation above.
 // also pass in path as a param or the whole DirectoryListing?
-const FilenameEntryResult = enum { none, enter, button };
-fn filenameEntryBox(src: std.builtin.SourceLocation, ui_state: *UIState, label: []const u8, style: enum { image, local }, buffer: []u8) FilenameEntryResult {
-    var result: FilenameEntryResult = .none;
+const FilenameEntryResult = struct {
+    response: enum { none, enter, button },
+    path: []const u8,
+};
+
+fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8, buffer: []u8, changed: bool) FilenameEntryResult {
     var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
     defer hbox.deinit();
     dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
-    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = buffer } }, .{ .expand = .horizontal });
-    switch (style) {
-        .local => ui_state.disk_interface.local_dir.path = te.textGet(),
-        .image => ui_state.disk_interface.image_dir.path = te.textGet(),
+    var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = std.fs.max_path_bytes } } }, .{ .expand = .horizontal });
+    const text = std.mem.span(@as([*:0]u8, @ptrCast(buffer))); // TODO: FIX THIS
+    if (changed or dvui.focusedWidgetId() != te.data().id) {
+        if (!std.mem.eql(u8, text, te.getText())) {
+            te.textSet(text, false);
+        }
     }
+    var result: FilenameEntryResult = .{ .response = .none, .path = te.getText() };
+
     if (te.enter_pressed)
-        result = .enter;
+        result.response = .enter;
     te.deinit();
+
     if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{})) {
-        result = .button;
+        result.response = .button;
     }
     return result;
 }
 
 const DirectoryGrid = struct {
     const SelectMode = enum { none, select_all, select_none };
+    pub const Style = enum { image, local };
+
+    const Ctx = struct {
+        user_filter: ?u8,
+        style: Style,
+    };
+    const DirectoryIterator = DiskInterface.DirectoryIterator(Ctx);
+
     all_selected: bool,
     shift_key_pressed: bool,
+    style: Style,
     selection: struct {
         const Selection = @This();
 
@@ -482,10 +501,11 @@ const DirectoryGrid = struct {
         }
     },
 
-    pub fn init() DirectoryGrid {
+    pub fn init(style: Style) DirectoryGrid {
         return .{
             .all_selected = false,
             .shift_key_pressed = false,
+            .style = style,
             .selection = .{
                 .mode = .none,
                 .first_idx = null,
@@ -494,7 +514,7 @@ const DirectoryGrid = struct {
         };
     }
 
-    fn display(self: *DirectoryGrid, ui_state: *UIState, dir_listing: []DirectoryEntry, auto_size: bool) void {
+    fn display(self: *DirectoryGrid, ui_state: *UIState, dir_listing: []DirectoryEntry, listing_changed: bool) void {
         const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
@@ -506,13 +526,15 @@ const DirectoryGrid = struct {
             grid.sort_dir = .ascending;
         }
 
-        var dir_itr = DiskInterface.DirectoryIterator(dir_listing, struct {
-            pub fn selected(entry: *const DirectoryEntry) bool {
-                if (filter_user) |user| {
+        var dir_itr: DirectoryIterator = .init(dir_listing, .{
+            .user_filter = ui_state.filter_user,
+            .style = self.style,
+        }, struct {
+            pub fn selected(ctx: Ctx, entry: *const DirectoryEntry) bool {
+                if (ctx.style == .image) if (ctx.user_filter) |user| {
                     return entry.user() == user;
-                } else {
-                    return true;
-                }
+                };
+                return true;
             }
         }.selected);
 
@@ -522,10 +544,10 @@ const DirectoryGrid = struct {
         const current_row = grid.cursor.row;
         const selection_changed = rowHighlight(grid);
         const cursor_changed = current_row != grid.cursor.row or selection_changed;
-        if (ui_state.disk_interface.disk_image != null)
-            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, auto_size)
+        if (self.style == .image and ui_state.disk_interface.disk_image == null)
+            self.displayBodyClosed(grid)
         else
-            self.displayBodyClosed(grid);
+            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, listing_changed);
 
         if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
             self.processKbEventsPost(grid, wid, row_count);
@@ -568,7 +590,7 @@ const DirectoryGrid = struct {
         dvui.labelNoFmt(@src(), "Open a disk image.", .{}, .{});
     }
 
-    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DiskInterface.DirIterator, cursor_changed: bool, selection_changed: bool, auto_size: bool) void {
+    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DirectoryIterator, cursor_changed: bool, selection_changed: bool, listing_changed: bool) void {
         var row_idx: usize = 0;
         while (dir_itr.next()) |dir_item| : (row_idx += 1) {
             const row_options: dvui.Options =
@@ -622,7 +644,7 @@ const DirectoryGrid = struct {
                 dvui.label(@src(), "{}", .{dir_item.user()}, .{ .gravity_x = 0.5 });
             }
         }
-        if (auto_size) {
+        if (listing_changed) {
             std.debug.print("auto sizing\n", .{});
             grid.autoSize(.{ .auto = .cols });
         }

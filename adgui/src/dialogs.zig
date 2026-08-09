@@ -50,9 +50,7 @@ fn openImage(self: *DialogState, state: *OperationState) void {
         state.endOperation();
         return;
     };
-    @memset(operation.path_buf, 0);
-    @memcpy(operation.path_buf[0..image_path.len], image_path);
-    operation.image_path = operation.path_buf[0..image_path.len];
+    operation.image_path = image_path;
     state.state = .processing;
 }
 
@@ -63,6 +61,7 @@ fn openLocal(self: *DialogState, state: *OperationState) void {
 
     const operation = &state.operation.open_local;
 
+    std.debug.print("path = {s}\n", .{operation.path});
     const folder = dvui.native_dialogs.Native.folderSelect(state.arena.allocator(), .{
         .title = "Open local directory",
         .path = operation.path,
@@ -70,10 +69,7 @@ fn openLocal(self: *DialogState, state: *OperationState) void {
         state.endOperation();
         return;
     };
-
-    @memset(operation.path_buffer, 0);
-    @memcpy(operation.path_buffer[0..folder.len], folder);
-    operation.path = operation.path_buffer[0..folder.len];
+    operation.path = folder;
     state.state = .processing;
 }
 
