@@ -427,8 +427,8 @@ fn filenameEntryBox(src: std.builtin.SourceLocation, ui_state: *UIState, label: 
     dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
     var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = buffer } }, .{ .expand = .horizontal });
     switch (style) {
-        .local => ui_state.disk_interface.local_dir.path = @as([:0]u8, @ptrCast(te.textGet())),
-        .image => ui_state.disk_interface.image_dir.path = @as([:0]u8, @ptrCast(te.textGet())),
+        .local => ui_state.disk_interface.local_dir.path = te.textGet(),
+        .image => ui_state.disk_interface.image_dir.path = te.textGet(),
     }
     if (te.enter_pressed)
         result = .enter;

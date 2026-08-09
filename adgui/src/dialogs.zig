@@ -1,6 +1,5 @@
-// TODO: In the middle of updating the text box with the file path selector.
-// It's being stored in disk_interface right now. I don't think that is right???
-// but migh be ok?
+// TODO: Fix when enter an invalid path or image name, it reverts to the old one
+// Also do that when losing focus.
 const Dialogs = enum { transfer, open_image, open_local, new };
 const DialogState = struct {
     open: bool,

@@ -191,9 +191,10 @@ const OpenLocalOperation = struct {
                 .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening directory {s}: {t}", .{ operation.path, err }) catch |e| oom(e),
                 .err = err,
             };
+            state.state = .completed;
+            return;
         };
-        dialogs.hide(.open_local);
-        state.state = .completed;
+        state.endOperation();
     }
 
     pub fn end(_: *OpenLocalOperation, _: *OperationState) void {
