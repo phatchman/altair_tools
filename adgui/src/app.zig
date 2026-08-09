@@ -81,9 +81,11 @@ pub fn appDeinit(win: *dvui.Window) void {
     global_ui_state.disk_interface.deinit(global_ui_state.io, global_ui_state.gpa);
 }
 
+var frame_count: usize = 0;
 // Run each frame to do normal UI
 pub fn appFrame() !dvui.App.Result {
-    std.debug.print("--- FRAME ---\n", .{});
+    std.debug.print("--- FRAME [{d}]---\n", .{frame_count});
+    defer frame_count += 1;
     {
         if (menu()) |res| return res;
 
@@ -150,8 +152,14 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
         switch (filenameEntryBox(@src(), ui_state, "Local:", .local, ui_state.disk_interface.local_dir.path_buf)) {
-            .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(ui_state.disk_interface.local_dir.path, ui_state.disk_interface.local_dir.path_buf) }),
-            .button => ui_state.operation_state.beginOperation(.{ .open_local = .init(null, ui_state.disk_interface.local_dir.path_buf) }),
+            .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(
+                .{ .given = ui_state.disk_interface.local_dir.path },
+                ui_state.disk_interface.local_dir.path_buf,
+            ) }),
+            .button => ui_state.operation_state.beginOperation(.{ .open_local = .init(
+                .{ .prompt = ui_state.disk_interface.local_dir.path },
+                ui_state.disk_interface.local_dir.path_buf,
+            ) }),
             .none => {},
         }
         static.local_grid.display(ui_state, disk_interface.local_dir.directory_list.items, disk_interface.local_dir.changed);

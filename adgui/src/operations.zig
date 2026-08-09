@@ -44,7 +44,7 @@ pub const OperationState = struct {
     }
 
     pub fn process(self: *OperationState) void {
-        //        std.debug.print("op = {}, state = {}\n", .{ self.operation, self.state });
+        std.debug.print("op = {t}, state = {}\n", .{ self.operation, self.state });
         if (self.operation != .none) {
             if (self.err) |err| {
                 dvui.dialog(@src(), .{}, .{
@@ -124,6 +124,8 @@ const OpenImageOperation = struct {
                 .message = std.fmt.allocPrint(state.arena.allocator(), "Error opening image: {t}", .{err}) catch |e| oom(e),
                 .err = err,
             };
+            state.state = .completed;
+            return;
         };
         state.endOperation();
     }
@@ -144,24 +146,40 @@ const OpenImageOperation = struct {
 
 // TODO: Fix issue with initial path.
 const OpenLocalOperation = struct {
-    initial_path: ?[]const u8,
     path_buffer: []u8,
     path: []const u8,
+    prompt_user: bool,
 
-    pub fn init(init_path: ?[]const u8, path_buffer: []u8) OpenLocalOperation {
-        return .{
-            .initial_path = init_path,
-            .path_buffer = path_buffer,
-            .path = init_path orelse "",
-        };
+    pub fn init(
+        // `prompt` prompts user for new path, using passed path as default
+        // `given`. path is used directly without prompting.
+        path: union(enum) { prompt: []const u8, given: []const u8 },
+        path_buffer: []u8,
+    ) OpenLocalOperation {
+        switch (path) {
+            .prompt => |p| {
+                return .{
+                    .path_buffer = path_buffer,
+                    .path = p,
+                    .prompt_user = true,
+                };
+            },
+            .given => |p| {
+                return .{
+                    .path_buffer = path_buffer,
+                    .path = p,
+                    .prompt_user = false,
+                };
+            },
+        }
     }
 
     pub fn begin(self: *OpenLocalOperation, state: *OperationState) void {
-        if (self.initial_path) |_| {
-            state.state = .processing;
-        } else {
+        if (self.prompt_user) {
             dialogs.show(.open_local);
             state.state = .user_input;
+        } else {
+            state.state = .processing;
         }
     }
 
@@ -174,7 +192,8 @@ const OpenLocalOperation = struct {
                 .err = err,
             };
         };
-        state.endOperation();
+        dialogs.hide(.open_local);
+        state.state = .completed;
     }
 
     pub fn end(_: *OpenLocalOperation, _: *OperationState) void {

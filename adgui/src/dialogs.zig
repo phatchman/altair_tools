@@ -66,7 +66,7 @@ fn openLocal(self: *DialogState, state: *OperationState) void {
 
     const folder = dvui.native_dialogs.Native.folderSelect(state.arena.allocator(), .{
         .title = "Open local directory",
-        .path = operation.initial_path,
+        .path = operation.path,
     }) catch |err| oom(err) orelse {
         state.endOperation();
         return;
