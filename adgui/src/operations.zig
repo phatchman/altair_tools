@@ -24,6 +24,7 @@ pub const OperationState = struct {
 
     pub fn beginOperation(self: *OperationState, operation: Operation) void {
         std.debug.assert(operation != .none);
+        std.debug.print("Begin {t}\n", .{operation});
         self.operation = operation;
         switch (self.operation) {
             .none => unreachable,
@@ -37,11 +38,13 @@ pub const OperationState = struct {
     }
 
     pub fn endOperation(self: *OperationState) void {
+        std.debug.print("End {t}\n", .{self.operation});
         self.operation.end(self);
         self.operation = .none;
         self.state = .completed;
         self.err = null;
         _ = self.arena.reset(.free_all);
+        //   std.debug.print("arean reset\n", .{});
     }
 
     pub fn process(self: *OperationState) void {
@@ -356,7 +359,15 @@ pub const GetOperation = struct {
         return;
     }
 
-    pub fn end(_: GetOperation, _: *OperationState) void {
+    pub fn end(self: *GetOperation, state: *OperationState) void {
+        // TODO: Somethis is using transfer results after we free it
+        // For some reason the transfer dialog was still being shown and causing a seg fault?
+        self.transfer_result = .empty;
+        std.debug.print("ending get\n", .{});
+        for (state.disk_interface.image_dir.directory_list.items) |*dir| {
+            dir.selected = false;
+        }
+        std.debug.print("hiding transfer\n", .{});
         dialogs.hide(.transfer);
     }
 };

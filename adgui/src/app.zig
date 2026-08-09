@@ -347,10 +347,25 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
     else
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
 
-    if (statusBarButton(@src(), "GET", .g, 1, static.alt_key_pressed)) {
+    var any_selected: bool = false;
+    for (ui_state.disk_interface.image_dir.directory_list.items) |item| {
+        if (item.selected) {
+            any_selected = true;
+            break;
+        }
+    }
+    const image_open = ui_state.disk_interface.disk_image != null;
+    if (statusBarButton(
+        @src(),
+        "GET",
+        .g,
+        1,
+        static.alt_key_pressed,
+        image_open and any_selected,
+    )) {
         ui_state.operation_state.beginOperation(.{ .get = .init });
     }
-    if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed)) {
+    if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed, true)) {
         if (ui_state.filter_user) |_| {
             ui_state.filter_user.? += 1;
             if (ui_state.filter_user == 16) ui_state.filter_user = null;
@@ -364,19 +379,19 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         }
     }
     const operation_state = &ui_state.operation_state;
-    if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed)) {
+    if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed, true)) {
         operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) });
     }
 
-    if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed)) {
+    if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed, true)) {
         operation_state.beginOperation(.{ .new = .init });
     }
 
-    if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed)) {
+    if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed, image_open)) {
         operation_state.beginOperation(.close);
     }
 
-    if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed)) {
+    if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed, true)) {
         return .close;
     }
     return null;
@@ -398,17 +413,21 @@ fn statusBarButton(
     shortcut_key: dvui.enums.Key,
     shortcut_char_pos: u32,
     alt_key_pressed: bool,
+    enabled: bool,
+    //    options: dvui.Options,
 ) bool {
+    // TODO:
+    const options: dvui.Options = .{};
     const char_width = dvui.themeGet().font_mono.sizeM(1, 1).w;
     const x_offset: f32 = char_width * @as(f32, @floatFromInt(shortcut_char_pos));
     var wd: dvui.WidgetData = undefined;
     var box = dvui.box(src, .{}, .{});
     defer box.deinit();
     const result = widgets.buttonWithShortcut(@src(), label, .{
-        .button = .{},
+        .button = .{ .grayed = !enabled },
         .shortcut = shortcut_key,
-    }, .{ .data_out = &wd });
-    if (alt_key_pressed) {
+    }, options.override(.{ .data_out = &wd }));
+    if (enabled and alt_key_pressed) {
         _ = dvui.separator(@src(), .{ .expand = .none, .rect = .{
             .x = x_offset + 3,
             .y = wd.contentRect().x + wd.contentRect().h - wd.options.padding.?.h + 4,
@@ -755,26 +774,28 @@ const widgets = struct {
     pub fn buttonWithShortcut(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: ButtonShortCutInitOptions, opts: dvui.Options) bool {
         var bw: dvui.ButtonWidget = undefined;
         bw.init(src, init_opts.button, opts);
-        bw.processEvents();
+        if (!init_opts.button.grayed) {
+            bw.processEvents();
 
-        // Check if shortcut was prressed.
-        for (dvui.events()) |*e| {
-            switch (e.evt) {
-                .key => |ke| {
-                    if (ke.action == .down and
-                        ke.code == init_opts.shortcut and
-                        (ke.mod == .lalt or ke.mod == .ralt))
-                    {
-                        e.handle(@src(), bw.data());
-                        bw.click = true;
-                    }
-                },
-                else => {},
+            // Check if shortcut was prressed.
+            for (dvui.events()) |*e| {
+                switch (e.evt) {
+                    .key => |ke| {
+                        if (ke.action == .down and
+                            ke.code == init_opts.shortcut and
+                            (ke.mod == .lalt or ke.mod == .ralt))
+                        {
+                            e.handle(@src(), bw.data());
+                            bw.click = true;
+                        }
+                    },
+                    else => {},
+                }
             }
         }
         bw.drawBackground();
 
-        const click = bw.clicked();
+        const click = if (!init_opts.button.grayed) bw.clicked() else false;
 
         dvui.labelNoFmt(@src(), label_str, .{ .align_x = 0.5, .align_y = 0.5 }, opts.strip().override(bw.style()).override(.{ .gravity_x = 0.5, .gravity_y = 0.5 }));
         bw.deinit();

@@ -34,6 +34,9 @@ pub fn show(d: Dialogs) void {
 pub fn hide(d: Dialogs) void {
     std.debug.print("hide\n", .{});
     all_dialogs.getPtr(d).open = false;
+    for (all_dialogs.values, 0..) |dd, i| {
+        std.debug.print("{} is {}\n", .{ i, dd.open });
+    }
 }
 
 fn openImage(self: *DialogState, state: *OperationState) void {
