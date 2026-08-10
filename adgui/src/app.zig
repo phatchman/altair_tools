@@ -130,6 +130,7 @@ pub fn menu(ui_state: *UIState) ?dvui.App.Result {
 
         if (dvui.menuItemLabel(@src(), "About", .{}, .{}) != null) {
             m.close();
+            ui_state.operation_state.beginOperation(.{ .show_dialog = .init(.about) });
         }
     }
     return null;
@@ -205,10 +206,10 @@ fn capacityGraph(ui_state: *UIState) void {
         defer files_box.deinit();
 
         if (ui_state.disk_interface.disk_image) |disk_image| {
-            const max_directories = disk_image.image_type.directories;
-            const free_directories = disk_image.directory.rawEntryFreeCount();
-            const used_directories = max_directories - free_directories;
-            const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
+            const total_space = disk_image.capacityTotalInKB();
+            const free_space = disk_image.capacityFreeInKB();
+            const used_space = total_space -| free_space;
+            const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
             const width = percentage * 250;
 
             var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
@@ -218,7 +219,7 @@ fn capacityGraph(ui_state: *UIState) void {
             });
             used_box.deinit();
             var msg_buf: [256]u8 = undefined;
-            const message = std.fmt.bufPrint(&msg_buf, "{:>7} used {:>7} remain ", .{ used_directories, free_directories }) catch unreachable;
+            const message = std.fmt.bufPrint(&msg_buf, "{:>6}K used {:>6}K remain ", .{ used_space, free_space }) catch unreachable;
 
             dvui.labelNoFmt(@src(), message, .{}, .{
                 .padding = .all(2),
@@ -239,10 +240,10 @@ fn directoriesGraph(ui_state: *UIState) void {
         defer files_box.deinit();
 
         if (ui_state.disk_interface.disk_image) |disk_image| {
-            const total_space = disk_image.capacityTotalInKB();
-            const free_space = disk_image.capacityFreeInKB();
-            const used_space = total_space -| free_space;
-            const percentage: f32 = @as(f32, @floatFromInt(used_space)) / @as(f32, @floatFromInt(total_space));
+            const max_directories = disk_image.image_type.directories;
+            const free_directories = disk_image.directory.rawEntryFreeCount();
+            const used_directories = max_directories - free_directories;
+            const percentage = @as(f32, @floatFromInt(used_directories)) / @as(f32, @floatFromInt(max_directories));
             const width = percentage * 250;
 
             var used_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
@@ -252,7 +253,7 @@ fn directoriesGraph(ui_state: *UIState) void {
             });
             used_box.deinit();
             var msg_buf: [256]u8 = undefined;
-            const message = std.fmt.bufPrint(&msg_buf, "{:>6}K used {:>6}K remain ", .{ used_space, free_space }) catch unreachable;
+            const message = std.fmt.bufPrint(&msg_buf, "{:>7} used {:>7} remain ", .{ used_directories, free_directories }) catch unreachable;
 
             dvui.labelNoFmt(@src(), message, .{}, .{
                 .padding = .all(2),

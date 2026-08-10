@@ -1,4 +1,4 @@
-pub const Dialogs = enum { transfer, open_image, open_local, new, shortcuts };
+pub const Dialogs = enum { transfer, open_image, open_local, new, shortcuts, about };
 const DialogState = struct {
     open: bool,
     dialog_fn: *const fn (self: *DialogState, *OperationState) void,
@@ -17,12 +17,12 @@ var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
     .open_local = .init(openLocal),
     .new = .init(new),
     .shortcuts = .init(shortcutKeys),
+    .about = .init(about),
 });
 
 pub fn displayOpen(state: *OperationState) void {
     std.debug.print("Display Open\n", .{});
     for (&all_dialogs.values) |*dialog| {
-        std.debug.print("displaying state = {t}\n", .{state.state});
         if (dialog.open) dialog.dialog_fn(dialog, state);
     }
 }
@@ -35,9 +35,6 @@ pub fn show(d: Dialogs) void {
 pub fn hide(d: Dialogs) void {
     std.debug.print("hide\n", .{});
     all_dialogs.getPtr(d).open = false;
-    for (all_dialogs.values, 0..) |dd, i| {
-        std.debug.print("{} is {}\n", .{ i, dd.open });
-    }
 }
 
 fn openImage(self: *DialogState, state: *OperationState) void {
@@ -435,6 +432,50 @@ fn shortcutKeys(self: *DialogState, state: *OperationState) void {
     // }
 }
 
+const adgui_version = "TODO";
+
+pub fn about(self: *DialogState, state: *OperationState) void {
+    // TODO: Think how to get rid of the double return.
+    if (!self.open) return;
+    var dialog_win = dialogWindow(@src(), "About ADGUI", self, state, null);
+    defer dialog_win.deinit();
+    if (!self.open) return;
+    dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
+    // Now add the scroll area which will get the remaining space
+    var tl = dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
+    tl.addText("\n", .{});
+
+    // Highlight the underline separator if the text is hovered.
+    const evts = dvui.events();
+    const hovered: bool = blk: {
+        for (evts) |*evt| {
+            if (evt.evt == .mouse and evt.evt.mouse.action == .position) {
+                const pos_physical = evt.evt.mouse.p;
+                const pos = tl.data().parent.data().contentRectScale().pointFromPhysical(pos_physical);
+                if (tl.data().contentRect().contains(pos)) {
+                    break :blk true;
+                }
+            }
+        }
+        break :blk false;
+    };
+    const color_url: dvui.Color = .{ .r = 0x35, .g = 0x84, .b = 0xe4 };
+    const url = "https://github.com/phatchman/altair_tools";
+    if (tl.addTextClick(url, .{
+        .color_text = if (!hovered) dvui.themeGet().text else color_url,
+    })) |_| {
+        _ = dvui.openURL(.{ .url = url });
+    }
+    const tl_rect = tl.data().contentRect();
+    tl.deinit();
+
+    const underline_rect: dvui.Rect = .{ .x = tl_rect.x, .y = tl_rect.y + 35, .h = 1, .w = tl_rect.w };
+    _ = dvui.separator(@src(), .{
+        .rect = underline_rect,
+        .color_fill = if (!hovered) dvui.themeGet().text else color_url,
+    });
+}
+
 fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *DialogState, state: *OperationState, size: ?dvui.Size) *dvui.FloatingWindowWidget {
     var dialog_win = dvui.floatingWindow(
         src,
@@ -451,6 +492,9 @@ fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *Dialo
         .processing, .user_input => "Cancel",
         .completed => "Close",
     };
+    var button_box = dvui.box(@src(), .{}, .{ .expand = .horizontal, .gravity_y = 1.0 });
+    defer button_box.deinit();
+    _ = dvui.separator(@src(), .{ .expand = .horizontal });
     var button_wd: dvui.WidgetData = undefined;
     if (dvui.button(@src(), label, .{}, .{ .gravity_x = 0.5, .gravity_y = 1.0, .data_out = &button_wd, .tab_index = 1 })) {
         self.open = false;
