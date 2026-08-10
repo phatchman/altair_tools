@@ -75,20 +75,17 @@ fn openLocal(self: *DialogState, state: *OperationState) void {
 }
 
 fn transfer(self: *DialogState, state: *OperationState) void {
-    std.debug.assert(state.operation == .get);
+    std.debug.assert(state.operation == .transfer);
+    const operation = &state.operation.transfer;
     if (!self.open) return;
-    const title = switch (state.operation) {
+    const title = switch (operation.transfer_type) {
         .get => "Copy files from disk image",
         .put => "Copy files to disk image",
-        else => unreachable,
+        .erase => "Erase files from image",
     };
-    const transfer_results = switch (state.operation) {
-        .get => |op| op.transfer_result.items,
-        else => unreachable,
-    };
-
+    const transfer_results = operation.transfer_result.items;
     const dirty = switch (state.operation) {
-        .get => |*op| &op.dirty,
+        .transfer => |*op| &op.dirty,
         else => unreachable,
     };
 
@@ -144,6 +141,7 @@ fn transfer(self: *DialogState, state: *OperationState) void {
 
         if (state.state == .user_input and result.result == .err and i == transfer_results.len - 1) switch (result.err.?) {
             error.PathAlreadyExists => {
+                std.debug.print("PAE\n", .{});
                 var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
                 defer hbox.deinit();
 
@@ -219,16 +217,27 @@ fn transfer(self: *DialogState, state: *OperationState) void {
                     }
                 }
             }, // Prompt for overwrite
-
-            // TODO: Turn all of these into nicer errors
+            error.ReadOnlySupport,
+            error.InvalidImageFile,
+            error.OutOfExtents,
+            error.OutOfAllocs,
             error.UnsupportedTextMode,
             error.InvalidFormat,
             error.InvalidToken,
             error.InvalidRecordNumber,
             error.InvalidTrack,
             error.InvalidSector,
+            error.InvalidFilename,
+            error.InvalidUser,
+            error.InvalidExtent,
+            error.InvalidAllocation,
+            error.InvalidEntryNumber,
+            error.InvalidDirectoryEntry,
+            error.CookedDirEntryNotFound,
             => actions.no(state), // just report these AltairDiskLib errors
 
+            error.OutOfMemory,
+            error.StreamTooLong,
             error.NoSpaceLeft,
             error.PermissionDenied,
             error.SystemResources,

@@ -239,6 +239,7 @@ pub fn openExistingImage(self: *DiskInterface, io: std.Io, filename: []const u8,
     self.reader = self.image_file.?.reader(io, &.{});
     self.writer = self.image_file.?.writer(io, &.{});
     self.disk_image = try DiskImage.init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
+    try self.disk_image.?.loadDirectories(.full);
     try self.loadImageDirectory();
 }
 
@@ -253,6 +254,7 @@ pub fn openTestImage(self: *DiskInterface, io: std.Io) !void {
     static.reader = .fixed(&static.test_file);
     static.writer = .fixed(&static.test_file);
     self.disk_image = try .init(allocator, .{ .in_memory = &static.reader }, .{ .in_memory = &static.writer }, ad.all_disk_types.getPtrConst(.FDD_8IN));
+    try self.disk_image.?.loadDirectories(.full);
     try self.loadImageDirectory();
 }
 
@@ -284,6 +286,7 @@ pub fn createNewImage(self: *DiskInterface, io: std.Io, filename: []const u8, im
     self.disk_image = try .init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
 
     try self.disk_image.?.formatImage();
+    try self.disk_image.?.loadDirectories(.full);
     try self.loadImageDirectory();
     if (label) |lbl| {
         try self.disk_image.?.labelDisk(lbl);
@@ -296,7 +299,8 @@ pub fn labelGet(self: *DiskInterface, label: *ad.DiskLabel) !void {
 
 // TODO: This should just be cached right? And then freed when the image is closed?
 pub fn loadImageDirectory(self: *DiskInterface) !void {
-    try self.disk_image.?.loadDirectories(.full);
+    self.image_dir.directory_list = .empty;
+    _ = self.image_dir.arena.reset(.free_all);
     if (self.disk_image) |image| {
         for (image.directory.cooked_directories.items) |dir| {
             // TODO: The < 15 user check was here.
@@ -324,7 +328,7 @@ pub fn openLocalDirectory(self: *DiskInterface, io: std.Io, dir_path: []const u8
     try self.loadLocalDirectory(io);
 }
 
-fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
+pub fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
     self.local_dir.directory_list = .empty;
     _ = self.local_dir.arena.reset(.free_all);
     if (self.current_dir) |dir| {
@@ -398,8 +402,9 @@ pub fn getFile(self: *DiskInterface, io: std.Io, src: *const DirectoryEntry, des
     }
 }
 
-pub fn putFile(self: *DiskInterface, io: std.Io, filename: []const u8, dirname: []const u8, user: usize, copy_mode: CopyMode, force: bool) !void {
-    const cpm_user = if (user < 16) @as(u8, @intCast(user)) else null;
+pub const PutFileError = (std.Io.Dir.OpenError || std.Io.File.OpenError || std.Io.File.Writer.Error || DiskImage.CopyToImageError);
+pub fn putFile(self: *DiskInterface, io: std.Io, filename: []const u8, dirname: []const u8, user: ?u8, copy_mode: CopyMode, force: bool) PutFileError!void {
+    const cpm_user = user; // TODO: if (user < 16) @as(u8, @intCast(user)) else null;
     if (self.disk_image) |*image| {
         var cwd = try std.Io.Dir.cwd().openDir(io, dirname, .{});
         defer cwd.close(io);

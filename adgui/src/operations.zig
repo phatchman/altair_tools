@@ -72,7 +72,7 @@ pub const Operation = union(enum) {
     open_image: OpenImageOperation,
     open_local: OpenLocalOperation,
     close: CloseOperation,
-    get: GetOperation,
+    transfer: TransferOperation,
     put,
     erase,
     info,
@@ -274,48 +274,63 @@ pub const NewOperation = struct {
 };
 
 pub const TransferResult = struct {
-    const Result = enum { ok, err, err_retryable };
+    const Result = enum { ok, err, skipped };
     filename: []const u8,
     result: Result,
-    err: ?DiskInterface.GetFileError = null,
+    err: ?(DiskInterface.GetFileError || DiskInterface.PutFileError) = null,
     message: []const u8 = "",
     recovery: enum { skip, retry } = .skip,
 };
 
-pub const GetOperation = struct {
+pub const TransferOperation = struct {
+    const TransferType = enum { get, put, erase };
     dir_idx: usize,
+    cpm_user: ?u8,
+    copy_mode: DiskInterface.CopyMode,
+    transfer_type: TransferType,
     transfer_result: std.ArrayList(TransferResult),
+    directories: []DiskInterface.DirectoryEntry,
+    skip_remaining: bool,
     dirty: bool,
 
-    pub const init: GetOperation = .{
-        .dir_idx = 0,
-        .transfer_result = .empty,
-        .dirty = false,
-    };
-
-    pub fn begin(self: *GetOperation, state: *OperationState) void {
-        state.state = .processing;
-        const selected_count = count: {
-            var selected_count: usize = 0;
-            for (state.disk_interface.image_dir.directory_list.items) |*dir| {
-                if (dir.selected) selected_count += 1;
-            }
-            break :count selected_count;
+    pub fn init(directories: []DiskInterface.DirectoryEntry, transfer_type: TransferType, copy_mode: DiskInterface.CopyMode, cpm_user: ?u8) TransferOperation {
+        return .{
+            .dir_idx = 0,
+            .copy_mode = copy_mode,
+            .cpm_user = cpm_user,
+            .transfer_type = transfer_type,
+            .transfer_result = .empty,
+            .directories = directories,
+            .skip_remaining = false,
+            .dirty = false,
         };
-        if (selected_count > 0) {
-            self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_dir.directory_list.items.len) catch |err| oom(err);
-            dialogs.show(.transfer);
-        } else {
-            state.err = .{
-                .message = "Select at least one image file to get",
-                .err = error.User,
-            };
-        }
     }
 
-    pub fn process(self: *GetOperation, state: *OperationState) void {
-        const directories = state.disk_interface.image_dir.directory_list.items;
+    pub fn begin(self: *TransferOperation, state: *OperationState) void {
+        state.state = .processing;
+        self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), self.directories.len) catch |err| oom(err);
+        dialogs.show(.transfer);
 
+        // const selected_count = count: {
+        //     var selected_count: usize = 0;
+        //     for (state.disk_interface.image_dir.directory_list.items) |*dir| {
+        //         if (dir.selected) selected_count += 1;
+        //     }
+        //     break :count selected_count;
+        // };
+
+        // if (state.operation.transfer.transfer_type != .put and selected_count > 0) {
+        //     self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_dir.directory_list.items.len) catch |err| oom(err);
+        //     dialogs.show(.transfer);
+        // } else {
+        //     state.err = .{
+        //         .message = "Select at least one image file",
+        //         .err = error.User,
+        //     };
+        // }
+    }
+
+    pub fn process(self: *TransferOperation, state: *OperationState) void {
         // Check if the last transfer was in error and if it needs to be retried.
         const transfer_results = self.transfer_result.items;
         const retry = retry: {
@@ -336,33 +351,141 @@ pub const GetOperation = struct {
             }
             break :retry false;
         };
-        while (self.dir_idx != directories.len) : (self.dir_idx += 1) {
-            if (directories[self.dir_idx].selected) {
+        while (self.dir_idx != self.directories.len) : (self.dir_idx += 1) {
+            if (self.directories[self.dir_idx].selected) {
+                self.dirty = true;
                 // TODO: Would pass -force if the recovery mode is retry.
                 //                    state.disk_interface.getFile(io, &directories[self.dir_idx], ".", .AUTO, false) catch unreachable;
-
-                if (self.dir_idx % 3 == 0 and !retry) {
-                    self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.PathAlreadyExists, .message = "File already exists" });
-                    state.state = .user_input;
-                } else if (self.dir_idx % 5 == 0 and !retry) {
-                    self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.DiskQuota, .message = "Disk quota" });
-                    self.dir_idx += 1;
-                } else {
-                    self.transfer_result.appendAssumeCapacity(.{ .filename = directories[self.dir_idx].filenameAndExtension(), .result = .ok });
-                    self.dir_idx += 1;
+                switch (self.transfer_type) {
+                    .get => {
+                        if (self.dir_idx % 3 == 0 and !retry) {
+                            self.transfer_result.appendAssumeCapacity(.{ .filename = self.directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.PathAlreadyExists, .message = "File already exists" });
+                            state.state = .user_input;
+                        } else if (self.dir_idx % 5 == 0 and !retry) {
+                            self.transfer_result.appendAssumeCapacity(.{ .filename = self.directories[self.dir_idx].filenameAndExtension(), .result = .err, .err = error.DiskQuota, .message = "Disk quota" });
+                            self.dir_idx += 1;
+                        } else {
+                            self.transfer_result.appendAssumeCapacity(.{ .filename = self.directories[self.dir_idx].filenameAndExtension(), .result = .ok });
+                            self.dir_idx += 1;
+                        }
+                    },
+                    .put => {
+                        if (self.skip_remaining) {
+                            self.transfer_result.appendAssumeCapacity(.{
+                                .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                .result = .skipped,
+                            });
+                            self.dir_idx += 1;
+                            return;
+                        }
+                        state.disk_interface.putFile(state.io, self.directories[self.dir_idx].filenameAndExtension(), state.disk_interface.local_dir.path, self.cpm_user, self.copy_mode, retry) catch |err| {
+                            switch (err) {
+                                error.PathAlreadyExists => {
+                                    self.transfer_result.appendAssumeCapacity(.{
+                                        .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                        .result = .err,
+                                        .err = err,
+                                        .message = "File already exists",
+                                    });
+                                    state.state = .user_input;
+                                    return;
+                                },
+                                error.ReadOnlySupport => {
+                                    self.transfer_result.appendAssumeCapacity(.{
+                                        .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                        .result = .err,
+                                        .err = err,
+                                        .message = "Image type only supports reading",
+                                    });
+                                    self.skip_remaining = true;
+                                    return;
+                                },
+                                error.OutOfExtents, error.OutOfAllocs => {
+                                    const message = std.fmt.allocPrint(state.arena.allocator(), "Disk Full: {t}", .{err}) catch |e| oom(e);
+                                    self.transfer_result.appendAssumeCapacity(.{
+                                        .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                        .result = .err,
+                                        .err = err,
+                                        .message = message,
+                                    });
+                                    self.skip_remaining = true;
+                                    return;
+                                },
+                                else => {
+                                    self.transfer_result.appendAssumeCapacity(.{
+                                        .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                        .result = .err,
+                                        .err = null, // TODO: Need to expand error set? Or not use errors
+                                        .message = @errorName(err),
+                                    });
+                                    self.dir_idx += 1;
+                                    return;
+                                },
+                            }
+                        };
+                        self.transfer_result.appendAssumeCapacity(.{
+                            .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                            .result = .ok,
+                        });
+                        self.dir_idx += 1;
+                        return;
+                    },
+                    .erase => {
+                        state.disk_interface.eraseFile(&self.directories[self.dir_idx]) catch |err| {
+                            self.transfer_result.appendAssumeCapacity(
+                                .{
+                                    .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                    .result = .err,
+                                    .err = null, // TODO: Need to expand error set? Or not use errors
+                                    .message = @errorName(err),
+                                },
+                            );
+                            self.dir_idx += 1;
+                            return;
+                        };
+                        self.transfer_result.appendAssumeCapacity(
+                            .{
+                                .filename = self.directories[self.dir_idx].filenameAndExtension(),
+                                .result = .ok,
+                            },
+                        );
+                        self.dir_idx += 1;
+                    },
                 }
-                self.dirty = true;
+                std.debug.print("dirty return\n", .{});
                 return;
             }
         }
+        std.debug.print("completed return\n", .{});
         state.state = .completed;
         return;
     }
 
-    pub fn end(_: *GetOperation, state: *OperationState) void {
-        std.debug.print("unselecting\n", .{});
-        for (state.disk_interface.image_dir.directory_list.items) |*dir| {
+    pub fn end(self: *TransferOperation, state: *OperationState) void {
+        // Unselect any relevant selections
+        const to_unselect = switch (self.transfer_type) {
+            .get, .erase => state.disk_interface.image_dir.directory_list.items,
+            .put => state.disk_interface.local_dir.directory_list.items,
+        };
+        for (to_unselect) |*dir| {
             dir.selected = false;
+        }
+        // Rebuild the directory list as it has changed.
+        switch (self.transfer_type) {
+            .put, .erase => state.disk_interface.loadImageDirectory() catch |err| {
+                const message = std.fmt.allocPrint(state.arena.allocator(), "Error loading image directory: {t}", .{err}) catch unreachable;
+                state.err = .{
+                    .message = message,
+                    .err = err,
+                };
+            },
+            .get => state.disk_interface.loadLocalDirectory(state.io) catch |err| {
+                const message = std.fmt.allocPrint(state.arena.allocator(), "Error loading local directory: {t}", .{err}) catch unreachable;
+                state.err = .{
+                    .message = message,
+                    .err = err,
+                };
+            },
         }
         dialogs.hide(.transfer);
     }

@@ -18,6 +18,7 @@ const UIState = struct {
     arena: std.mem.Allocator,
     io: std.Io,
     filter_user: ?u8,
+    copy_mode: DiskInterface.CopyMode,
 
     pub fn init(self: *UIState, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) void {
         self.* = .{
@@ -33,12 +34,15 @@ const UIState = struct {
             .arena = arena,
             .io = io,
             .filter_user = null,
+            .copy_mode = .AUTO,
         };
         self.disk_interface.openLocalDirectory(io, ".") catch |err| {
             std.debug.print("Error opening current directory: {t}\n", .{err});
         };
     }
 };
+
+// Prefer to use a passed ui_state function param instead of this.
 var global_ui_state: UIState = undefined;
 
 pub const dvui_app: dvui.App = .{
@@ -359,13 +363,22 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
     else
         std.fmt.bufPrint(&label_buf, "USER *", .{}) catch unreachable;
 
-    var any_selected: bool = false;
+    var any_image_selected: bool = false;
     for (ui_state.disk_interface.image_dir.directory_list.items) |item| {
         if (item.selected) {
-            any_selected = true;
+            any_image_selected = true;
             break;
         }
     }
+
+    var any_local_selected: bool = false;
+    for (ui_state.disk_interface.local_dir.directory_list.items) |item| {
+        if (item.selected) {
+            any_local_selected = true;
+            break;
+        }
+    }
+
     const image_open = ui_state.disk_interface.disk_image != null;
     if (statusBarButton(
         @src(),
@@ -373,10 +386,50 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         .g,
         1,
         static.alt_key_pressed,
-        image_open and any_selected,
+        image_open and any_image_selected,
     )) {
-        ui_state.operation_state.beginOperation(.{ .get = .init });
+        // TODO: Copy Mode
+        ui_state.operation_state.beginOperation(.{ .transfer = .init(
+            ui_state.disk_interface.image_dir.directory_list.items,
+            .get,
+            .AUTO,
+            ui_state.filter_user,
+        ) });
     }
+
+    if (statusBarButton(
+        @src(),
+        "PUT",
+        .p,
+        1,
+        static.alt_key_pressed,
+        image_open and any_local_selected,
+    )) {
+        // TODO: Copy Mode
+        ui_state.operation_state.beginOperation(.{ .transfer = .init(
+            ui_state.disk_interface.local_dir.directory_list.items,
+            .put,
+            .AUTO,
+            ui_state.filter_user,
+        ) });
+    }
+
+    if (statusBarButton(
+        @src(),
+        "ERASE",
+        .e,
+        1,
+        static.alt_key_pressed,
+        image_open and any_image_selected,
+    )) {
+        ui_state.operation_state.beginOperation(.{ .transfer = .init(
+            ui_state.disk_interface.image_dir.directory_list.items,
+            .erase,
+            .AUTO,
+            ui_state.filter_user,
+        ) });
+    }
+
     if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed, true)) {
         if (ui_state.filter_user) |_| {
             ui_state.filter_user.? += 1;
@@ -403,6 +456,17 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         operation_state.beginOperation(.close);
     }
 
+    const mode_label = std.fmt.bufPrint(&label_buf, "MODE: {s}\n", .{@tagName(ui_state.copy_mode)[0..3]}) catch unreachable;
+    if (statusBarButton(@src(), mode_label, .m, 1, static.alt_key_pressed, true)) {
+        ui_state.copy_mode = switch (ui_state.copy_mode) {
+            .AUTO => .ASCII,
+            .ASCII => .BINARY,
+            .BINARY => .BASIC,
+            .BASIC => .RANDOM,
+            .RANDOM => .AUTO,
+        };
+    }
+
     if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed, true)) {
         return .close;
     }
@@ -426,10 +490,7 @@ fn statusBarButton(
     shortcut_char_pos: u32,
     alt_key_pressed: bool,
     enabled: bool,
-    //    options: dvui.Options,
 ) bool {
-    // TODO:
-    const options: dvui.Options = .{};
     const char_width = dvui.themeGet().font_mono.sizeM(1, 1).w;
     const x_offset: f32 = char_width * @as(f32, @floatFromInt(shortcut_char_pos));
     var wd: dvui.WidgetData = undefined;
@@ -438,7 +499,7 @@ fn statusBarButton(
     const result = widgets.buttonWithShortcut(@src(), label, .{
         .button = .{ .grayed = !enabled },
         .shortcut = shortcut_key,
-    }, options.override(.{ .data_out = &wd }));
+    }, .{ .data_out = &wd });
     if (enabled and alt_key_pressed) {
         _ = dvui.separator(@src(), .{ .expand = .none, .rect = .{
             .x = x_offset + 3,
@@ -549,6 +610,10 @@ const DirectoryGrid = struct {
         const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols, .scroll_opts = .{ .horizontal = .auto } }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
+
+        if (listing_changed) {
+            sortDirectories(grid.sort_col, grid.sort_dir, dir_listing);
+        }
 
         self.processKbEventsPre();
 
