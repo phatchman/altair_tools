@@ -259,6 +259,8 @@ pub fn openTestImage(self: *DiskInterface, io: std.Io) !void {
 }
 
 pub fn closeImage(self: *DiskInterface, io: std.Io) void {
+    self.image_dir.path = "";
+    self.image_dir.changed = true;
     self.image_dir.directory_list = .empty;
     _ = self.image_dir.arena.reset(.free_all);
     if (self.disk_image) |*existing| {

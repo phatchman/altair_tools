@@ -370,6 +370,7 @@ pub const TransferOperation = struct {
                         }
                     },
                     .put => {
+                        // TODO: Prob remove this.. Just report Disk Full and stop.
                         if (self.skip_remaining) {
                             self.transfer_result.appendAssumeCapacity(.{
                                 .filename = self.directories[self.dir_idx].filenameAndExtension(),
@@ -397,7 +398,7 @@ pub const TransferOperation = struct {
                                         .err = err,
                                         .message = "Image type only supports reading",
                                     });
-                                    self.skip_remaining = true;
+                                    state.state = .completed;
                                     return;
                                 },
                                 error.OutOfExtents, error.OutOfAllocs => {
@@ -408,7 +409,7 @@ pub const TransferOperation = struct {
                                         .err = err,
                                         .message = message,
                                     });
-                                    self.skip_remaining = true;
+                                    state.state = .completed;
                                     return;
                                 },
                                 else => {

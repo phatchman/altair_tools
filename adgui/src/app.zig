@@ -160,7 +160,7 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     if (paned.showFirst()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        const result = filenameEntryBox(@src(), "Image:", ui_state.disk_interface.image_dir.path_buf, ui_state.disk_interface.image_dir.changed);
+        const result = filenameEntryBox(@src(), "Image:", "Open a disk image", ui_state.disk_interface.image_dir.path, ui_state.disk_interface.image_dir.changed);
         switch (result.response) {
             .enter => ui_state.operation_state.beginOperation(.{ .open_image = .init(result.path, ui_state.disk_interface.image_dir.path_buf) }),
             .button => ui_state.operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) }),
@@ -172,7 +172,7 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     if (paned.showSecond()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        const result = filenameEntryBox(@src(), "Local:", ui_state.disk_interface.local_dir.path_buf, ui_state.disk_interface.local_dir.changed);
+        const result = filenameEntryBox(@src(), "Local:", null, ui_state.disk_interface.local_dir.path, ui_state.disk_interface.local_dir.changed);
         switch (result.response) {
             .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(
                 .{ .given = result.path },
@@ -511,22 +511,20 @@ fn statusBarButton(
     return result;
 }
 
-// TODO: This should return a bool which triggers the begin operation above.
-// also pass in path as a param or the whole DirectoryListing?
 const FilenameEntryResult = struct {
     response: enum { none, enter, button },
     path: []const u8,
 };
 
-fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8, buffer: []u8, changed: bool) FilenameEntryResult {
+fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8, placeholder: ?[]const u8, init_path: []u8, changed: bool) FilenameEntryResult {
     var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
     defer hbox.deinit();
     dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
-    var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = std.fs.max_path_bytes } } }, .{ .expand = .horizontal });
-    const text = std.mem.span(@as([*:0]u8, @ptrCast(buffer))); // TODO: FIX THIS
+    var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = std.fs.max_path_bytes } }, .placeholder = placeholder }, .{ .expand = .horizontal });
+
     if (changed or dvui.focusedWidgetId() != te.data().id) {
-        if (!std.mem.eql(u8, text, te.getText())) {
-            te.textSet(text, false);
+        if (!std.mem.eql(u8, init_path, te.getText())) {
+            te.textSet(init_path, false);
         }
     }
     var result: FilenameEntryResult = .{ .response = .none, .path = te.getText() };
