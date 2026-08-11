@@ -131,10 +131,6 @@ const OpenImageOperation = struct {
             state.state = .completed;
             return;
         };
-        const image_dir = &state.disk_interface.image_dir;
-        @memset(image_dir.path_buf, 0);
-        @memcpy(image_dir.path_buf[0..self.image_path.?.len], self.image_path.?);
-        image_dir.path = image_dir.path_buf[0..self.image_path.?.len];
         state.endOperation();
     }
 
@@ -190,7 +186,7 @@ const OpenLocalOperation = struct {
         }
     }
 
-    pub fn process(self: *OpenLocalOperation, state: *OperationState) void {
+    pub fn process(_: *OpenLocalOperation, state: *OperationState) void {
         std.debug.assert(state.operation == .open_local);
         const operation = &state.operation.open_local;
         state.disk_interface.openLocalDirectory(state.io, operation.path) catch |err| {
@@ -201,10 +197,6 @@ const OpenLocalOperation = struct {
             state.state = .completed;
             return;
         };
-        const local_dir = &state.disk_interface.local_dir;
-        @memset(local_dir.path_buf, 0);
-        @memcpy(local_dir.path_buf[0..self.path.len], self.path);
-        local_dir.path = local_dir.path_buf[0..self.path.len];
         state.endOperation();
     }
 
@@ -227,45 +219,59 @@ pub const CloseOperation = struct {
 };
 
 pub const NewOperation = struct {
+    init_path: []const u8,
     image_path: ?[]const u8 = null,
     image_type: ?*const DiskInterface.DiskImageType = null,
 
-    pub const init: NewOperation = .{
-        .image_path = null,
-        .image_type = null,
-    };
+    pub fn init(init_path: []const u8) NewOperation {
+        return .{
+            .init_path = init_path,
+            .image_path = null,
+            .image_type = null,
+        };
+    }
 
-    pub fn begin(_: *NewOperation, state: *OperationState) void {
+    pub fn begin(self: *NewOperation, state: *OperationState) void {
         dialogs.show(.new);
         state.state = .user_input;
+        // TODO: Scan and find the first free entry.
+        self.image_path = std.fs.path.join(
+            state.arena.allocator(),
+            &.{ self.init_path, "IMG000.DSK" },
+        ) catch |err| oom(err);
     }
 
     pub fn process(self: *NewOperation, state: *OperationState) void {
         // TODO: Labeling.
         std.debug.print("new operation: process\n", .{});
-        state.disk_interface.createNewImage(state.io, self.image_path.?, self.image_type.?, null) catch |err| {
-            state.err = .{
-                .message = std.fmt.allocPrint(
-                    state.arena.allocator(),
-                    "Error creating new disk image: {t}",
-                    .{err},
-                ) catch |e| oom(e),
-                .err = err,
+        // TODO: Check that image doesn't already exist and force overwrite if so.
+        // TODO: Pass force flag correctly.
+        create: {
+            state.disk_interface.createNewImage(state.io, self.image_path.?, self.image_type.?, null, false) catch |err| {
+                state.err = .{
+                    .message = std.fmt.allocPrint(
+                        state.arena.allocator(),
+                        "Error creating new disk image: {t}",
+                        .{err},
+                    ) catch |e| oom(e),
+                    .err = err,
+                };
+                break :create;
             };
-            return;
-        };
-        state.disk_interface.openExistingImage(state.io, self.image_path.?, self.image_type.?.type_id) catch |err| {
-            state.err = .{
-                .message = std.fmt.allocPrint(
-                    state.arena.allocator(),
-                    "Error creating new disk image: {t}",
-                    .{err},
-                ) catch |e| oom(e),
-                .err = err,
-            };
-        };
 
-        state.state = .completed;
+            state.disk_interface.openExistingImage(state.io, self.image_path.?, self.image_type.?.type_id) catch |err| {
+                state.err = .{
+                    .message = std.fmt.allocPrint(
+                        state.arena.allocator(),
+                        "Error creating new disk image: {t}",
+                        .{err},
+                    ) catch |e| oom(e),
+                    .err = err,
+                };
+                break :create;
+            };
+            state.state = .completed;
+        }
     }
 
     pub fn end(_: *NewOperation, _: *OperationState) void {
@@ -310,24 +316,6 @@ pub const TransferOperation = struct {
         state.state = .processing;
         self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), self.directories.len) catch |err| oom(err);
         dialogs.show(.transfer);
-
-        // const selected_count = count: {
-        //     var selected_count: usize = 0;
-        //     for (state.disk_interface.image_dir.directory_list.items) |*dir| {
-        //         if (dir.selected) selected_count += 1;
-        //     }
-        //     break :count selected_count;
-        // };
-
-        // if (state.operation.transfer.transfer_type != .put and selected_count > 0) {
-        //     self.transfer_result = std.ArrayList(TransferResult).initCapacity(state.arena.allocator(), state.disk_interface.image_dir.directory_list.items.len) catch |err| oom(err);
-        //     dialogs.show(.transfer);
-        // } else {
-        //     state.err = .{
-        //         .message = "Select at least one image file",
-        //         .err = error.User,
-        //     };
-        // }
     }
 
     pub fn process(self: *TransferOperation, state: *OperationState) void {

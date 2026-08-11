@@ -2205,7 +2205,7 @@ pub fn nextCopyMode(mode: CopyMode) CopyMode {
     const supported = (commands.disk_image orelse return .AUTO).textModesAllSupported();
     for (supported, 0..) |supported_mode, idx| {
         if (supported_mode == Commands.xlateFromCopyMode(mode)) {
-            return if (idx == supported.len - 1) Commands.xlateToCopyMode2(supported[0]) else Commands.xlateToCopyMode2(supported[idx + 1]);
+            return if (idx == supported.len - 1) Commands.xlateToCopyMode(supported[0]) else Commands.xlateToCopyMode(supported[idx + 1]);
         }
     }
     return .AUTO;

@@ -35,6 +35,14 @@ const DirectoryListing = struct {
         };
     }
 
+    pub fn pathSet(self: *DirectoryListing, path: []const u8) void {
+        if (path.ptr != self.path.ptr) {
+            @memset(self.path_buf, 0);
+            @memcpy(self.path_buf[0..path.len], path);
+            self.path = self.path_buf[0..path.len];
+        }
+    }
+
     pub fn deinit(self: *DirectoryListing, gpa: std.mem.Allocator) void {
         gpa.free(self.path_buf);
     }
@@ -241,6 +249,7 @@ pub fn openExistingImage(self: *DiskInterface, io: std.Io, filename: []const u8,
     self.disk_image = try DiskImage.init(allocator, .{ .on_disk = &self.reader.? }, .{ .on_disk = &self.writer.? }, image_type);
     try self.disk_image.?.loadDirectories(.full);
     try self.loadImageDirectory();
+    self.image_dir.pathSet(filename);
 }
 
 pub fn openTestImage(self: *DiskInterface, io: std.Io) !void {
@@ -276,9 +285,23 @@ pub fn closeImage(self: *DiskInterface, io: std.Io) void {
     self.writer = null;
 }
 
-pub fn createNewImage(self: *DiskInterface, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType, label: ?ad.DiskLabel) !void {
+pub fn createNewImage(self: *DiskInterface, io: std.Io, filename: []const u8, image_type: *const ad.DiskImageType, label: ?ad.DiskLabel, force: bool) !void {
     var cwd = std.Io.Dir.cwd();
 
+    if (!force) {
+        var file_found: bool = true;
+        _ = cwd.statFile(io, filename, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                file_found = false;
+            },
+            else => {
+                return err;
+            },
+        };
+        if (file_found) {
+            return error.PathAlreadyExists;
+        }
+    }
     self.closeImage(io);
     self.image_file = try cwd.createFile(io, filename, .{ .read = true });
     errdefer self.closeImage(io);
@@ -293,6 +316,7 @@ pub fn createNewImage(self: *DiskInterface, io: std.Io, filename: []const u8, im
     if (label) |lbl| {
         try self.disk_image.?.labelDisk(lbl);
     }
+    self.image_dir.pathSet(filename);
 }
 
 pub fn labelGet(self: *DiskInterface, label: *ad.DiskLabel) !void {
@@ -322,15 +346,19 @@ pub fn dump(self: *DiskInterface) void {
 }
 
 pub fn openLocalDirectory(self: *DiskInterface, io: std.Io, dir_path: []const u8) !void {
-    if (self.current_dir) |*current_dir| {
-        current_dir.close(io);
-        self.current_dir = null;
+    if (self.current_dir) |current_dir| {
+        var to_close = current_dir;
+        self.current_dir = try self.current_dir.?.openDir(io, dir_path, .{ .iterate = true });
+        to_close.close(io);
+    } else {
+        self.current_dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
     }
-    self.current_dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
     try self.loadLocalDirectory(io);
+    self.local_dir.pathSet(dir_path);
 }
 
 pub fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
+    std.debug.print("load local\n", .{});
     self.local_dir.directory_list = .empty;
     _ = self.local_dir.arena.reset(.free_all);
     if (self.current_dir) |dir| {
@@ -338,6 +366,7 @@ pub fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
         while (try itr.next(io)) |entry| {
             if (entry.kind == .file) {
                 const size = size: {
+                    // TODO: Check this in in 0.17. Stat takes a long time on system files on windows.
                     const stat = dir.statFile(io, entry.name, .{}) catch {
                         break :size 0;
                     };
@@ -354,8 +383,8 @@ pub fn loadLocalDirectory(self: *DiskInterface, io: std.Io) !void {
                 );
             }
         }
+        self.local_dir.changed = true;
     }
-    self.local_dir.changed = true;
 }
 
 pub fn xlateFromCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
@@ -368,7 +397,7 @@ pub fn xlateFromCopyMode(mode: CopyMode) ad.DiskImage.TextMode {
     };
 }
 
-pub fn xlateToCopyMode2(mode: ad.DiskImage.TextMode) CopyMode {
+pub fn xlateToCopyMode(mode: ad.DiskImage.TextMode) CopyMode {
     return switch (mode) {
         .Auto => .AUTO,
         .Text => .ASCII,

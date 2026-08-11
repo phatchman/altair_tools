@@ -84,10 +84,6 @@ fn transfer(self: *DialogState, state: *OperationState) void {
         .erase => "Erase files from image",
     };
     const transfer_results = operation.transfer_result.items;
-    const dirty = switch (state.operation) {
-        .transfer => |*op| &op.dirty,
-        else => unreachable,
-    };
 
     var dialog_win = dialogWindow(@src(), title, self, state, .{ .w = 500, .h = 500 });
     defer dialog_win.deinit();
@@ -106,9 +102,9 @@ fn transfer(self: *DialogState, state: *OperationState) void {
     defer {
         // Scroll to bottom must be done after deinit() so it applies next frame.
         scroll.deinit();
-        if (dirty.*) {
+        if (operation.dirty) {
             scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
-            dirty.* = false;
+            operation.dirty = false;
         }
     }
 
@@ -130,150 +126,170 @@ fn transfer(self: *DialogState, state: *OperationState) void {
         }
     };
 
+    //var grid = dvui.grid(@src(), .{}, .{ .expand = .horizontal, .border = .all(0) });
     const focused_id = dvui.lastFocusedIdInFrame();
+    var col1: dvui.Alignment = .init(@src(), 0);
+    defer col1.deinit();
+    var col2: dvui.Alignment = .init(@src(), 0);
+    defer col2.deinit();
+    const padding = dvui.LabelWidget.defaults.paddingGet().offset(.{ .x = 6, .y = 0, .h = 0, .w = 0 });
     for (transfer_results, 0..) |*result, i| {
-        var wid_yes: dvui.Id = .zero;
-        var wid_yesall: dvui.Id = .zero;
-        var wid_no: dvui.Id = .zero;
-        var wid_noall: dvui.Id = .zero;
+        var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = i });
+        defer hbox.deinit();
+        dvui.labelNoFmt(@src(), result.filename, .{}, .{ .padding = padding });
+        col1.spacer(@src(), 0);
+        dvui.labelNoFmt(@src(), switch (result.result) {
+            .ok => "OK",
+            .err => "ERR",
+            .skipped => "SKIP",
+        }, .{}, .{ .padding = padding });
+        col2.spacer(@src(), 0);
+        dvui.labelNoFmt(@src(), result.message, .{}, .{ .padding = padding });
+        //        dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
+    }
+    // grid.deinit();
 
-        dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
+    if (state.state == .user_input and transfer_results.len > 0 and transfer_results[transfer_results.len - 1].result == .err) switch (transfer_results[transfer_results.len - 1].err.?) {
+        error.PathAlreadyExists => {
+            var wid_yes: dvui.Id = .zero;
+            var wid_yesall: dvui.Id = .zero;
+            var wid_no: dvui.Id = .zero;
+            var wid_noall: dvui.Id = .zero;
 
-        if (state.state == .user_input and result.result == .err and i == transfer_results.len - 1) switch (result.err.?) {
-            error.PathAlreadyExists => {
-                std.debug.print("PAE\n", .{});
-                var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
-                defer hbox.deinit();
+            const result = &transfer_results[transfer_results.len - 1];
 
-                var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
-                defer fg.deinit();
+            std.debug.print("PAE\n", .{});
+            var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+            defer hbox.deinit();
 
-                dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{ .margin = dvui.ButtonWidget.defaults.margin });
-                var wd: dvui.WidgetData = undefined;
-                if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
-                    yes_to_all)
-                {
-                    actions.yes(state, result);
-                }
-                wid_yes = wd.id;
-                if (!yes_focused) {
-                    dvui.focusWidget(wid_yes, null, null);
-                    yes_focused = true;
-                }
-                if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd })) {
-                    actions.yes(state, result);
-                    yes_to_all = true;
-                }
-                wid_yesall = wd.id;
-                if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
-                    no_to_all)
-                {
-                    actions.no(state);
-                }
-                wid_no = wd.id;
-                if (dvui.button(@src(), "[N]o to all", .{}, .{ .data_out = &wd })) {
-                    actions.no(state);
-                    no_to_all = true;
-                }
-                wid_noall = wd.id;
-                if (dvui.lastFocusedIdInFrameSince(focused_id)) |wid| {
-                    for (dvui.events()) |*e| {
-                        if (!dvui.eventMatch(e, .{
-                            .id = fg.data().id,
-                            .r = fg.data().contentRectScale().r,
-                            .focus_id = wid,
-                        })) continue;
-                        switch (e.evt) {
-                            .key => |ke| {
-                                if (ke.action != .down and (ke.mod != .none or !ke.mod.shiftOnly())) continue;
-                                switch (ke.code) {
-                                    .y => {
-                                        e.handle(@src(), fg.data());
-                                        if (ke.mod.shift()) {
-                                            yes_to_all = true;
-                                            actions.yes(state, result);
-                                            dvui.focusWidget(wid_yesall, null, e.num);
-                                        } else {
-                                            actions.yes(state, result);
-                                            dvui.focusWidget(wid_yes, null, e.num);
-                                        }
-                                    },
-                                    .n => {
-                                        e.handle(@src(), fg.data());
-                                        if (ke.mod.shift()) {
-                                            no_to_all = true;
-                                            actions.no(state);
-                                            dvui.focusWidget(wid_noall, null, e.num);
-                                        } else {
-                                            actions.no(state);
-                                            dvui.focusWidget(wid_no, null, e.num);
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            },
-                            else => {},
-                        }
+            var fg = dvui.focusGroup(@src(), .{ .nav_key_dir = .horizontal }, .{});
+            defer fg.deinit();
+
+            dvui.labelNoFmt(@src(), "Overwrite? ", .{}, .{ .margin = dvui.ButtonWidget.defaults.margin });
+            var wd: dvui.WidgetData = undefined;
+            if (dvui.button(@src(), "[y]es", .{}, .{ .data_out = &wd }) or
+                yes_to_all)
+            {
+                actions.yes(state, result);
+            }
+            wid_yes = wd.id;
+            if (!yes_focused) {
+                dvui.focusWidget(wid_yes, null, null);
+                yes_focused = true;
+            }
+            if (dvui.button(@src(), "[Y]es to all", .{}, .{ .data_out = &wd })) {
+                actions.yes(state, result);
+                yes_to_all = true;
+            }
+            wid_yesall = wd.id;
+            if (dvui.button(@src(), "[n]o", .{}, .{ .data_out = &wd }) or
+                no_to_all)
+            {
+                actions.no(state);
+            }
+            wid_no = wd.id;
+            if (dvui.button(@src(), "[N]o to all", .{}, .{ .data_out = &wd })) {
+                actions.no(state);
+                no_to_all = true;
+            }
+            wid_noall = wd.id;
+            if (dvui.lastFocusedIdInFrameSince(focused_id)) |wid| {
+                for (dvui.events()) |*e| {
+                    if (!dvui.eventMatch(e, .{
+                        .id = fg.data().id,
+                        .r = fg.data().contentRectScale().r,
+                        .focus_id = wid,
+                    })) continue;
+                    switch (e.evt) {
+                        .key => |ke| {
+                            if (ke.action != .down and (ke.mod != .none or !ke.mod.shiftOnly())) continue;
+                            switch (ke.code) {
+                                .y => {
+                                    e.handle(@src(), fg.data());
+                                    if (ke.mod.shift()) {
+                                        yes_to_all = true;
+                                        actions.yes(state, result);
+                                        dvui.focusWidget(wid_yesall, null, e.num);
+                                    } else {
+                                        actions.yes(state, result);
+                                        dvui.focusWidget(wid_yes, null, e.num);
+                                    }
+                                },
+                                .n => {
+                                    e.handle(@src(), fg.data());
+                                    if (ke.mod.shift()) {
+                                        no_to_all = true;
+                                        actions.no(state);
+                                        dvui.focusWidget(wid_noall, null, e.num);
+                                    } else {
+                                        actions.no(state);
+                                        dvui.focusWidget(wid_no, null, e.num);
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+                        else => {},
                     }
                 }
-            }, // Prompt for overwrite
-            error.ReadOnlySupport,
-            error.InvalidImageFile,
-            error.OutOfExtents,
-            error.OutOfAllocs,
-            error.UnsupportedTextMode,
-            error.InvalidFormat,
-            error.InvalidToken,
-            error.InvalidRecordNumber,
-            error.InvalidTrack,
-            error.InvalidSector,
-            error.InvalidFilename,
-            error.InvalidUser,
-            error.InvalidExtent,
-            error.InvalidAllocation,
-            error.InvalidEntryNumber,
-            error.InvalidDirectoryEntry,
-            error.CookedDirEntryNotFound,
-            => actions.no(state), // just report these AltairDiskLib errors
+            }
+        }, // Prompt for overwrite
+        error.ReadOnlySupport,
+        error.InvalidImageFile,
+        error.OutOfExtents,
+        error.OutOfAllocs,
+        error.UnsupportedTextMode,
+        error.InvalidFormat,
+        error.InvalidToken,
+        error.InvalidRecordNumber,
+        error.InvalidTrack,
+        error.InvalidSector,
+        error.InvalidFilename,
+        error.InvalidUser,
+        error.InvalidExtent,
+        error.InvalidAllocation,
+        error.InvalidEntryNumber,
+        error.InvalidDirectoryEntry,
+        error.CookedDirEntryNotFound,
+        => actions.no(state), // just report these AltairDiskLib errors
 
-            error.OutOfMemory,
-            error.StreamTooLong,
-            error.NoSpaceLeft,
-            error.PermissionDenied,
-            error.SystemResources,
-            error.Unexpected,
-            error.DiskQuota,
-            error.FileTooBig,
-            error.InputOutput,
-            error.DeviceBusy,
-            error.AccessDenied,
-            error.BrokenPipe,
-            error.NotOpenForWriting,
-            error.LockViolation,
-            error.WouldBlock,
-            error.NoDevice,
-            error.FileBusy,
-            error.Canceled,
-            error.EndOfStream,
-            error.ReadFailed,
-            error.Unseekable,
-            error.IsDir,
-            error.ProcessFdQuotaExceeded,
-            error.SystemFdQuotaExceeded,
-            error.SymLinkLoop,
-            error.FileNotFound,
-            error.NotDir,
-            error.ReadOnlyFileSystem,
-            error.NetworkNotFound,
-            error.NameTooLong,
-            error.BadPathName,
-            error.PipeBusy,
-            error.AntivirusInterference,
-            error.FileLocksUnsupported,
-            error.WriteFailed,
-            => actions.no(state),
-        };
-    }
+        error.OutOfMemory,
+        error.StreamTooLong,
+        error.NoSpaceLeft,
+        error.PermissionDenied,
+        error.SystemResources,
+        error.Unexpected,
+        error.DiskQuota,
+        error.FileTooBig,
+        error.InputOutput,
+        error.DeviceBusy,
+        error.AccessDenied,
+        error.BrokenPipe,
+        error.NotOpenForWriting,
+        error.LockViolation,
+        error.WouldBlock,
+        error.NoDevice,
+        error.FileBusy,
+        error.Canceled,
+        error.EndOfStream,
+        error.ReadFailed,
+        error.Unseekable,
+        error.IsDir,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.SymLinkLoop,
+        error.FileNotFound,
+        error.NotDir,
+        error.ReadOnlyFileSystem,
+        error.NetworkNotFound,
+        error.NameTooLong,
+        error.BadPathName,
+        error.PipeBusy,
+        error.AntivirusInterference,
+        error.FileLocksUnsupported,
+        error.WriteFailed,
+        => actions.no(state),
+    };
 }
 
 pub fn new(self: *DialogState, state: *OperationState) void {
@@ -290,6 +306,36 @@ pub fn new(self: *DialogState, state: *OperationState) void {
     var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
     defer vbox.deinit();
     {
+        // TODO: This doesn't reall work as we dont necessarily want them pressing enter to set the path.
+        // hmmm :(
+        const result = widgets.filenameEntryBox(
+            @src(),
+            "Image name:",
+            "Select an image file",
+            op.image_path orelse "",
+            dvui.firstFrame(vbox.data().id),
+            .{},
+        );
+        switch (result.response) {
+            .none => {},
+            .enter => {
+                op.image_path = result.path;
+            },
+            .button => {
+                const image_path = op.image_path orelse ".";
+                const filename = std.fs.path.basename(image_path);
+                const dirname = std.fs.path.dirname(image_path) orelse ".";
+                const folder = dvui.native_dialogs.Native.folderSelect(state.arena.allocator(), .{
+                    .title = "Open image directory",
+                    .path = dirname,
+                }) catch |err| oom(err) orelse dirname;
+
+                op.image_path = std.fs.path.join(
+                    state.arena.allocator(),
+                    &.{ folder, filename },
+                ) catch |err| oom(err);
+            },
+        }
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
         defer hbox.deinit();
         var fmt_choice = dvui.dataGetDefault(null, wid_dialog, "fmt_choice", usize, 0);
@@ -299,9 +345,6 @@ pub fn new(self: *DialogState, state: *OperationState) void {
         if (dvui.dropdown(@src(), &DiskInterface.all_disk_type_names, .{ .choice = &fmt_choice }, .{}, .{})) {
             op.image_type = &DiskInterface.all_disk_types.values[fmt_choice];
         }
-        // TODO: Put the proper path in there.
-        if (op.image_path == null)
-            op.image_path = "c:\\temp\\new.dsk";
     }
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
@@ -325,7 +368,6 @@ pub fn new(self: *DialogState, state: *OperationState) void {
                         .id = fg.data().id,
                         .r = fg.data().borderRectScale().r,
                         .focus_id = dvui.lastFocusedIdInFrameSince(last_focus),
-                        .debug = true,
                     })) {
                         switch (ke.code) {
                             .y => {
@@ -335,10 +377,8 @@ pub fn new(self: *DialogState, state: *OperationState) void {
                                 }
                             },
                             .n => {
-                                std.debug.print("N KEY: {}\n", .{ke});
                                 if (ke.action == .down and ke.mod == .none) {
                                     e.handle(@src(), fg.data());
-                                    std.debug.print("no is true\n", .{});
                                     no = true;
                                 }
                             },
@@ -350,11 +390,17 @@ pub fn new(self: *DialogState, state: *OperationState) void {
             }
         }
 
-        std.debug.print("{}:{}\n", .{ yes, no });
         if (yes) {
             std.debug.print("yes\n", .{});
-            self.open = false;
-            state.state = .processing;
+            if (op.image_path != null and op.image_path.?.len > 0) {
+                self.open = false;
+                state.state = .processing;
+            } else {
+                dvui.toast(@src(), .{
+                    .message = "Enter an image filename before pressing yes",
+                    .subwindow_id = if (dvui.currentWindow().subwindows.current()) |current| current.id else null,
+                });
+            }
         } else if (no) {
             std.debug.print("no\n", .{});
             state.endOperation();
@@ -531,3 +577,4 @@ const TransferResult = operations.TransferResult;
 const std = @import("std");
 const dvui = @import("dvui");
 const DiskInterface = @import("DiskInterface.zig");
+const widgets = @import("app.zig").widgets;

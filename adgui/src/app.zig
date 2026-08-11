@@ -10,6 +10,7 @@ const dialogs = @import("dialogs.zig");
 const operations = @import("operations.zig");
 const Operation = operations.Operation;
 const OperationState = operations.OperationState;
+const CopyMode = DiskInterface.CopyMode;
 
 const UIState = struct {
     disk_interface: DiskInterface,
@@ -17,8 +18,9 @@ const UIState = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
+    shortcut_key_pressed: bool,
     filter_user: ?u8,
-    copy_mode: DiskInterface.CopyMode,
+    copy_mode: CopyMode,
 
     pub fn init(self: *UIState, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) void {
         self.* = .{
@@ -35,6 +37,7 @@ const UIState = struct {
             .io = io,
             .filter_user = null,
             .copy_mode = .AUTO,
+            .shortcut_key_pressed = false,
         };
         self.disk_interface.openLocalDirectory(io, ".") catch |err| {
             std.debug.print("Error opening current directory: {t}\n", .{err});
@@ -95,6 +98,21 @@ var frame_count: usize = 0;
 pub fn appFrame() !dvui.App.Result {
     std.debug.print("--- FRAME [{d}]---\n", .{frame_count});
     defer frame_count += 1;
+
+    // Check for .alt key regardless of who has focus
+    for (dvui.events()) |*e| {
+        switch (e.evt) {
+            .key => |ke| {
+                if (ke.code == .left_alt or ke.code == .right_alt) {
+                    global_ui_state.shortcut_key_pressed = switch (ke.action) {
+                        .down, .repeat => true,
+                        .up => false,
+                    };
+                }
+            },
+            else => {},
+        }
+    }
     {
         if (menu(&global_ui_state)) |res| return res;
 
@@ -160,7 +178,14 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     if (paned.showFirst()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        const result = filenameEntryBox(@src(), "Image:", "Open a disk image", ui_state.disk_interface.image_dir.path, ui_state.disk_interface.image_dir.changed);
+        const result = widgets.filenameEntryBox(
+            @src(),
+            "Image:",
+            "Open a disk image",
+            ui_state.disk_interface.image_dir.path,
+            ui_state.disk_interface.image_dir.changed,
+            .{ .shortcut_key = .o, .show_shortcuts = ui_state.shortcut_key_pressed },
+        );
         switch (result.response) {
             .enter => ui_state.operation_state.beginOperation(.{ .open_image = .init(result.path, ui_state.disk_interface.image_dir.path_buf) }),
             .button => ui_state.operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) }),
@@ -172,7 +197,14 @@ pub fn content(ui_state: *UIState) ?dvui.App.Result {
     if (paned.showSecond()) {
         var vbox = panel(@src(), .{}, .{ .expand = .both });
         defer vbox.deinit();
-        const result = filenameEntryBox(@src(), "Local:", null, ui_state.disk_interface.local_dir.path, ui_state.disk_interface.local_dir.changed);
+        const result = widgets.filenameEntryBox(
+            @src(),
+            "Local:",
+            null,
+            ui_state.disk_interface.local_dir.path,
+            ui_state.disk_interface.local_dir.changed,
+            .{ .shortcut_key = .l, .show_shortcuts = ui_state.shortcut_key_pressed },
+        );
         switch (result.response) {
             .enter => ui_state.operation_state.beginOperation(.{ .open_local = .init(
                 .{ .given = result.path },
@@ -336,24 +368,6 @@ const static_cols: []const usize = blk: {
 };
 
 fn statusBar(ui_state: *UIState) ?dvui.App.Result {
-    const static = struct {
-        var alt_key_pressed: bool = false;
-    };
-    // Check for .alt key regardless of who has focus
-    for (dvui.events()) |*e| {
-        switch (e.evt) {
-            .key => |ke| {
-                if (ke.code == .left_alt or ke.code == .right_alt) {
-                    static.alt_key_pressed = switch (ke.action) {
-                        .down, .repeat => true,
-                        .up => false,
-                    };
-                }
-            },
-            else => {},
-        }
-    }
-
     var hbox = panel(@src(), .{ .dir = .horizontal, .equal_space = true }, .{});
     defer hbox.deinit();
 
@@ -384,15 +398,15 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         @src(),
         "GET",
         .g,
-        1,
-        static.alt_key_pressed,
+        0,
+        ui_state.shortcut_key_pressed,
         image_open and any_image_selected,
     )) {
         // TODO: Copy Mode
         ui_state.operation_state.beginOperation(.{ .transfer = .init(
             ui_state.disk_interface.image_dir.directory_list.items,
             .get,
-            .AUTO,
+            ui_state.copy_mode,
             ui_state.filter_user,
         ) });
     }
@@ -401,15 +415,15 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         @src(),
         "PUT",
         .p,
-        1,
-        static.alt_key_pressed,
+        0,
+        ui_state.shortcut_key_pressed,
         image_open and any_local_selected,
     )) {
         // TODO: Copy Mode
         ui_state.operation_state.beginOperation(.{ .transfer = .init(
             ui_state.disk_interface.local_dir.directory_list.items,
             .put,
-            .AUTO,
+            ui_state.copy_mode,
             ui_state.filter_user,
         ) });
     }
@@ -418,8 +432,8 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         @src(),
         "ERASE",
         .e,
-        1,
-        static.alt_key_pressed,
+        0,
+        ui_state.shortcut_key_pressed,
         image_open and any_image_selected,
     )) {
         ui_state.operation_state.beginOperation(.{ .transfer = .init(
@@ -430,7 +444,7 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         ) });
     }
 
-    if (statusBarButton(@src(), label, .u, 1, static.alt_key_pressed, true)) {
+    if (statusBarButton(@src(), label, .u, 0, ui_state.shortcut_key_pressed, true)) {
         if (ui_state.filter_user) |_| {
             ui_state.filter_user.? += 1;
             if (ui_state.filter_user == 16) ui_state.filter_user = null;
@@ -444,20 +458,21 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         }
     }
     const operation_state = &ui_state.operation_state;
-    if (statusBarButton(@src(), "OPEN", .o, 1, static.alt_key_pressed, true)) {
+    if (statusBarButton(@src(), "OPEN", .o, 0, ui_state.shortcut_key_pressed, true)) {
         operation_state.beginOperation(.{ .open_image = .init(null, ui_state.disk_interface.image_dir.path_buf) });
     }
 
-    if (statusBarButton(@src(), "NEW", .n, 1, static.alt_key_pressed, true)) {
-        operation_state.beginOperation(.{ .new = .init });
+    if (statusBarButton(@src(), "NEW", .n, 0, ui_state.shortcut_key_pressed, true)) {
+        operation_state.beginOperation(.{ .new = .init(std.fs.path.dirname(ui_state.disk_interface.image_dir.path) orelse ".") });
     }
 
-    if (statusBarButton(@src(), "CLOSE", .c, 1, static.alt_key_pressed, image_open)) {
+    if (statusBarButton(@src(), "CLOSE", .c, 0, ui_state.shortcut_key_pressed, image_open)) {
         operation_state.beginOperation(.close);
     }
 
-    const mode_label = std.fmt.bufPrint(&label_buf, "MODE: {s}\n", .{@tagName(ui_state.copy_mode)[0..3]}) catch unreachable;
-    if (statusBarButton(@src(), mode_label, .m, 1, static.alt_key_pressed, true)) {
+    const mode_label = @tagName(ui_state.copy_mode);
+    const shortcut_pos = std.mem.indexOfScalar(u8, mode_label, 'A') orelse unreachable;
+    if (statusBarButton(@src(), mode_label, .a, @intCast(shortcut_pos), ui_state.shortcut_key_pressed, true)) {
         ui_state.copy_mode = switch (ui_state.copy_mode) {
             .AUTO => .ASCII,
             .ASCII => .BINARY,
@@ -467,10 +482,20 @@ fn statusBar(ui_state: *UIState) ?dvui.App.Result {
         };
     }
 
-    if (statusBarButton(@src(), "EXIT", .x, 2, static.alt_key_pressed, true)) {
+    if (statusBarButton(@src(), "EXIT", .x, 2, ui_state.shortcut_key_pressed, true)) {
         return .close;
     }
     return null;
+}
+
+pub fn nextCopyMode(ui_state: *const UIState, mode: CopyMode) CopyMode {
+    const supported = (ui_state.disk_interface.disk_image orelse return .AUTO).textModesAllSupported();
+    for (supported, 0..) |supported_mode, idx| {
+        if (supported_mode == DiskInterface.xlateFromCopyMode(mode)) {
+            return if (idx == supported.len - 1) DiskInterface.xlateToCopyMode(supported[0]) else DiskInterface.xlateToCopyMode(supported[idx + 1]);
+        }
+    }
+    return .AUTO;
 }
 
 fn panel(src: std.builtin.SourceLocation, init_opts: dvui.BoxWidget.InitOptions, opts: dvui.Options) *dvui.BoxWidget {
@@ -492,7 +517,7 @@ fn statusBarButton(
     enabled: bool,
 ) bool {
     const char_width = dvui.themeGet().font_mono.sizeM(1, 1).w;
-    const x_offset: f32 = char_width * @as(f32, @floatFromInt(shortcut_char_pos));
+    const x_offset: f32 = char_width * @as(f32, @floatFromInt(shortcut_char_pos + 1));
     var wd: dvui.WidgetData = undefined;
     var box = dvui.box(src, .{}, .{});
     defer box.deinit();
@@ -515,29 +540,6 @@ const FilenameEntryResult = struct {
     response: enum { none, enter, button },
     path: []const u8,
 };
-
-fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8, placeholder: ?[]const u8, init_path: []u8, changed: bool) FilenameEntryResult {
-    var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
-    defer hbox.deinit();
-    dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
-    var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = std.fs.max_path_bytes } }, .placeholder = placeholder }, .{ .expand = .horizontal });
-
-    if (changed or dvui.focusedWidgetId() != te.data().id) {
-        if (!std.mem.eql(u8, init_path, te.getText())) {
-            te.textSet(init_path, false);
-        }
-    }
-    var result: FilenameEntryResult = .{ .response = .none, .path = te.getText() };
-
-    if (te.enter_pressed)
-        result.response = .enter;
-    te.deinit();
-
-    if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{})) {
-        result.response = .button;
-    }
-    return result;
-}
 
 const DirectoryGrid = struct {
     const SelectMode = enum { none, select_all, select_none };
@@ -869,7 +871,7 @@ const DirectoryGrid = struct {
     }
 };
 
-const widgets = struct {
+pub const widgets = struct {
     pub const ButtonShortCutInitOptions = struct {
         button: dvui.ButtonWidget.InitOptions,
         shortcut: dvui.enums.Key,
@@ -907,6 +909,55 @@ const widgets = struct {
         bw.deinit();
 
         return click;
+    }
+
+    const FilenameEntryBoxOptions = struct {
+        shortcut_key: ?dvui.enums.Key = null,
+        show_shortcuts: bool = false,
+    };
+    pub fn filenameEntryBox(src: std.builtin.SourceLocation, label: []const u8, placeholder: ?[]const u8, init_path: []const u8, changed: bool, opts: FilenameEntryBoxOptions) FilenameEntryResult {
+        var hbox = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
+        defer hbox.deinit();
+        dvui.labelNoFmt(@src(), label, .{ .align_y = 0.5 }, .{ .margin = dvui.TextEntryWidget.defaults.margin });
+        var te = dvui.textEntry(@src(), .{ .text = .{ .internal = .{ .limit = std.fs.max_path_bytes } }, .placeholder = placeholder }, .{ .expand = .horizontal });
+
+        if (changed or dvui.focusedWidgetId() != te.data().id) {
+            if (!std.mem.eql(u8, init_path, te.getText())) {
+                te.textSet(init_path, false);
+            }
+        }
+        var result: FilenameEntryResult = .{ .response = .none, .path = te.getText() };
+
+        if (te.enter_pressed)
+            result.response = .enter;
+        te.deinit();
+
+        var wd: dvui.WidgetData = undefined;
+        if (dvui.buttonIcon(@src(), "open", dvui.entypo.folder, .{}, .{}, .{
+            .data_out = &wd,
+            .expand = .ratio,
+            //            .min_size_content = size,
+        })) {
+            result.response = .button;
+        }
+        if (opts.show_shortcuts) if (opts.shortcut_key) |key| {
+            //const defaults = dvui.ButtonWidget.defaults;
+            dvui.labelEx(@src(), "{c}", .{std.ascii.toUpper(@tagName(key)[0])}, .{ .align_x = 0.5, .align_y = 1.0 }, .{
+                // Offset a small amount so that the key displays cleanly in the body of the folder
+                .rect = wd.backgroundRect().offset(.{ .x = 0, .y = 2, .w = 0, .h = -2 }),
+                .color_text = dvui.themeGet().color(.control, .fill),
+                .font = dvui.themeGet().font_mono.withWeight(.bold).larger(0.25),
+            });
+            if (opts.shortcut_key) |shortcut_key| {
+                for (dvui.events()) |*e| {
+                    if (e.evt == .key and e.evt.key.action == .down and e.evt.key.code == shortcut_key and e.evt.key.mod.alt()) {
+                        result.response = .button;
+                    }
+                }
+            }
+        };
+
+        return result;
     }
 };
 
