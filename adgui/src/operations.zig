@@ -47,7 +47,7 @@ pub const OperationState = struct {
     }
 
     pub fn process(self: *OperationState) void {
-        std.debug.print("op = {t}, state = {}\n", .{ self.operation, self.state });
+        //std.debug.print("op = {t}, state = {}\n", .{ self.operation, self.state });
         if (self.operation != .none) {
             if (self.err) |err| {
                 dvui.dialog(@src(), .{}, .{
@@ -280,10 +280,12 @@ pub const NewOperation = struct {
 };
 
 pub const TransferResult = struct {
+    const Error = (DiskInterface.GetFileError || DiskInterface.PutFileError);
+
     const Result = enum { ok, err, skipped };
     filename: []const u8,
     result: Result,
-    err: ?(DiskInterface.GetFileError || DiskInterface.PutFileError) = null,
+    err: ?Error = null,
     message: []const u8 = "",
     recovery: enum { skip, retry } = .skip,
 };

@@ -21,6 +21,7 @@ const UIState = struct {
     shortcut_key_pressed: bool,
     filter_user: ?u8,
     copy_mode: CopyMode,
+    active_grid: DirectoryGrid.Style,
 
     pub fn init(self: *UIState, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) void {
         self.* = .{
@@ -38,6 +39,7 @@ const UIState = struct {
             .filter_user = null,
             .copy_mode = .AUTO,
             .shortcut_key_pressed = false,
+            .active_grid = .local,
         };
         self.disk_interface.openLocalDirectory(io, ".") catch |err| {
             std.debug.print("Error opening current directory: {t}\n", .{err});
@@ -96,7 +98,7 @@ pub fn appDeinit(win: *dvui.Window) void {
 var frame_count: usize = 0;
 // Run each frame to do normal UI
 pub fn appFrame() !dvui.App.Result {
-    std.debug.print("--- FRAME [{d}]---\n", .{frame_count});
+    //std.debug.print("--- FRAME [{d}]---\n", .{frame_count});
     defer frame_count += 1;
 
     // Check for .alt key regardless of who has focus
@@ -114,12 +116,25 @@ pub fn appFrame() !dvui.App.Result {
         }
     }
     {
-        if (menu(&global_ui_state)) |res| return res;
+        {
+            var fg = dvui.tabIndexGroup(@src(), .{ .tab_index = 1 });
+            defer fg.deinit();
+            if (menu(&global_ui_state)) |res| return res;
+        }
 
         var box = dvui.box(@src(), .{}, .{ .expand = .both, .style = .window, .background = true });
         defer box.deinit();
-        if (statusBar(&global_ui_state)) |res| return res;
-        if (content(&global_ui_state)) |res| return res;
+        {
+            var fg = dvui.tabIndexGroup(@src(), .{ .tab_index = 3 });
+            defer fg.deinit();
+
+            if (statusBar(&global_ui_state)) |res| return res;
+        }
+        {
+            var fg = dvui.tabIndexGroup(@src(), .{ .tab_index = 2 });
+            defer fg.deinit();
+            if (content(&global_ui_state)) |res| return res;
+        }
     }
     global_ui_state.operation_state.process();
     dialogs.displayOpen(&global_ui_state.operation_state);
@@ -606,7 +621,12 @@ const DirectoryGrid = struct {
         };
     }
 
-    fn display(self: *DirectoryGrid, ui_state: *UIState, dir_listing: []DirectoryEntry, listing_changed: bool) void {
+    fn display(
+        self: *DirectoryGrid,
+        ui_state: *UIState,
+        dir_listing: []DirectoryEntry,
+        listing_changed: bool,
+    ) void {
         const last_focus = dvui.lastFocusedIdInFrame();
         var grid = dvui.grid(@src(), .{ .cols_rigid = static_cols, .scroll_opts = .{ .horizontal = .auto } }, .{ .expand = .both, .border = .all(0) });
         defer grid.deinit();
@@ -637,15 +657,18 @@ const DirectoryGrid = struct {
         const row_count = dir_itr.count();
         self.displayHeaders(grid, dir_listing, row_count);
 
-        const current_row = grid.cursor.row;
+        const last_row = dvui.dataGet(null, grid.data().id, "last_row", usize);
+        dvui.dataSet(null, grid.data().id, "last_row", grid.cursor.row);
         const selection_changed = rowHighlight(grid);
-        const cursor_changed = current_row != grid.cursor.row or selection_changed;
+        const cursor_changed = last_row != grid.cursor.row or selection_changed;
+        std.debug.print("orig_row = {?}, new_row = {}\n", .{ last_row, grid.cursor.row });
         if (self.style == .image and ui_state.disk_interface.disk_image == null)
             self.displayBodyClosed(grid)
         else
-            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, listing_changed);
+            self.displayBody(grid, &dir_itr, cursor_changed, selection_changed, listing_changed, self.style == ui_state.active_grid);
 
         if (dvui.lastFocusedIdInFrameSince(last_focus)) |wid| {
+            ui_state.active_grid = self.style;
             self.processKbEventsPost(grid, wid, row_count);
         }
         {
@@ -686,11 +709,11 @@ const DirectoryGrid = struct {
         dvui.labelNoFmt(@src(), "Open a disk image.", .{}, .{});
     }
 
-    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DirectoryIterator, cursor_changed: bool, selection_changed: bool, listing_changed: bool) void {
+    fn displayBody(self: *DirectoryGrid, grid: *dvui.GridWidget, dir_itr: *DirectoryIterator, cursor_changed: bool, selection_changed: bool, listing_changed: bool, row_highlighting: bool) void {
         var row_idx: usize = 0;
         while (dir_itr.next()) |dir_item| : (row_idx += 1) {
             const row_options: dvui.Options =
-                if (grid.cursor.row == row_idx) .{
+                if (row_highlighting and grid.cursor.row == row_idx) .{
                     .color_fill = dvui.themeGet().color(.control, .fill_press),
                     .background = true,
                 } else .{};
@@ -700,12 +723,15 @@ const DirectoryGrid = struct {
                 defer cell.deinit();
                 const src = @src();
                 const id = dvui.parentGet().extendId(src, 0);
-                if ((cursor_changed and grid.cursor.row == row_idx) or cell.grid_focus) {
+                //if ((cursor_changed and grid.cursor.row == row_idx) or cell.grid_focus) {
+                if ((cursor_changed and grid.cursor.row == row_idx)) {
+                    std.debug.print("Focusing cc: {} row: {} gf: {}\n", .{ cursor_changed, grid.cursor.row, cell.grid_focus });
                     dvui.focusWidget(id, null, null);
                     if (selection_changed)
                         self.selection.set(row_idx, !dir_item.selected, self.shift_key_pressed);
                 }
-                if (dvui.button(src, if (dir_item.selected) "[X]" else "[ ]", .{ .draw_focus = false }, .{ .background = false, .margin = .all(0), .gravity_x = 0.5 })) {
+                // TODO:
+                if (dvui.button(src, if (dir_item.selected) "[X]" else "[ ]", .{ .draw_focus = true }, .{ .background = false, .margin = .all(0), .gravity_x = 0.5, .tab_index = 0 })) {
                     self.selection.set(row_idx, !dir_item.selected, self.shift_key_pressed);
                 }
             }
@@ -773,6 +799,14 @@ const DirectoryGrid = struct {
                             e.handle(@src(), grid.data());
                             self.selection.setAll(.select_all, nr_rows);
                         }
+                    } else if (ke.action == .down and ke.matchBind("next_widget")) {
+                        std.debug.print("tab_next\n", .{});
+                        e.handle(@src(), grid.data());
+                        dvui.tabIndexNext(e.num);
+                    } else if (ke.action == .down and ke.matchBind("prev_widget")) {
+                        std.debug.print("tab_prev\n", .{});
+                        e.handle(@src(), grid.data());
+                        dvui.tabIndexPrev(e.num);
                     }
                 },
                 else => {},
@@ -880,8 +914,9 @@ pub const widgets = struct {
     /// Create a button that can also be activated with an alt key combination.
     /// Note: Treats all shortcut keys as global, regardless of which widget currently has focus.
     pub fn buttonWithShortcut(src: std.builtin.SourceLocation, label_str: []const u8, init_opts: ButtonShortCutInitOptions, opts: dvui.Options) bool {
+        const defaults: dvui.Options = .{ .tab_index = if (init_opts.button.grayed) 0 else null };
         var bw: dvui.ButtonWidget = undefined;
-        bw.init(src, init_opts.button, opts);
+        bw.init(src, init_opts.button, defaults.override(opts));
         if (!init_opts.button.grayed) {
             bw.processEvents();
 
@@ -906,6 +941,8 @@ pub const widgets = struct {
         const click = if (!init_opts.button.grayed) bw.clicked() else false;
 
         dvui.labelNoFmt(@src(), label_str, .{ .align_x = 0.5, .align_y = 0.5 }, opts.strip().override(bw.style()).override(.{ .gravity_x = 0.5, .gravity_y = 0.5 }));
+        bw.drawFocus();
+
         bw.deinit();
 
         return click;

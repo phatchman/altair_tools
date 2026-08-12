@@ -21,7 +21,6 @@ var all_dialogs: std.EnumArray(Dialogs, DialogState) = .init(.{
 });
 
 pub fn displayOpen(state: *OperationState) void {
-    std.debug.print("Display Open\n", .{});
     for (&all_dialogs.values) |*dialog| {
         if (dialog.open) dialog.dialog_fn(dialog, state);
     }
@@ -126,7 +125,6 @@ fn transfer(self: *DialogState, state: *OperationState) void {
         }
     };
 
-    //var grid = dvui.grid(@src(), .{}, .{ .expand = .horizontal, .border = .all(0) });
     const focused_id = dvui.lastFocusedIdInFrame();
     var col1: dvui.Alignment = .init(@src(), 0);
     defer col1.deinit();
@@ -140,14 +138,12 @@ fn transfer(self: *DialogState, state: *OperationState) void {
         col1.spacer(@src(), 0);
         dvui.labelNoFmt(@src(), switch (result.result) {
             .ok => "OK",
-            .err => "ERR",
-            .skipped => "SKIP",
+            .err => "ERROR",
+            .skipped => "SKIPPED", // TODO: Not using skip for anything.
         }, .{}, .{ .padding = padding });
         col2.spacer(@src(), 0);
         dvui.labelNoFmt(@src(), result.message, .{}, .{ .padding = padding });
-        //        dvui.label(@src(), "* {s}: {t} [{s}]", .{ result.filename, result.result, (if (result.result == .err) result.message else "") }, .{ .id_extra = i });
     }
-    // grid.deinit();
 
     if (state.state == .user_input and transfer_results.len > 0 and transfer_results[transfer_results.len - 1].result == .err) switch (transfer_results[transfer_results.len - 1].err.?) {
         error.PathAlreadyExists => {
@@ -440,14 +436,15 @@ fn shortcutKeys(self: *DialogState, state: *OperationState) void {
         .{ .category = .file, .shortcut = "ALT-M", .button = null, .help_text = "Browse for image file." },
         .{ .category = .file, .shortcut = "ALT-O", .button = null, .help_text = "Browse for local directory." },
         .{ .category = .file, .shortcut = "ALT-L", .button = null, .help_text = "Type local directory name." },
-        .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filenames to clipboard." },
+        if (@import("builtin").os.tag.isDarwin())
+            .{ .category = .file, .shortcut = "CMD-C", .button = null, .help_text = "Copy image filenames to clipboard." }
+        else
+            .{ .category = .file, .shortcut = "CTRL-C", .button = null, .help_text = "Copy image filenames to clipboard." },
     };
     var dialog_win = dialogWindow(@src(), "Keyboard shortcuts", self, state, null);
     defer dialog_win.deinit();
     if (!self.open) return;
 
-    // var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .margin = .all(5) });
-    // defer vbox.deinit();
     var idx: usize = 0;
     {
         var inner_vbox = dvui.box(@src(), .{}, .{ .expand = .vertical, .gravity_x = 0.5 });
@@ -481,10 +478,6 @@ fn shortcutKeys(self: *DialogState, state: *OperationState) void {
             }
         }
     }
-    // _ = dvui.separator(@src(), .{ .expand = .horizontal });
-    // if (buttonFocussed(@src(), "Close", .{}, .{ .gravity_x = 0.5 })) {
-    //     show_shortcuts = false;
-    // }
 }
 
 const adgui_version = "TODO";
@@ -495,8 +488,9 @@ pub fn about(self: *DialogState, state: *OperationState) void {
     var dialog_win = dialogWindow(@src(), "About ADGUI", self, state, null);
     defer dialog_win.deinit();
     if (!self.open) return;
+
     dvui.label(@src(), "ADGUI Version: {s}", .{adgui_version}, .{ .expand = .horizontal, .gravity_x = 0.5 });
-    // Now add the scroll area which will get the remaining space
+
     var tl = dvui.textLayout(@src(), .{}, .{ .background = false, .gravity_x = 0.5 });
     tl.addText("\n", .{});
 
@@ -529,6 +523,7 @@ pub fn about(self: *DialogState, state: *OperationState) void {
         .rect = underline_rect,
         .color_fill = if (!hovered) dvui.themeGet().text else color_url,
     });
+    dvui.labelNoFmt(@src(), "", .{}, .{});
 }
 
 fn dialogWindow(src: std.builtin.SourceLocation, title: []const u8, self: *DialogState, state: *OperationState, size: ?dvui.Size) *dvui.FloatingWindowWidget {
